@@ -87,24 +87,32 @@ public final class UpdateChecker {
         return new UpToDate(current);
     }
 
+    /**
+     * Marks the jar this side of the mod wants out of a release. A release
+     * carries a server jar and a client jar, so "take the first .jar" would be
+     * a coin flip — each side names the one it needs.
+     */
+    public static final String SERVER_JAR = "server";
+    public static final String CLIENT_JAR = "client";
+
     private static Release fetchLatestRelease(String repo) throws IOException, InterruptedException {
         return fetchReleaseFrom(URI.create(
-            "https://api.github.com/repos/" + repo + "/releases/latest"));
+            "https://api.github.com/repos/" + repo + "/releases/latest"), SERVER_JAR);
     }
 
     /**
      * Fetches a specific tagged release (vX.Y.Z) from {@code repo}, or null if
      * that tag has no release. Used by the client to sync to a server's exact
-     * version.
+     * version; {@code want} selects which jar of the release to take.
      */
-    public static Release fetchReleaseByTag(String repo, String version)
+    public static Release fetchReleaseByTag(String repo, String version, String want)
             throws IOException, InterruptedException {
         String tag = (version.startsWith("v") || version.startsWith("V")) ? version : "v" + version;
         return fetchReleaseFrom(URI.create(
-            "https://api.github.com/repos/" + repo + "/releases/tags/" + tag));
+            "https://api.github.com/repos/" + repo + "/releases/tags/" + tag), want);
     }
 
-    private static Release fetchReleaseFrom(URI uri) throws IOException, InterruptedException {
+    private static Release fetchReleaseFrom(URI uri, String want) throws IOException, InterruptedException {
         HttpClient client = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(15))
@@ -126,18 +134,31 @@ public final class UpdateChecker {
         String tag = obj.get("tag_name").getAsString();
         String version = (tag.startsWith("v") || tag.startsWith("V")) ? tag.substring(1) : tag;
 
+        // Prefer the jar for this side; fall back to any jar, so the single-jar
+        // releases published before the server/client split still resolve.
         String jarUrl = null, jarName = null;
+        String fallbackUrl = null, fallbackName = null;
         if (obj.has("assets") && obj.get("assets").isJsonArray()) {
             JsonArray assets = obj.getAsJsonArray("assets");
             for (var el : assets) {
                 JsonObject a = el.getAsJsonObject();
                 String name = a.has("name") ? a.get("name").getAsString() : "";
-                if (name.toLowerCase().endsWith(".jar") && a.has("browser_download_url")) {
+                if (!name.toLowerCase().endsWith(".jar") || !a.has("browser_download_url")) continue;
+                String url = a.get("browser_download_url").getAsString();
+                if (want != null && name.toLowerCase().contains(want)) {
                     jarName = name;
-                    jarUrl = a.get("browser_download_url").getAsString();
+                    jarUrl = url;
                     break;
                 }
+                if (fallbackName == null) {
+                    fallbackName = name;
+                    fallbackUrl = url;
+                }
             }
+        }
+        if (jarName == null) {
+            jarName = fallbackName;
+            jarUrl = fallbackUrl;
         }
         return new Release(version, jarUrl, jarName);
     }

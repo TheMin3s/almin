@@ -45,3 +45,97 @@ jar {
         rename { "${it}_${project.base.archivesName.get()}" }
     }
 }
+
+// ---- server / client distributions -------------------------------------------
+//
+// One codebase, two published jars. The universal `jar` above still builds and
+// runs on both sides; these are the artifacts a release ships, so an admin
+// downloads something that cannot start a web panel on a player's machine and a
+// player downloads something that carries no admin surface at all.
+//
+//  * server jar - everything except the `client` package (verified: no
+//    server-side class references it), main entrypoint, mixins applied.
+//  * client jar - the client entrypoint only, no mixins. It keeps the shared
+//    classes it links against rather than pruning to the minimum, because a
+//    missing class here would only surface as a crash on a player's machine.
+//
+// Each variant gets its own fabric.mod.json, generated below.
+
+def modJsonFor(String env, String entrypointsJson, String mixinsJson) {
+    return """{
+  "schemaVersion": 1,
+  "id": "almin",
+  "version": "${project.version}",
+  "name": "Almin",
+  "description": "In-game server administration tools: console viewer, file browser and editor, downloads, display-name masks and self-update.",
+  "authors": ["schecks"],
+  "license": "ARR",
+  "contact": {
+    "homepage": "https://github.com/TheMin3s/almin",
+    "sources": "https://github.com/TheMin3s/almin",
+    "issues": "https://github.com/TheMin3s/almin/issues"
+  },
+  "environment": "${env}",
+  "entrypoints": ${entrypointsJson},
+  ${mixinsJson}"depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~26.1",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
+"""
+}
+
+def serverModJson = tasks.register('serverModJson') {
+    def out = layout.buildDirectory.file('dist/server/fabric.mod.json')
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        f.text = modJsonFor('server',
+            '{\n    "main": ["com.schecks.almin.Almin"]\n  }',
+            '"mixins": [\n    "almin.mixins.json"\n  ],\n  ')
+    }
+}
+
+def clientModJson = tasks.register('clientModJson') {
+    def out = layout.buildDirectory.file('dist/client/fabric.mod.json')
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        // No mixins: every mixin in this mod targets a server class.
+        f.text = modJsonFor('client',
+            '{\n    "client": ["com.schecks.almin.client.AlminClient"]\n  }',
+            '')
+    }
+}
+
+def serverJar = tasks.register('serverJar', Jar) {
+    dependsOn serverModJson
+    archiveClassifier = 'server'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // The generated manifest wins over the one in processResources output.
+    from(serverModJson)
+    from(sourceSets.main.output) {
+        exclude 'fabric.mod.json'
+        exclude 'com/schecks/almin/client/**'
+    }
+    from('LICENSE') { rename { "${it}_almin" } }
+}
+
+def clientJar = tasks.register('clientJar', Jar) {
+    dependsOn clientModJson
+    archiveClassifier = 'client'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(clientModJson)
+    from(sourceSets.main.output) {
+        exclude 'fabric.mod.json'
+    }
+    from('LICENSE') { rename { "${it}_almin" } }
+}
+
+tasks.named('build') {
+    dependsOn serverJar, clientJar
+}

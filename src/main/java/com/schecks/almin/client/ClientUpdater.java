@@ -68,7 +68,8 @@ public final class ClientUpdater {
     private static void downloadAndSwap(String serverVersion, String clientVersion) {
         Path tmp = null;
         try {
-            UpdateChecker.Release release = UpdateChecker.fetchReleaseByTag(REPO, serverVersion);
+            UpdateChecker.Release release = UpdateChecker.fetchReleaseByTag(
+                REPO, serverVersion, UpdateChecker.CLIENT_JAR);
             if (release == null || !release.hasJar()) {
                 LOG.warn("[Almin] client update: no jar asset for release {}", serverVersion);
                 return;

@@ -77,26 +77,45 @@ export PATH="$JAVA_HOME/bin:$PATH"
 echo "Building..."
 ./gradlew build
 
-JAR="build/libs/almin-$VERSION.jar"
-[ -f "$JAR" ] || { echo "Error: built jar not found at $JAR" >&2; exit 1; }
-echo "Built $JAR"
+# A release ships two jars. The updaters pick theirs by the "server"/"client"
+# in the filename, so these names are load-bearing — don't rename them without
+# changing UpdateChecker.SERVER_JAR / CLIENT_JAR too.
+SERVER_JAR="build/libs/almin-$VERSION-server.jar"
+CLIENT_JAR="build/libs/almin-$VERSION-client.jar"
+for j in "$SERVER_JAR" "$CLIENT_JAR"; do
+  [ -f "$j" ] || { echo "Error: built jar not found at $j" >&2; exit 1; }
+  echo "Built $j"
+done
 
 # --- commit + push ----------------------------------------------------------
 git add gradle.properties
 git commit -m "Release $TAG"
 COMMITTED=1
-if ! git push origin HEAD; then
-  echo "Commit created locally but push failed. Fix auth/network, then: git push" >&2
+
+# Push to whichever remote actually points at $REPO — "origin" may still be an
+# older repo, and pushing the release commit somewhere the tag isn't would
+# publish a release whose source commit is missing.
+PUSH_REMOTE="$(git remote -v | awk -v repo="$REPO" '$3=="(push)" && index($2, repo) {print $1; exit}')"
+if [ -z "$PUSH_REMOTE" ]; then
+  echo "Error: no git remote points at $REPO. Add one:" >&2
+  echo "  git remote add almin https://github.com/$REPO.git" >&2
   exit 1
 fi
+if ! git push "$PUSH_REMOTE" HEAD; then
+  echo "Commit created locally but push failed. Fix auth/network, then: git push $PUSH_REMOTE HEAD" >&2
+  exit 1
+fi
+# Tag the exact commit that was just built and pushed, not the repo's default branch.
+TARGET="$(git rev-parse HEAD)"
 
 # --- publish the GitHub release ---------------------------------------------
-if ! gh release create "$TAG" "$JAR" \
+if ! gh release create "$TAG" "$SERVER_JAR" "$CLIENT_JAR" \
       --repo "$REPO" \
+      --target "$TARGET" \
       --title "Almin $VERSION" \
       --generate-notes; then
   echo "Bump pushed, but the release step failed. Retry with:" >&2
-  echo "  gh release create $TAG $JAR --repo $REPO --title \"Almin $VERSION\" --generate-notes" >&2
+  echo "  gh release create $TAG $SERVER_JAR $CLIENT_JAR --repo $REPO --title \"Almin $VERSION\" --generate-notes" >&2
   exit 1
 fi
 

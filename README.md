@@ -84,3 +84,23 @@ the panel down with it and nothing comes back — test the command by hand first
 The Minecraft server cannot be restarted *inside* the same JVM: its bootstrap
 runs once per process. That is why Start launches a fresh process rather than
 rebooting the world in place.
+
+## Which jar do I want?
+
+Each release ships two:
+
+| File | Put it in | Contains |
+|---|---|---|
+| `almin-<version>-server.jar` | your server's `mods/` | everything: commands, mixins, the web panel |
+| `almin-<version>-client.jar` | your client's `mods/` | only the screens the server opens (dashboard, console viewer, file browser, nano editor) |
+
+The client jar declares `environment: "client"` and registers no commands, no
+mixins and no web panel — it exists purely to render what the server sends, so
+a player running it gains nothing on their own machine. The server jar contains
+no client code at all.
+
+You don't need the client jar to use Almin: a vanilla client gets the same
+information as chat output. It only buys you the graphical screens.
+
+The self-updaters pick their jar out of a release by the `server` / `client` in
+the filename, so those names matter — see `UpdateChecker.SERVER_JAR`.
