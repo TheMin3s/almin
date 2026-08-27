@@ -17,6 +17,7 @@ public class Almin implements ModInitializer {
     public void onInitialize() {
         UpdateChecker.registerPayload();
         Dashboard.registerPayload();
+        ModNet.register();
         FileShare.registerPayload();
         NanoNet.register();
         DirNet.register();
@@ -34,6 +35,7 @@ public class Almin implements ModInitializer {
             AlminLog.init(server.getServerDirectory());
             AlminConfig.init(server.getServerDirectory());
             MaskConfig.init(server);
+            ModOffers.init(server);
             FileShare.init(server);
         });
         // Boot-time update check — runs after config is loaded. With auto-update

@@ -108,3 +108,52 @@ information as chat output. It only buys you the graphical screens.
 
 The self-updaters pick their jar out of a release by the `server` / `client` in
 the filename, so those names matter — see `UpdateChecker.SERVER_JAR`.
+
+## Advertising mods to players
+
+A server can suggest mods to joining players. Manage the list with
+`/almin mods` in game, or the web panel's **Mods** tab.
+
+```
+/almin mods                          list what's advertised
+/almin mods add <id> <https-url>     advertise a mod
+/almin mods required <id> true       mark it required
+/almin mods remove <id>              stop advertising it
+/almin mods reload                   re-read mods.json
+```
+
+Set a version and a `sha256` in `config/almin/mods.json` — the checksum pins the
+exact file, and a client refuses a download that doesn't match it.
+
+### What a player sees
+
+On join, a client running Almin shows the list: each mod's name, version, and
+**the host the file would come from**. Nothing downloads until they press
+Approve. Mods already installed are filtered out, so returning players aren't
+asked again. Approved jars land in `mods/` and load on the client's **next
+launch** — nothing is injected into the running game.
+
+### The three settings
+
+| Setting | Effect |
+|---|---|
+| `mods-advertise` | send the list at all (default on) |
+| `mods-deny-kicks` | declining disconnects the player, but only when a **required** mod was offered (default off) |
+| `require-client-mod` | players without the Almin client mod are disconnected at join (default off) |
+
+`require-client-mod` is what closes the obvious hole: without it, a player can
+simply not install Almin and never be shown the prompt.
+
+### What this is not
+
+**`mods-deny-kicks` is a house rule, not an anti-cheat.** The client reports its
+own choice, so a modified client can claim it approved and install nothing.
+Fabric gives a server no reliable way to inspect what a client has loaded. Use
+it to steer honest players; don't rely on it to keep dishonest ones out.
+
+**Approving runs someone else's code.** That is the nature of the feature. The
+guards are: `https://` only (enforced when the offer is stored, again before it
+is sent, and again by the client), an optional SHA-256 pin, a 64 MB cap, a check
+that the download really is a Fabric mod jar, and a filename derived from the
+mod id rather than the URL. Only advertise files you control or trust, and
+prefer setting a checksum.

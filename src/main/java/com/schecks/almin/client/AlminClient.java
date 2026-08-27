@@ -5,6 +5,7 @@ import com.schecks.almin.ConsoleOpenPayload;
 import com.schecks.almin.DashboardPayload;
 import com.schecks.almin.DirListingPayload;
 import com.schecks.almin.FileTransferPayload;
+import com.schecks.almin.ModOfferPayload;
 import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.ServerVersionPayload;
 import net.fabricmc.api.ClientModInitializer;
@@ -44,6 +45,11 @@ public class AlminClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(DirListingPayload.TYPE, (payload, context) ->
             context.client().execute(() -> context.client().setScreen(
                 new DirBrowserScreen(payload.path(), payload.entries()))));
+
+        // Receive the server's suggested mods and ask the player about them.
+        ClientPlayNetworking.registerGlobalReceiver(ModOfferPayload.TYPE, (payload, context) ->
+            context.client().execute(() ->
+                ModOfferScreen.offer(payload.mods(), payload.denyDisconnects())));
 
         // Receive the server's Almin version; self-update if we're behind.
         ClientPlayNetworking.registerGlobalReceiver(ServerVersionPayload.TYPE, (payload, context) ->

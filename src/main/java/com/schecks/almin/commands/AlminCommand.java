@@ -1,6 +1,7 @@
 package com.schecks.almin.commands;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -16,6 +17,7 @@ import com.schecks.almin.AlminConfig;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
 import com.schecks.almin.MaskConfig;
+import com.schecks.almin.ModOffers;
 import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.NanoSupport;
 import com.schecks.almin.PlayerHistory;
@@ -114,6 +116,26 @@ public final class AlminCommand {
                     .then(Commands.argument("name", StringArgumentType.word())
                         .then(Commands.argument("mask", StringArgumentType.greedyString())
                             .executes(AlminCommand::maskSet)))))
+            // Mods this server advertises to joining players. Same admin gate
+            // as masks and config; bare /almin mods -> list.
+            .then(Commands.literal("mods")
+                .requires(TrustedOps::isAdminSource)
+                .executes(AlminCommand::modsList)
+                .then(Commands.literal("list")
+                    .executes(AlminCommand::modsList))
+                .then(Commands.literal("add")
+                    .then(Commands.argument("id", StringArgumentType.word())
+                        .then(Commands.argument("url", StringArgumentType.greedyString())
+                            .executes(AlminCommand::modsAdd))))
+                .then(Commands.literal("remove")
+                    .then(Commands.argument("id", StringArgumentType.word())
+                        .executes(AlminCommand::modsRemove)))
+                .then(Commands.literal("required")
+                    .then(Commands.argument("id", StringArgumentType.word())
+                        .then(Commands.argument("value", BoolArgumentType.bool())
+                            .executes(AlminCommand::modsRequired))))
+                .then(Commands.literal("reload")
+                    .executes(AlminCommand::modsReload)))
             // Mod config: list / show / set / reload. Admin gate: a vanilla
             // op OR a TrustedOps UUID.
             .then(Commands.literal("config")
@@ -409,6 +431,116 @@ public final class AlminCommand {
         return 1;
     }
 
+    // ---------- /almin mods ----------
+
+    private static int modsList(CommandContext<CommandSourceStack> ctx) {
+        List<ModOffers.AdvertisedMod> mods = ModOffers.list();
+        AlminConfig cfg = AlminConfig.get();
+        if (mods.isEmpty()) {
+            ctx.getSource().sendSuccess(() ->
+                Component.literal("No mods are advertised. /almin mods add <id> <https-url> to add one.")
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)),
+                false);
+            return 0;
+        }
+        MutableComponent out = Component.literal("=== Advertised mods (" + mods.size() + ") ===\n")
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.GOLD));
+        for (ModOffers.AdvertisedMod m : mods) {
+            out.append(Component.literal("  " + m.modId())
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)))
+               .append(Component.literal(m.version().isBlank() ? "" : " " + m.version())
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)))
+               .append(Component.literal(m.required() ? "  [required]" : "  [optional]")
+                    .setStyle(Style.EMPTY.withColor(m.required() ? ChatFormatting.YELLOW : ChatFormatting.DARK_GRAY)))
+               .append(Component.literal(m.sha256().isBlank() ? "" : "  [pinned]")
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)))
+               .append(Component.literal("\n    " + m.url() + "\n")
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)));
+        }
+        out.append(Component.literal("advertise=" + cfg.modsAdvertise
+                + "  deny-kicks=" + cfg.modsDenyKicks
+                + "  require-client-mod=" + cfg.requireClientMod)
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)));
+        ctx.getSource().sendSuccess(() -> out, false);
+        return 1;
+    }
+
+    private static int modsAdd(CommandContext<CommandSourceStack> ctx) {
+        String id = StringArgumentType.getString(ctx, "id");
+        String url = StringArgumentType.getString(ctx, "url").trim();
+        ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(id, id, "", url, "", false);
+        switch (ModOffers.add(mod)) {
+            case OK -> {
+                String invoker = ctx.getSource().getEntity() == null
+                    ? "console" : ctx.getSource().getEntity().getName().getString();
+                AlminLog.info("[almin] {} advertised mod {} -> {}", invoker, id, url);
+                ctx.getSource().sendSuccess(() ->
+                    Component.literal("Now advertising ").setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN))
+                        .append(Component.literal(id).setStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)))
+                        .append(Component.literal(". Set a version/checksum in config/almin/mods.json, "
+                                + "and /almin mods required " + id + " true to require it.")
+                            .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY))),
+                    false);
+                return 1;
+            }
+            case BAD_URL -> ctx.getSource().sendFailure(Component.literal(
+                "The URL must be https:// — players' clients refuse anything else."));
+            case FULL -> ctx.getSource().sendFailure(Component.literal(
+                "Already advertising the maximum of " + ModOffers.MAX_OFFERS + " mods."));
+            case NOT_LOADED -> ctx.getSource().sendFailure(Component.literal(
+                "Mod offers aren't loaded yet — try again once the server has finished starting."));
+            default -> ctx.getSource().sendFailure(Component.literal(
+                "Added in memory but mods.json couldn't be written — check the Almin log."));
+        }
+        return 0;
+    }
+
+    private static int modsRemove(CommandContext<CommandSourceStack> ctx) {
+        String id = StringArgumentType.getString(ctx, "id");
+        if (!ModOffers.remove(id)) {
+            ctx.getSource().sendFailure(Component.literal("Not advertised: " + id));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() ->
+            Component.literal("No longer advertising " + id + ".")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.YELLOW)),
+            false);
+        return 1;
+    }
+
+    private static int modsRequired(CommandContext<CommandSourceStack> ctx) {
+        String id = StringArgumentType.getString(ctx, "id");
+        boolean value = BoolArgumentType.getBool(ctx, "value");
+        if (!ModOffers.setRequired(id, value)) {
+            ctx.getSource().sendFailure(Component.literal("Not advertised: " + id));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() ->
+            Component.literal(id + " is now " + (value ? "required" : "optional") + ".")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)),
+            false);
+        if (value && !AlminConfig.get().modsDenyKicks) {
+            ctx.getSource().sendSuccess(() ->
+                Component.literal("Note: declining still only warns. "
+                        + "/almin config mods-deny-kicks true to disconnect instead.")
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)),
+                false);
+        }
+        return 1;
+    }
+
+    private static int modsReload(CommandContext<CommandSourceStack> ctx) {
+        if (!ModOffers.reload()) {
+            ctx.getSource().sendFailure(Component.literal("Could not re-read mods.json — check the Almin log."));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() ->
+            Component.literal("Reloaded " + ModOffers.count() + " mod offer(s) from mods.json.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)),
+            false);
+        return 1;
+    }
+
     // ---------- /almin help ----------
 
     /**
@@ -423,6 +555,7 @@ public final class AlminCommand {
             .append(cmd("/almin mask set <name> <as>", "[admin] Make a player display as another name")).append("\n")
             .append(cmd("/almin mask clear <name>",    "[admin] Remove a player's display-name mask")).append("\n")
             .append(cmd("/almin mask list",           "[admin] List active display-name masks")).append("\n")
+            .append(cmd("/almin mods",                "[admin] Mods this server offers to players")).append("\n")
             .append(cmd("/almin config",              "[admin] View/change mod settings")).append("\n")
             .append(cmd("/almin update version",      "[admin] Check if the mod is up to date")).append("\n")
             .append(cmd("/almin update",              "[admin] Download + install the latest mod version")).append("\n")

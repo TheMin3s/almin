@@ -117,6 +117,9 @@ public final class WebUi {
             http.createContext("/api/file/delete", ui::handleFileDelete);
             http.createContext("/api/file/rename", ui::handleFileRename);
             http.createContext("/api/server", ui::handleServerControl);
+            http.createContext("/api/mods", ui::handleMods);
+            http.createContext("/api/mods/save", ui::handleModSave);
+            http.createContext("/api/mods/delete", ui::handleModDelete);
             // In supervisor mode the web threads must be non-daemon, or the JVM
             // exits the moment the server thread ends and takes the panel with it.
             http.setExecutor(Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor)));
@@ -556,6 +559,79 @@ public final class WebUi {
             WebFiles.Result r = onServer(() -> WebFiles.rename(server, rel, name), WebFiles.Result.fail("timeout"));
             AlminLog.info("[almin] web renamed {} -> {} ({})", rel, name, r.ok() ? "ok" : r.message());
             json(ex, r.ok() ? 200 : 400, result(r));
+        } finally {
+            ex.close();
+        }
+    }
+
+    // ---------- routes: advertised mods ----------
+
+    /** The current offer list plus the three settings that govern it. */
+    private void handleMods(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            AlminConfig cfg = AlminConfig.get();
+            JsonObject o = new JsonObject();
+            JsonArray arr = new JsonArray();
+            for (ModOffers.AdvertisedMod m : ModOffers.list()) {
+                JsonObject j = new JsonObject();
+                j.addProperty("id", m.modId());
+                j.addProperty("name", m.name());
+                j.addProperty("version", m.version());
+                j.addProperty("url", m.url());
+                j.addProperty("sha256", m.sha256());
+                j.addProperty("required", m.required());
+                arr.add(j);
+            }
+            o.add("mods", arr);
+            o.addProperty("advertise", cfg.modsAdvertise);
+            o.addProperty("denyKicks", cfg.modsDenyKicks);
+            o.addProperty("requireClientMod", cfg.requireClientMod);
+            json(ex, 200, o.toString());
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Adds or replaces one offer. The https-only rule is enforced in ModOffers. */
+    private void handleModSave(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject b = readBody(ex);
+            String id = b.has("id") ? b.get("id").getAsString().trim() : "";
+            String url = b.has("url") ? b.get("url").getAsString().trim() : "";
+            if (id.isEmpty() || url.isEmpty()) { json(ex, 400, err("A mod id and an https URL are required.")); return; }
+            ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(
+                id,
+                b.has("name") && !b.get("name").getAsString().isBlank() ? b.get("name").getAsString().trim() : id,
+                b.has("version") ? b.get("version").getAsString().trim() : "",
+                url,
+                b.has("sha256") ? b.get("sha256").getAsString().trim() : "",
+                b.has("required") && b.get("required").getAsBoolean());
+            ModOffers.AddResult r = ModOffers.add(mod);
+            AlminLog.info("[almin] web set mod offer {} -> {} ({})", id, url, r);
+            switch (r) {
+                case OK -> json(ex, 200, "{\"ok\":true}");
+                case BAD_URL -> json(ex, 400, err("The URL must be https:// — clients refuse anything else."));
+                case FULL -> json(ex, 400, err("Already advertising the maximum of " + ModOffers.MAX_OFFERS + "."));
+                case NOT_LOADED -> json(ex, 409, err("Mod offers aren't loaded yet."));
+                default -> json(ex, 500, err("Saved in memory but mods.json couldn't be written."));
+            }
+        } finally {
+            ex.close();
+        }
+    }
+
+    private void handleModDelete(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject b = readBody(ex);
+            String id = b.has("id") ? b.get("id").getAsString().trim() : "";
+            if (!ModOffers.remove(id)) { json(ex, 404, err("Not advertised: " + id)); return; }
+            AlminLog.info("[almin] web removed mod offer {}", id);
+            json(ex, 200, "{\"ok\":true}");
         } finally {
             ex.close();
         }
@@ -1052,7 +1128,7 @@ public final class WebUi {
           $('srvstart').disabled=!canStart;
           $('srvstart').title=canStart?'':'Set web-supervisor and web-start-command to enable';
           const nav=$('nav'); nav.innerHTML='';
-          const tabs = authed ? [['dash','Overview'],['log','Console'],['term','Terminal'],['files','Files']]
+          const tabs = authed ? [['dash','Overview'],['log','Console'],['term','Terminal'],['files','Files'],['mods','Mods']]
                               : [['dash','Overview']];
           for(const [id,label] of tabs){
             const b=document.createElement('button'); b.textContent=label; b.className=(id===tab?'on':'');
@@ -1068,6 +1144,7 @@ public final class WebUi {
           else if(tab==='log') m.appendChild(consolePanel());
           else if(tab==='term') m.appendChild(termPanel());
           else if(tab==='files') m.appendChild(filesPanel());
+          else if(tab==='mods') m.appendChild(modsPanel());
         }
 
         function dashPanel(){
@@ -1239,6 +1316,79 @@ public final class WebUi {
           else $('age').textContent='starting server…';
         };
 
+        // ---- advertised mods ----
+        function modsPanel(){
+          const wrap=document.createElement('div');
+          wrap.innerHTML='<p class="muted">Mods offered to players when they join. '+
+            'Nothing is pushed &mdash; each player sees this list and chooses. '+
+            'URLs must be <code>https://</code>; a SHA-256 pins the exact file.</p>'+
+            '<div id="modsettings" class="muted" style="margin-bottom:10px"></div>'+
+            '<div id="modlist"></div>'+
+            '<section style="margin-top:14px"><h2>Advertise a mod</h2>'+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
+            '<input id="m-id" placeholder="mod id (e.g. sodium)">'+
+            '<input id="m-name" placeholder="display name (optional)">'+
+            '<input id="m-ver" placeholder="version (optional)">'+
+            '<input id="m-sha" placeholder="sha256 (optional, recommended)">'+
+            '</div>'+
+            '<input id="m-url" placeholder="https://... direct link to the .jar" style="margin-top:8px">'+
+            '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
+            '<input type="checkbox" id="m-req" style="width:auto"> Required '+
+            '(declining can disconnect, if mods-deny-kicks is on)</label>'+
+            '<button class="btn" id="m-save" style="margin-top:10px">Save mod</button>'+
+            '<div class="msg" id="m-msg"></div></section>';
+          setTimeout(()=>{ loadMods(); $('m-save').onclick=saveMod; },0);
+          return wrap;
+        }
+        async function loadMods(){
+          const r=await jget('/api/mods');
+          const box=$('modlist'); if(!box) return;
+          if(r.status!==200){ box.innerHTML='<div class="note">'+esc(r.body.error||'unavailable')+'</div>'; return; }
+          const s=$('modsettings');
+          if(s) s.innerHTML='advertising: <b>'+(r.body.advertise?'on':'off')+'</b> &middot; '+
+            'deny disconnects: <b>'+(r.body.denyKicks?'yes':'no')+'</b> &middot; '+
+            'client mod required: <b>'+(r.body.requireClientMod?'yes':'no')+'</b> '+
+            '<span style="opacity:.7">(change these under Overview &rarr; /almin config)</span>';
+          const mods=r.body.mods||[];
+          if(!mods.length){ box.innerHTML='<div class="note">Nothing advertised yet.</div>'; return; }
+          box.innerHTML='';
+          const sec=document.createElement('section');
+          sec.innerHTML='<h2>Advertised ('+mods.length+')</h2>';
+          for(const m of mods){
+            const row=document.createElement('div'); row.className='row';
+            const left=document.createElement('span'); left.className='k';
+            left.innerHTML='<b style="color:var(--ink)">'+esc(m.name||m.id)+'</b>'+
+              (m.version?' <span class="muted">'+esc(m.version)+'</span>':'')+
+              (m.required?' <span class="state warn">REQUIRED</span>':' <span class="muted">optional</span>')+
+              (m.sha256?' <span class="muted">&middot; pinned</span>':'')+
+              '<br><span class="muted" style="font-size:12px">'+esc(m.url)+'</span>';
+            const btn=document.createElement('button'); btn.className='btn danger'; btn.textContent='Remove';
+            btn.style.marginLeft='auto';
+            btn.onclick=async()=>{ if(!confirm('Stop advertising '+m.id+'?')) return;
+              const d=await jpost('/api/mods/delete',{id:m.id});
+              if(d.status!==200) alert(d.body.error||'remove failed'); loadMods(); };
+            const edit=document.createElement('button'); edit.className='btn'; edit.textContent=m.required?'Make optional':'Make required';
+            edit.onclick=async()=>{ const d=await jpost('/api/mods/save',{
+                id:m.id,name:m.name,version:m.version,url:m.url,sha256:m.sha256,required:!m.required});
+              if(d.status!==200) alert(d.body.error||'update failed'); loadMods(); };
+            row.append(left,edit,btn);
+            row.style.gap='8px'; row.style.alignItems='center';
+            sec.appendChild(row);
+          }
+          box.appendChild(sec);
+        }
+        async function saveMod(){
+          const msg=$('m-msg');
+          const r=await jpost('/api/mods/save',{
+            id:$('m-id').value.trim(), name:$('m-name').value.trim(),
+            version:$('m-ver').value.trim(), sha256:$('m-sha').value.trim(),
+            url:$('m-url').value.trim(), required:$('m-req').checked});
+          msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent = r.status===200 ? 'saved' : (r.body.error||'save failed');
+          if(r.status===200){ ['m-id','m-name','m-ver','m-sha','m-url'].forEach(i=>$(i).value='');
+            $('m-req').checked=false; loadMods(); }
+        }
+
         // ---- polling ----
         async function refreshOnce(){
           const s=await jget('/api/session');
@@ -1273,7 +1423,7 @@ public final class WebUi {
           }
           setChrome();
           if(tab==='dash') updateMetrics();
-          else loadConsole();
+          else if(tab==='log'||tab==='term') loadConsole();
         }
         $('logout').onclick=async()=>{ await jpost('/api/logout',{}); authed=false; tab='dash'; last=null; render(); };
         (async()=>{ await refreshOnce(); render(); poll(); setInterval(poll,3000); })();

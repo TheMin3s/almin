@@ -65,6 +65,20 @@ public final class AlminConfig {
     public boolean webSupervisor = false;
     /** Command the panel's Start button runs. Required for supervisor mode. */
     public String webStartCommand = "";
+    /** Offer the mods in mods.json to joining players. */
+    public boolean modsAdvertise = true;
+    /**
+     * Disconnect a player who declines when at least one offered mod is marked
+     * required. Self-reported by the client, so this is a house rule rather
+     * than an enforcement mechanism — see {@link ModResponsePayload}.
+     */
+    public boolean modsDenyKicks = false;
+    /**
+     * Require the Almin client mod to play. Vanilla clients are disconnected at
+     * join. Without this, a player can simply not install Almin and never be
+     * shown the mod offer at all.
+     */
+    public boolean requireClientMod = false;
 
     public enum Type { INT, BOOL, TEXT }
 
@@ -155,7 +169,13 @@ public final class AlminConfig {
         boolKey("web-supervisor", "Keep the panel alive after the server stops so it can start it again (read the README first)",
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
         textKey("web-start-command", "Command the Start button runs in supervisor mode, e.g. ./start.sh",
-            c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v)
+            c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v),
+        boolKey("mods-advertise", "Offer the mods listed in mods.json to joining players",
+            c -> c.modsAdvertise, (c, v) -> c.modsAdvertise = (Boolean) v),
+        boolKey("mods-deny-kicks", "Disconnect players who decline when a required mod is offered",
+            c -> c.modsDenyKicks, (c, v) -> c.modsDenyKicks = (Boolean) v),
+        boolKey("require-client-mod", "Require the Almin client mod to play (vanilla clients are disconnected)",
+            c -> c.requireClientMod, (c, v) -> c.requireClientMod = (Boolean) v)
     );
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */

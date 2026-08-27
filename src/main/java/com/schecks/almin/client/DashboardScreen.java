@@ -63,6 +63,7 @@ public final class DashboardScreen extends Screen {
             nav.add("Files", "almin op dir");
         }
         nav.add("Shared", "almin files");
+        nav.add("Mods", "almin mods list");
         nav.add("Masks", "almin mask list");
         nav.add("Config", "almin config");
         nav.add("Updates", "almin update version");

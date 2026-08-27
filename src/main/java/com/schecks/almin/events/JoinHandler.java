@@ -4,6 +4,7 @@ import com.schecks.almin.AlminConfig;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
 import com.schecks.almin.MaskConfig;
+import com.schecks.almin.ModNet;
 import com.schecks.almin.PlayerHistory;
 import com.schecks.almin.ServerVersionPayload;
 import com.schecks.almin.UpdateChecker;
@@ -22,12 +23,26 @@ public final class JoinHandler {
     public static void register() {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             ServerPlayer player = handler.getPlayer();
+            boolean hasClientMod = ServerPlayNetworking.canSend(player, ServerVersionPayload.TYPE);
+
+            // The client-mod requirement is decided before anything else, so a
+            // player who can't stay isn't first recorded as having joined.
+            if (!hasClientMod && AlminConfig.get().requireClientMod) {
+                String url = "https://github.com/" + AlminConfig.get().updateRepo + "/releases";
+                AlminLog.info("[almin] disconnecting {} — no Almin client mod (require-client-mod is on)",
+                    player.getGameProfile().name());
+                player.connection.disconnect(Component.literal(
+                    "This server requires the Almin client mod.\n\nDownload it from:\n" + url));
+                return;
+            }
+
             onJoin(server, player);
             AlminUtil.refreshAllTabs(server);
             // Modded clients self-sync; vanilla clients get a chat warning.
-            if (ServerPlayNetworking.canSend(player, ServerVersionPayload.TYPE)) {
+            if (hasClientMod) {
                 ServerPlayNetworking.send(player,
                     new ServerVersionPayload(UpdateChecker.currentVersion()));
+                ModNet.sendOffers(player);
             } else {
                 sendVanillaClientWarning(player);
             }
