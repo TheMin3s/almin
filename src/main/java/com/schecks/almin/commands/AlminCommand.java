@@ -20,6 +20,7 @@ import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.NanoSupport;
 import com.schecks.almin.PlayerHistory;
 import com.schecks.almin.TrustedOps;
+import com.schecks.almin.Passwords;
 import com.schecks.almin.UpdateChecker;
 import com.schecks.almin.WebUi;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -159,7 +160,10 @@ public final class AlminCommand {
                 .then(Commands.literal("console")
                     .executes(AlminCommand::opConsole))
                 .then(Commands.literal("web")
-                    .executes(AlminCommand::opWeb))
+                    .executes(AlminCommand::opWeb)
+                    .then(Commands.literal("password")
+                        .then(Commands.argument("password", StringArgumentType.greedyString())
+                            .executes(AlminCommand::opWebPassword))))
                 .then(Commands.literal("get")
                     .then(Commands.argument("path", StringArgumentType.greedyString())
                         .executes(AlminCommand::opGet)))
@@ -667,7 +671,8 @@ public final class AlminCommand {
             .append(cmd("/almin op delete <path>",               "Delete a file in mods/config/datapacks/resourcepacks/shared")).append("\n")
             .append(cmd("/almin op rename <path> <newname>",     "Rename a file in those same folders")).append("\n")
             .append(cmd("/almin op console",                     "Open a live server-console viewer")).append("\n")
-            .append(cmd("/almin op web",                         "Show the web dashboard's address and token")).append("\n")
+            .append(cmd("/almin op web",                         "Show the web panel's address and login status")).append("\n")
+            .append(cmd("/almin op web password <pw>",            "Set the web panel's admin login password")).append("\n")
             .append(cmd("/almin op help",                        "Show this message"));
         ctx.getSource().sendSuccess(() -> lines, false);
         return 1;
@@ -680,21 +685,50 @@ public final class AlminCommand {
      */
     private static int opWeb(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer self = ctx.getSource().getPlayerOrException();
-        String url = WebUi.url();
-        if (url == null) {
-            AlminConfig cfg = AlminConfig.get();
+        AlminConfig cfg = AlminConfig.get();
+        if (!WebUi.running()) {
             self.sendSystemMessage(Component.literal(cfg.webUiEnabled
-                    ? "The web dashboard isn't running — check the Almin log for why (port " + cfg.webUiPort + ")."
-                    : "The web dashboard is off. Enable it with /almin config web-ui-enabled true, then restart.")
+                    ? "The web panel isn't running — check the Almin log (configured port " + cfg.webUiPort + ")."
+                    : "The web panel is off. Enable it with /almin config web-ui-enabled true, then restart.")
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
             return 0;
         }
-        self.sendSystemMessage(Component.literal("Web dashboard: ")
+        boolean pwSet = cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank();
+        self.sendSystemMessage(Component.literal("Web panel listening on ")
             .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY))
-            .append(Component.literal(url).setStyle(Style.EMPTY.withColor(ChatFormatting.AQUA))));
+            .append(Component.literal(WebUi.bind() + ":" + WebUi.port())
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)))
+            .append(Component.literal(cfg.webPublicMetrics ? "  (public metrics on)" : "  (public metrics off)")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY))));
+        self.sendSystemMessage(Component.literal(pwSet
+                ? "Admin login is set. Reach it over your HTTPS address (via the Caddy proxy — see config/almin/Caddyfile)."
+                : "No admin password yet — set one with /almin op web password <password> before you get full access.")
+            .setStyle(Style.EMPTY.withColor(pwSet ? ChatFormatting.GREEN : ChatFormatting.YELLOW)));
+        return 1;
+    }
+
+    /**
+     * Sets the web panel's admin password. The plaintext is hashed immediately
+     * (PBKDF2) and only the hash is stored; it never touches the log. Any live
+     * web sessions are dropped, so an old login can't outlive a password change.
+     */
+    private static int opWebPassword(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer self = ctx.getSource().getPlayerOrException();
+        String password = StringArgumentType.getString(ctx, "password");
+        if (password.length() < 8) {
+            self.sendSystemMessage(Component.literal("Pick a password of at least 8 characters.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+            return 0;
+        }
+        AlminConfig.get().webAdminPasswordHash = Passwords.hash(password);
+        AlminConfig.save();
+        WebUi.invalidateSessions();
+        AlminLog.info("[almin] {} set the web admin password", self.getGameProfile().name());
+        self.sendSystemMessage(Component.literal("Web admin password updated. Existing web logins were signed out.")
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)));
         self.sendSystemMessage(Component.literal(
-                "Anyone with that link can read the dashboard and console. It's plain HTTP — keep it off the open internet.")
-            .setStyle(Style.EMPTY.withColor(ChatFormatting.YELLOW)));
+                "Tip: delete your chat line — the password was typed in clear text here.")
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)));
         return 1;
     }
 

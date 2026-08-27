@@ -47,9 +47,11 @@ public class Almin implements ModInitializer {
             UpdateChecker.checkOnBoot(server);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
-            WebUi.stop();
+            // In supervisor mode the panel deliberately outlives the server, so
+            // it can start it again; otherwise this shuts it down with the rest.
+            WebUi.onServerStopped();
             ConsoleTap.stop();
-            AlminLog.close();
+            if (!AlminConfig.get().webSupervisor) AlminLog.close();
         });
     }
 

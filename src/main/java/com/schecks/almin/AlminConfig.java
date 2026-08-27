@@ -44,9 +44,27 @@ public final class AlminConfig {
     public boolean webUiEnabled = true;
     /** 0 until the first startup picks one; see {@link #ensureFirstRunDefaults}. */
     public int webUiPort = 0;
-    public String webUiBind = "0.0.0.0";
-    /** Empty until the first startup generates one. Grants full read access. */
-    public String webUiToken = "";
+    /** Loopback by default — the panel is meant to sit behind the Caddy proxy. */
+    public String webUiBind = "127.0.0.1";
+    /** Serve the unauthenticated basic-metrics view to anyone who can reach it. */
+    public boolean webPublicMetrics = true;
+    /** PBKDF2 hash of the admin password. Empty = login disabled (no full access). */
+    public String webAdminPasswordHash = "";
+    /** How long a web login stays valid. */
+    public int webSessionMinutes = 120;
+    /**
+     * Keep the web panel (and this JVM) alive after the Minecraft server stops,
+     * so the panel can start it again.
+     *
+     * <p>Off by default because it changes what happens at shutdown. With it
+     * off, stopping the server lets the JVM exit — which is what an external
+     * wrapper watches for in order to restart it, and how {@code /almin op
+     * restart} has always worked. Turning it on makes this JVM outlive the
+     * server, so that wrapper would never see the exit.
+     */
+    public boolean webSupervisor = false;
+    /** Command the panel's Start button runs. Required for supervisor mode. */
+    public String webStartCommand = "";
 
     public enum Type { INT, BOOL, TEXT }
 
@@ -124,10 +142,20 @@ public final class AlminConfig {
             c -> c.webUiEnabled, (c, v) -> c.webUiEnabled = (Boolean) v),
         intKey("web-ui-port", "Port the web dashboard listens on (picked at first startup; 0 = pick a new one next start)", 0, 65535,
             c -> c.webUiPort, (c, v) -> c.webUiPort = (Integer) v),
-        textKey("web-ui-bind", "Address the web dashboard binds to (127.0.0.1 = this machine only)",
+        textKey("web-ui-bind", "Address the web dashboard binds to (127.0.0.1 = this machine only; keep it here behind the proxy)",
             c -> c.webUiBind, (c, v) -> c.webUiBind = (String) v),
-        textKey("web-ui-token", "Access token for the web dashboard — anyone with it can read everything",
-            c -> c.webUiToken, (c, v) -> c.webUiToken = (String) v)
+        boolKey("web-public-metrics", "Serve the unauthenticated basic-metrics view (login is always required for the rest)",
+            c -> c.webPublicMetrics, (c, v) -> c.webPublicMetrics = (Boolean) v),
+        // Not settable to a raw value here — /almin op web password hashes it.
+        // Listed so it shows in /almin config and can be cleared to "".
+        textKey("web-admin-password-hash", "PBKDF2 hash of the web admin password (set via /almin op web password <pw>)",
+            c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
+        intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
+            c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
+        boolKey("web-supervisor", "Keep the panel alive after the server stops so it can start it again (read the README first)",
+            c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
+        textKey("web-start-command", "Command the Start button runs in supervisor mode, e.g. ./start.sh",
+            c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v)
     );
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */
@@ -163,24 +191,17 @@ public final class AlminConfig {
     }
 
     /**
-     * Fills in the settings that can't have a sensible fixed default: the web
-     * dashboard's port and access token. Both are generated the first time the
-     * server starts (or if they're cleared from the file) and then persisted,
-     * so the port doesn't collide with a neighbour's guess and the token isn't
-     * the same on every install of the mod.
+     * Picks the web dashboard's port the first time the server starts (or if it
+     * was cleared to 0) and persists it, so it doesn't collide with a
+     * neighbour's guess and bookmarks stay valid. The admin password is not
+     * generated — there's deliberately no default login; an admin sets one with
+     * {@code /almin op web password <pw>} before full access is possible.
      */
     private static void ensureFirstRunDefaults(AlminConfig cfg) {
         if (cfg.webUiPort <= 0) {
             // A quiet stretch of the registered range — high enough to avoid
             // the usual suspects, fixed once so bookmarks keep working.
             cfg.webUiPort = 8100 + new SecureRandom().nextInt(900);
-        }
-        if (cfg.webUiToken == null || cfg.webUiToken.isBlank()) {
-            byte[] raw = new byte[16];
-            new SecureRandom().nextBytes(raw);
-            StringBuilder sb = new StringBuilder(raw.length * 2);
-            for (byte b : raw) sb.append(String.format("%02x", b));
-            cfg.webUiToken = sb.toString();
         }
     }
 

@@ -58,42 +58,25 @@ public final class Dashboard {
     }
 
     /**
-     * Measures everything and renders it into rows for {@code viewer}, which is
-     * null when the console asked (no screen, and nothing to gate on).
+     * The raw measurements behind the dashboard, before any formatting. The row
+     * builders and the web panel's stat tiles both read this, so a number shown
+     * in game and the same number shown in a browser can never disagree.
      */
-    public static DashboardPayload build(MinecraftServer server, ServerPlayer viewer) {
-        List<Row> rows = new ArrayList<>();
-        AlminConfig cfg = AlminConfig.get();
+    public record Metrics(double tps, float tpsTarget, double mspt,
+                          int players, int maxPlayers,
+                          long memUsed, long memMax, int memPct,
+                          long uptimeMillis, int chunks, long entities, int dimensions) {}
 
-        // ---- server ----
-        rows.add(Row.header("Server"));
-        rows.add(Row.metric("Almin", "v" + UpdateChecker.currentVersion()));
-        rows.add(Row.metric("Minecraft", server.getServerVersion()));
-        rows.add(Row.metric("Uptime", startedAt == 0L ? "—" : duration(System.currentTimeMillis() - startedAt)));
-        int online = server.getPlayerList().getPlayerCount();
-        int max = server.getPlayerList().getMaxPlayers();
-        rows.add(Row.metric("Players", online + " / " + max));
-        rows.add(Row.metric("Auto-update", cfg.autoUpdate ? "on" : "off",
-            cfg.autoUpdate ? PLAIN : YELLOW));
-
-        // ---- performance ----
-        rows.add(Row.header("Performance"));
+    /** Takes one measurement pass. Must run on the server thread. */
+    public static Metrics metrics(MinecraftServer server) {
         double mspt = server.getAverageTickTimeNanos() / 1_000_000.0;
         float target = server.tickRateManager().tickrate();
         double tps = mspt <= 0 ? target : Math.min(target, 1000.0 / mspt);
-        rows.add(Row.metric("TPS", String.format(Locale.ROOT, "%.2f / %.0f", tps, target), tpsColour(tps, target)));
-        rows.add(Row.metric("Tick time", String.format(Locale.ROOT, "%.2f ms", mspt), msptColour(mspt, target)));
-        if (server.tickRateManager().isFrozen()) {
-            rows.add(Row.metric("Tick state", "FROZEN", RED));
-        }
 
         Runtime rt = Runtime.getRuntime();
-        long usedBytes = rt.totalMemory() - rt.freeMemory();
-        long maxBytes = rt.maxMemory();
-        int memPct = maxBytes <= 0 ? 0 : (int) (usedBytes * 100 / maxBytes);
-        rows.add(Row.metric("Memory",
-            bytes(usedBytes) + " / " + bytes(maxBytes) + "  (" + memPct + "%)",
-            memPct >= 90 ? RED : memPct >= 75 ? YELLOW : PLAIN));
+        long used = rt.totalMemory() - rt.freeMemory();
+        long max = rt.maxMemory();
+        int pct = max <= 0 ? 0 : (int) (used * 100 / max);
 
         int chunks = 0, worlds = 0;
         long entities = 0;
@@ -102,9 +85,45 @@ public final class Dashboard {
             chunks += level.getChunkSource().getLoadedChunksCount();
             for (Entity ignored : level.getAllEntities()) entities++;
         }
-        rows.add(Row.metric("Loaded chunks", count(chunks)));
-        rows.add(Row.metric("Entities", count(entities)));
-        rows.add(Row.metric("Dimensions", String.valueOf(worlds)));
+        long uptime = startedAt == 0L ? 0L : System.currentTimeMillis() - startedAt;
+        return new Metrics(tps, target, mspt,
+            server.getPlayerList().getPlayerCount(), server.getPlayerList().getMaxPlayers(),
+            used, max, pct, uptime, chunks, entities, worlds);
+    }
+
+    /**
+     * Measures everything and renders it into rows for {@code viewer}, which is
+     * null when the console asked (no screen, and nothing to gate on).
+     */
+    public static DashboardPayload build(MinecraftServer server, ServerPlayer viewer) {
+        List<Row> rows = new ArrayList<>();
+        AlminConfig cfg = AlminConfig.get();
+        Metrics m = metrics(server);
+
+        // ---- server ----
+        rows.add(Row.header("Server"));
+        rows.add(Row.metric("Almin", "v" + UpdateChecker.currentVersion()));
+        rows.add(Row.metric("Minecraft", server.getServerVersion()));
+        rows.add(Row.metric("Uptime", m.uptimeMillis() == 0L ? "—" : duration(m.uptimeMillis())));
+        rows.add(Row.metric("Players", m.players() + " / " + m.maxPlayers()));
+        rows.add(Row.metric("Auto-update", cfg.autoUpdate ? "on" : "off",
+            cfg.autoUpdate ? PLAIN : YELLOW));
+
+        // ---- performance ----
+        rows.add(Row.header("Performance"));
+        rows.add(Row.metric("TPS", String.format(Locale.ROOT, "%.2f / %.0f", m.tps(), m.tpsTarget()),
+            tpsColour(m.tps(), m.tpsTarget())));
+        rows.add(Row.metric("Tick time", String.format(Locale.ROOT, "%.2f ms", m.mspt()),
+            msptColour(m.mspt(), m.tpsTarget())));
+        if (server.tickRateManager().isFrozen()) {
+            rows.add(Row.metric("Tick state", "FROZEN", RED));
+        }
+        rows.add(Row.metric("Memory",
+            bytes(m.memUsed()) + " / " + bytes(m.memMax()) + "  (" + m.memPct() + "%)",
+            m.memPct() >= 90 ? RED : m.memPct() >= 75 ? YELLOW : PLAIN));
+        rows.add(Row.metric("Loaded chunks", count(m.chunks())));
+        rows.add(Row.metric("Entities", count(m.entities())));
+        rows.add(Row.metric("Dimensions", String.valueOf(m.dimensions())));
         ServerLevel overworld = server.overworld();
         rows.add(Row.metric("Weather", overworld.isThundering() ? "thunder"
             : overworld.isRaining() ? "rain" : "clear"));
@@ -171,6 +190,28 @@ public final class Dashboard {
             WebUi.running() ? PLAIN : cfg.webUiEnabled ? RED : PLAIN));
 
         return new DashboardPayload(rows, viewer != null && TrustedOps.isTrusted(viewer.getUUID()));
+    }
+
+    /**
+     * The public tier: a deliberately small, non-sensitive slice for the
+     * unauthenticated web view. Version, uptime, a player count (no names), and
+     * headline performance — nothing about who plays here, the console, the
+     * filesystem, or any setting. Everything an anonymous visitor is allowed to
+     * see is chosen here, by hand, rather than filtered out downstream.
+     */
+    public static List<Row> buildPublic(MinecraftServer server) {
+        List<Row> rows = new ArrayList<>();
+        rows.add(Row.header("Server"));
+        rows.add(Row.metric("Almin", "v" + UpdateChecker.currentVersion()));
+        rows.add(Row.metric("Minecraft", server.getServerVersion()));
+        Metrics m = metrics(server);
+        rows.add(Row.metric("Uptime", m.uptimeMillis() == 0L ? "—" : duration(m.uptimeMillis())));
+        rows.add(Row.metric("Players online", m.players() + " / " + m.maxPlayers()));
+
+        rows.add(Row.header("Performance"));
+        rows.add(Row.metric("TPS", String.format(Locale.ROOT, "%.1f / %.0f", m.tps(), m.tpsTarget()),
+            tpsColour(m.tps(), m.tpsTarget())));
+        return rows;
     }
 
     /** Chat rendering of the same rows, for players without the client mod. */
