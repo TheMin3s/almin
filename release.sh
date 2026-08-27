@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO="TheMin3s/lifesmp"
+REPO="TheMin3s/almin"
 JAVA_HOME_DIR="${JAVA_HOME:-/opt/homebrew/opt/openjdk}"
 
 cd "$(dirname "$0")"

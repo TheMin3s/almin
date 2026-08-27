@@ -36,7 +36,7 @@ public final class AlminConfig {
     private static volatile Path path;
 
     // ---- tunable settings (field initialisers are the defaults) ----
-    public String updateRepo = "TheMin3s/lifesmp";
+    public String updateRepo = "TheMin3s/almin";
     public boolean updateCheckOnBoot = true;
     public boolean autoUpdate = true;
     public String dirWritableRoots = "mods,config,resourcepacks,shared";

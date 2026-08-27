@@ -7,9 +7,9 @@
   "authors": ["schecks"],
   "license": "ARR",
   "contact": {
-    "homepage": "https://github.com/TheMin3s/lifesmp",
-    "sources": "https://github.com/TheMin3s/lifesmp",
-    "issues": "https://github.com/TheMin3s/lifesmp/issues"
+    "homepage": "https://github.com/TheMin3s/almin",
+    "sources": "https://github.com/TheMin3s/almin",
+    "issues": "https://github.com/TheMin3s/almin/issues"
   },
   "environment": "*",
   "entrypoints": {

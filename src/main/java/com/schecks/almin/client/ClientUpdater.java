@@ -30,7 +30,7 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class ClientUpdater {
     /** Hardcoded on purpose: the server only ever supplies a version number. */
-    private static final String REPO = "TheMin3s/lifesmp";
+    private static final String REPO = "TheMin3s/almin";
     private static final long MAX_BYTES = 64L * 1024 * 1024;
     private static final Logger LOG = LoggerFactory.getLogger("almin");
 
