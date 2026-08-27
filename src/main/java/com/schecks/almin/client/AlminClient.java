@@ -5,6 +5,7 @@ import com.schecks.almin.ConsoleOpenPayload;
 import com.schecks.almin.DashboardPayload;
 import com.schecks.almin.DirListingPayload;
 import com.schecks.almin.FileTransferPayload;
+import com.schecks.almin.ModFilePayload;
 import com.schecks.almin.ModOfferPayload;
 import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.ServerVersionPayload;
@@ -50,6 +51,11 @@ public class AlminClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(ModOfferPayload.TYPE, (payload, context) ->
             context.client().execute(() ->
                 ModOfferScreen.offer(payload.mods(), payload.denyDisconnects())));
+
+        // Receive a server-hosted mod jar the player asked for. Handed straight
+        // to the waiting install thread — no main-thread hop, no screen change.
+        ClientPlayNetworking.registerGlobalReceiver(ModFilePayload.TYPE, (payload, context) ->
+            ClientModInstaller.deliver(payload));
 
         // Receive the server's Almin version; self-update if we're behind.
         ClientPlayNetworking.registerGlobalReceiver(ServerVersionPayload.TYPE, (payload, context) ->

@@ -1,7 +1,10 @@
 package com.schecks.almin.client;
 
+import com.schecks.almin.ModFilePayload;
+import com.schecks.almin.ModFileRequestPayload;
 import com.schecks.almin.ModOfferPayload;
 import com.schecks.almin.UpdateChecker;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +22,11 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Downloads mods a player has approved from a server's offer list.
@@ -37,13 +45,42 @@ import java.util.List;
  *       next launch. Nothing is loaded into the running game.</li>
  * </ol>
  *
+ * <p>A server-hosted jar skips all of the URL machinery: the client asks the
+ * server for it by mod id over the connection it is already on, so there is no
+ * third-party host to trust and nothing has to be reachable from the internet.
+ * The size cap, checksum and jar validation still apply.
+ *
  * <p>A failure on one mod does not stop the others; each is reported back.
  */
 public final class ClientModInstaller {
     private static final Logger LOG = LoggerFactory.getLogger("almin");
     private static final long MAX_BYTES = 64L * 1024 * 1024;
+    /** How long to wait for the server to hand over a jar it offered. */
+    private static final long SERVER_FILE_TIMEOUT_SECONDS = 120;
+
+    /**
+     * In-flight requests for server-hosted jars, keyed by mod id. The install
+     * thread parks on the queue; the network thread drops the reply in.
+     *
+     * <p>Buffered rather than a SynchronousQueue on purpose: the reply can
+     * arrive in the window between sending the request and starting to wait,
+     * and a handoff queue would drop it there and stall until the timeout.
+     */
+    private static final Map<String, BlockingQueue<ModFilePayload>> PENDING = new ConcurrentHashMap<>();
 
     private ClientModInstaller() {}
+
+    /** Called from the network thread when the server sends a jar. */
+    public static void deliver(ModFilePayload payload) {
+        BlockingQueue<ModFilePayload> q = PENDING.get(payload.modId());
+        if (q == null) {
+            LOG.warn("[Almin] unsolicited mod file for {} — ignoring", payload.modId());
+            return;
+        }
+        // offer() rather than put(): never block the network thread, even if
+        // the waiter has already given up and nothing will drain the queue.
+        q.offer(payload);
+    }
 
     /** Outcome for one offered mod. */
     public record Outcome(String modId, boolean ok, String detail) {}
@@ -61,15 +98,22 @@ public final class ClientModInstaller {
     private static Outcome install(ModOfferPayload.Offer offer) {
         Path tmp = null;
         try {
-            URI uri = new URI(offer.url());
-            if (!"https".equalsIgnoreCase(uri.getScheme())) {
-                return new Outcome(offer.modId(), false, "refused: not an https URL");
-            }
             Path modsDir = FabricLoader.getInstance().getGameDir().resolve("mods");
             Files.createDirectories(modsDir);
             tmp = Files.createTempFile(modsDir, ".almin-mod-", ".part");
 
-            long size = download(uri, tmp);
+            long size;
+            if (offer.serverHosted()) {
+                byte[] data = fetchFromServer(offer.modId());
+                Files.write(tmp, data);
+                size = data.length;
+            } else {
+                URI uri = new URI(offer.url());
+                if (!"https".equalsIgnoreCase(uri.getScheme())) {
+                    return new Outcome(offer.modId(), false, "refused: not an https URL");
+                }
+                size = download(uri, tmp);
+            }
 
             if (!offer.sha256().isBlank()) {
                 String actual = sha256(tmp);
@@ -97,6 +141,29 @@ public final class ClientModInstaller {
             if (tmp != null) {
                 try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             }
+        }
+    }
+
+    /**
+     * Asks the server for a jar it offered and waits for the reply. Runs on the
+     * install thread, never the network or render thread.
+     */
+    private static byte[] fetchFromServer(String modId) throws IOException, InterruptedException {
+        BlockingQueue<ModFilePayload> q = new ArrayBlockingQueue<>(1);
+        if (PENDING.putIfAbsent(modId, q) != null) {
+            throw new IOException("already requesting this mod");
+        }
+        try {
+            ClientPlayNetworking.send(new ModFileRequestPayload(modId));
+            ModFilePayload reply = q.poll(SERVER_FILE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (reply == null) throw new IOException("the server didn't send the file in time");
+            if (!reply.ok()) {
+                throw new IOException(reply.error().isEmpty() ? "the server sent an empty file" : reply.error());
+            }
+            if (reply.data().length > MAX_BYTES) throw new IOException("file exceeds the size limit");
+            return reply.data();
+        } finally {
+            PENDING.remove(modId);
         }
     }
 

@@ -18,9 +18,16 @@ import java.util.List;
  */
 public record ModOfferPayload(List<Offer> mods, boolean denyDisconnects) implements CustomPacketPayload {
 
-    /** One offered mod. {@code sha256} may be empty, meaning "unpinned". */
+    /**
+     * One offered mod. Exactly one source is set: {@code file} names a jar the
+     * server hosts and will stream over this connection, otherwise {@code url}
+     * is an https link the client fetches itself. {@code sha256} may be empty.
+     */
     public record Offer(String modId, String name, String version, String url,
-                        String sha256, boolean required) {
+                        String sha256, boolean required, String file) {
+        /** True when the jar comes from the server rather than a URL. */
+        public boolean serverHosted() { return file != null && !file.isBlank(); }
+
         public static final StreamCodec<RegistryFriendlyByteBuf, Offer> CODEC =
             StreamCodec.composite(
                 ByteBufCodecs.stringUtf8(128), Offer::modId,
@@ -29,6 +36,7 @@ public record ModOfferPayload(List<Offer> mods, boolean denyDisconnects) impleme
                 ByteBufCodecs.stringUtf8(1024), Offer::url,
                 ByteBufCodecs.stringUtf8(128), Offer::sha256,
                 ByteBufCodecs.BOOL, Offer::required,
+                ByteBufCodecs.stringUtf8(256), Offer::file,
                 Offer::new
             );
     }

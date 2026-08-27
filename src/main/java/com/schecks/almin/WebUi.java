@@ -15,6 +15,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -120,6 +121,9 @@ public final class WebUi {
             http.createContext("/api/mods", ui::handleMods);
             http.createContext("/api/mods/save", ui::handleModSave);
             http.createContext("/api/mods/delete", ui::handleModDelete);
+            http.createContext("/api/mods/files", ui::handleModFiles);
+            http.createContext("/api/mods/upload", ui::handleModUpload);
+            http.createContext("/api/mods/files/delete", ui::handleModFileDelete);
             // In supervisor mode the web threads must be non-daemon, or the JVM
             // exits the moment the server thread ends and takes the panel with it.
             http.setExecutor(Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor)));
@@ -581,6 +585,7 @@ public final class WebUi {
                 j.addProperty("url", m.url());
                 j.addProperty("sha256", m.sha256());
                 j.addProperty("required", m.required());
+                j.addProperty("file", m.file() == null ? "" : m.file());
                 arr.add(j);
             }
             o.add("mods", arr);
@@ -601,19 +606,26 @@ public final class WebUi {
             JsonObject b = readBody(ex);
             String id = b.has("id") ? b.get("id").getAsString().trim() : "";
             String url = b.has("url") ? b.get("url").getAsString().trim() : "";
-            if (id.isEmpty() || url.isEmpty()) { json(ex, 400, err("A mod id and an https URL are required.")); return; }
+            String file = b.has("file") ? b.get("file").getAsString().trim() : "";
+            if (id.isEmpty() || (url.isEmpty() && file.isEmpty())) {
+                json(ex, 400, err("A mod id and either a server file or an https URL are required."));
+                return;
+            }
             ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(
                 id,
                 b.has("name") && !b.get("name").getAsString().isBlank() ? b.get("name").getAsString().trim() : id,
                 b.has("version") ? b.get("version").getAsString().trim() : "",
                 url,
                 b.has("sha256") ? b.get("sha256").getAsString().trim() : "",
-                b.has("required") && b.get("required").getAsBoolean());
+                b.has("required") && b.get("required").getAsBoolean(),
+                b.has("file") ? b.get("file").getAsString().trim() : "");
             ModOffers.AddResult r = ModOffers.add(mod);
             AlminLog.info("[almin] web set mod offer {} -> {} ({})", id, url, r);
             switch (r) {
                 case OK -> json(ex, 200, "{\"ok\":true}");
                 case BAD_URL -> json(ex, 400, err("The URL must be https:// — clients refuse anything else."));
+                case BAD_FILE -> json(ex, 400, err("Invalid filename — use a plain .jar name from modfiles/."));
+                case MISSING_FILE -> json(ex, 400, err("That file isn't in config/almin/modfiles/."));
                 case FULL -> json(ex, 400, err("Already advertising the maximum of " + ModOffers.MAX_OFFERS + "."));
                 case NOT_LOADED -> json(ex, 409, err("Mod offers aren't loaded yet."));
                 default -> json(ex, 500, err("Saved in memory but mods.json couldn't be written."));
@@ -632,6 +644,107 @@ public final class WebUi {
             if (!ModOffers.remove(id)) { json(ex, 404, err("Not advertised: " + id)); return; }
             AlminLog.info("[almin] web removed mod offer {}", id);
             json(ex, 200, "{\"ok\":true}");
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Jars sitting in modfiles/, ready to be advertised. */
+    private void handleModFiles(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!requireServer(ex)) return;
+            List<String> files = onServer(ModOffers::availableFiles, List.of());
+            JsonObject o = new JsonObject();
+            JsonArray arr = new JsonArray();
+            for (String f : files) arr.add(f);
+            o.add("files", arr);
+            o.addProperty("maxBytes", ModOffers.MAX_FILE_BYTES);
+            json(ex, 200, o.toString());
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Uploads a jar into modfiles/ as a raw request body.
+     *
+     * <p>The filename comes from the {@code name} query parameter and is
+     * resolved by {@link ModOffers#resolveModFile}, which only accepts a bare
+     * {@code .jar} name inside that folder — a path can't be smuggled in. The
+     * body is capped, and the finished file must actually be a Fabric mod jar
+     * before it is kept, so this endpoint can't be used to drop arbitrary
+     * content onto the server.
+     */
+    private void handleModUpload(HttpExchange ex) throws IOException {
+        Path tmp = null;
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+
+            String name = queryParam(ex, "name");
+            Path target = onServer(() -> ModOffers.resolveModFile(name), null);
+            if (target == null) {
+                json(ex, 400, err("Filename must be a plain .jar name, e.g. sodium-0.5.11.jar"));
+                return;
+            }
+            Path dir = ModOffers.modFilesDir();
+            if (dir == null) { json(ex, 409, err("Mod file storage isn't ready yet.")); return; }
+
+            long max = ModOffers.MAX_FILE_BYTES;
+            tmp = Files.createTempFile(dir, ".almin-upload-", ".part");
+            long written;
+            try (var in = ex.getRequestBody(); var out = Files.newOutputStream(tmp)) {
+                byte[] buf = new byte[64 * 1024];
+                long total = 0;
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    total += n;
+                    if (total > max) {
+                        json(ex, 413, err("File exceeds the " + (max / (1024 * 1024)) + " MB limit."));
+                        return;
+                    }
+                    out.write(buf, 0, n);
+                }
+                written = total;
+            }
+            if (written == 0) { json(ex, 400, err("Empty upload.")); return; }
+            if (!UpdateChecker.looksLikeValidMod(tmp)) {
+                json(ex, 400, err("That file isn't a Fabric mod jar (no fabric.mod.json inside)."));
+                return;
+            }
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+            tmp = null;
+            AlminLog.info("[almin] web uploaded mod file {} ({} bytes)", name, written);
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            o.addProperty("name", name);
+            o.addProperty("bytes", written);
+            json(ex, 200, o.toString());
+        } finally {
+            if (tmp != null) {
+                try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            }
+            ex.close();
+        }
+    }
+
+    /** Removes a jar from modfiles/. Offers pointing at it stop being sent. */
+    private void handleModFileDelete(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject b = readBody(ex);
+            String name = b.has("name") ? b.get("name").getAsString() : "";
+            Path target = ModOffers.resolveModFile(name);
+            if (target == null || !Files.isRegularFile(target)) { json(ex, 404, err("No such file.")); return; }
+            Files.delete(target);
+            AlminLog.info("[almin] web deleted mod file {}", name);
+            json(ex, 200, "{\"ok\":true}");
+        } catch (IOException e) {
+            json(ex, 500, err("Delete failed: " + e.getMessage()));
         } finally {
             ex.close();
         }
@@ -1321,9 +1434,17 @@ public final class WebUi {
           const wrap=document.createElement('div');
           wrap.innerHTML='<p class="muted">Mods offered to players when they join. '+
             'Nothing is pushed &mdash; each player sees this list and chooses. '+
-            'URLs must be <code>https://</code>; a SHA-256 pins the exact file.</p>'+
+            'Prefer uploading the jar here: players then fetch it straight from this server. '+
+            'External URLs must be <code>https://</code>; a SHA-256 pins the exact file.</p>'+
             '<div id="modsettings" class="muted" style="margin-bottom:10px"></div>'+
             '<div id="modlist"></div>'+
+            '<section style="margin-top:14px"><h2>Upload a jar to this server</h2>'+
+            '<p class="muted">Stored in <code>config/almin/modfiles/</code>. Players download it '+
+            'over their game connection &mdash; no public link, nothing else to host.</p>'+
+            '<input type="file" id="m-file" accept=".jar">'+
+            '<button class="btn" id="m-upload" style="margin-top:8px">Upload</button>'+
+            '<div class="msg" id="m-upmsg"></div>'+
+            '<div id="m-files" style="margin-top:10px"></div></section>'+
             '<section style="margin-top:14px"><h2>Advertise a mod</h2>'+
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
             '<input id="m-id" placeholder="mod id (e.g. sodium)">'+
@@ -1331,13 +1452,19 @@ public final class WebUi {
             '<input id="m-ver" placeholder="version (optional)">'+
             '<input id="m-sha" placeholder="sha256 (optional, recommended)">'+
             '</div>'+
+            '<p class="muted" style="margin:10px 0 4px">Source &mdash; pick an uploaded file, '+
+            'or leave it on &ldquo;URL&rdquo; and paste an https link.</p>'+
+            '<select id="m-src" style="width:100%;background:#0b0d11;border:1px solid var(--line);'+
+            'color:var(--ink);border-radius:8px;padding:9px 11px;font:inherit"></select>'+
             '<input id="m-url" placeholder="https://... direct link to the .jar" style="margin-top:8px">'+
             '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
             '<input type="checkbox" id="m-req" style="width:auto"> Required '+
             '(declining can disconnect, if mods-deny-kicks is on)</label>'+
             '<button class="btn" id="m-save" style="margin-top:10px">Save mod</button>'+
             '<div class="msg" id="m-msg"></div></section>';
-          setTimeout(()=>{ loadMods(); $('m-save').onclick=saveMod; },0);
+          setTimeout(()=>{ loadMods(); loadModFiles();
+            $('m-save').onclick=saveMod; $('m-upload').onclick=uploadMod;
+            $('m-src').onchange=()=>{ $('m-url').style.display=$('m-src').value?'none':''; }; },0);
           return wrap;
         }
         async function loadMods(){
@@ -1361,7 +1488,8 @@ public final class WebUi {
               (m.version?' <span class="muted">'+esc(m.version)+'</span>':'')+
               (m.required?' <span class="state warn">REQUIRED</span>':' <span class="muted">optional</span>')+
               (m.sha256?' <span class="muted">&middot; pinned</span>':'')+
-              '<br><span class="muted" style="font-size:12px">'+esc(m.url)+'</span>';
+              '<br><span class="muted" style="font-size:12px">'+
+              (m.file? 'served by this server &middot; modfiles/'+esc(m.file) : esc(m.url))+'</span>';
             const btn=document.createElement('button'); btn.className='btn danger'; btn.textContent='Remove';
             btn.style.marginLeft='auto';
             btn.onclick=async()=>{ if(!confirm('Stop advertising '+m.id+'?')) return;
@@ -1369,7 +1497,8 @@ public final class WebUi {
               if(d.status!==200) alert(d.body.error||'remove failed'); loadMods(); };
             const edit=document.createElement('button'); edit.className='btn'; edit.textContent=m.required?'Make optional':'Make required';
             edit.onclick=async()=>{ const d=await jpost('/api/mods/save',{
-                id:m.id,name:m.name,version:m.version,url:m.url,sha256:m.sha256,required:!m.required});
+                id:m.id,name:m.name,version:m.version,url:m.url,file:m.file,
+                sha256:m.sha256,required:!m.required});
               if(d.status!==200) alert(d.body.error||'update failed'); loadMods(); };
             row.append(left,edit,btn);
             row.style.gap='8px'; row.style.alignItems='center';
@@ -1377,16 +1506,57 @@ public final class WebUi {
           }
           box.appendChild(sec);
         }
+        async function loadModFiles(){
+          const r=await jget('/api/mods/files');
+          const sel=$('m-src'), box=$('m-files');
+          if(!sel) return;
+          const files=(r.status===200 && r.body.files)?r.body.files:[];
+          sel.innerHTML='<option value="">URL (external https link)</option>'+
+            files.map(f=>'<option value="'+esc(f)+'">server file: '+esc(f)+'</option>').join('');
+          $('m-url').style.display=sel.value?'none':'';
+          if(box){
+            box.innerHTML = files.length
+              ? '<div class="muted">On this server: '+files.map(f=>
+                  '<span style="display:inline-flex;gap:6px;align-items:center;margin:2px 8px 2px 0">'+
+                  esc(f)+' <a href="#" data-f="'+esc(f)+'" class="delfile" style="color:#e97070">remove</a></span>').join('')+'</div>'
+              : '<div class="note">No jars uploaded yet.</div>';
+            box.querySelectorAll('.delfile').forEach(a=>a.onclick=async e=>{
+              e.preventDefault();
+              const f=a.getAttribute('data-f');
+              if(!confirm('Delete '+f+' from the server?')) return;
+              const d=await jpost('/api/mods/files/delete',{name:f});
+              if(d.status!==200) alert(d.body.error||'delete failed');
+              loadModFiles(); loadMods(); });
+          }
+        }
+        async function uploadMod(){
+          const inp=$('m-file'), msg=$('m-upmsg');
+          if(!inp.files || !inp.files.length){ msg.className='msg err'; msg.textContent='Choose a .jar first.'; return; }
+          const f=inp.files[0];
+          msg.className='msg'; msg.textContent='Uploading '+f.name+'…';
+          try{
+            const r=await fetch('/api/mods/upload?name='+encodeURIComponent(f.name),
+              {method:'POST',credentials:'same-origin',
+               headers:{'Content-Type':'application/octet-stream'},body:f});
+            const b=await r.json().catch(()=>({}));
+            msg.className='msg '+(r.status===200?'ok':'err');
+            msg.textContent = r.status===200 ? ('uploaded '+b.name+' ('+b.bytes+' bytes)')
+                                             : (b.error||'upload failed');
+            if(r.status===200){ inp.value=''; loadModFiles(); }
+          }catch(e){ msg.className='msg err'; msg.textContent='upload failed'; }
+        }
         async function saveMod(){
           const msg=$('m-msg');
+          const src=$('m-src').value;
           const r=await jpost('/api/mods/save',{
             id:$('m-id').value.trim(), name:$('m-name').value.trim(),
             version:$('m-ver').value.trim(), sha256:$('m-sha').value.trim(),
-            url:$('m-url').value.trim(), required:$('m-req').checked});
+            file:src, url:src?'':$('m-url').value.trim(), required:$('m-req').checked});
           msg.className='msg '+(r.status===200?'ok':'err');
           msg.textContent = r.status===200 ? 'saved' : (r.body.error||'save failed');
           if(r.status===200){ ['m-id','m-name','m-ver','m-sha','m-url'].forEach(i=>$(i).value='');
-            $('m-req').checked=false; loadMods(); }
+            $('m-req').checked=false; $('m-src').value=''; $('m-url').style.display='';
+            loadMods(); loadModFiles(); }
         }
 
         // ---- polling ----

@@ -71,6 +71,15 @@ public final class AlminCommand {
         return builder.buildFuture();
     };
 
+    /** Tab-completion for jars sitting in config/almin/modfiles/. */
+    private static final SuggestionProvider<CommandSourceStack> MODFILE_SUGGESTIONS = (ctx, builder) -> {
+        String remaining = builder.getRemaining().toLowerCase();
+        for (String name : ModOffers.availableFiles()) {
+            if (name.toLowerCase().startsWith(remaining)) builder.suggest(name);
+        }
+        return builder.buildFuture();
+    };
+
     /** Tab-completion for entries in the server's shared/ folder (/almin get). */
     private static final SuggestionProvider<CommandSourceStack> SHARED_SUGGESTIONS = (ctx, builder) -> {
         String remaining = builder.getRemaining().toLowerCase();
@@ -127,6 +136,13 @@ public final class AlminCommand {
                     .then(Commands.argument("id", StringArgumentType.word())
                         .then(Commands.argument("url", StringArgumentType.greedyString())
                             .executes(AlminCommand::modsAdd))))
+                .then(Commands.literal("addfile")
+                    .then(Commands.argument("id", StringArgumentType.word())
+                        .then(Commands.argument("file", StringArgumentType.greedyString())
+                            .suggests(MODFILE_SUGGESTIONS)
+                            .executes(AlminCommand::modsAddFile))))
+                .then(Commands.literal("files")
+                    .executes(AlminCommand::modsFiles))
                 .then(Commands.literal("remove")
                     .then(Commands.argument("id", StringArgumentType.word())
                         .executes(AlminCommand::modsRemove)))
@@ -454,7 +470,8 @@ public final class AlminCommand {
                     .setStyle(Style.EMPTY.withColor(m.required() ? ChatFormatting.YELLOW : ChatFormatting.DARK_GRAY)))
                .append(Component.literal(m.sha256().isBlank() ? "" : "  [pinned]")
                     .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)))
-               .append(Component.literal("\n    " + m.url() + "\n")
+               .append(Component.literal("\n    "
+                        + (m.serverHosted() ? "server file: modfiles/" + m.file() : m.url()) + "\n")
                     .setStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)));
         }
         out.append(Component.literal("advertise=" + cfg.modsAdvertise
@@ -468,7 +485,7 @@ public final class AlminCommand {
     private static int modsAdd(CommandContext<CommandSourceStack> ctx) {
         String id = StringArgumentType.getString(ctx, "id");
         String url = StringArgumentType.getString(ctx, "url").trim();
-        ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(id, id, "", url, "", false);
+        ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(id, id, "", url, "", false, "");
         switch (ModOffers.add(mod)) {
             case OK -> {
                 String invoker = ctx.getSource().getEntity() == null
@@ -493,6 +510,62 @@ public final class AlminCommand {
                 "Added in memory but mods.json couldn't be written — check the Almin log."));
         }
         return 0;
+    }
+
+    /** Advertises a jar this server already holds in modfiles/. */
+    private static int modsAddFile(CommandContext<CommandSourceStack> ctx) {
+        String id = StringArgumentType.getString(ctx, "id");
+        String file = StringArgumentType.getString(ctx, "file").trim();
+        ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(id, id, "", "", "", false, file);
+        switch (ModOffers.add(mod)) {
+            case OK -> {
+                String invoker = ctx.getSource().getEntity() == null
+                    ? "console" : ctx.getSource().getEntity().getName().getString();
+                AlminLog.info("[almin] {} advertised mod {} from modfiles/{}", invoker, id, file);
+                ctx.getSource().sendSuccess(() ->
+                    Component.literal("Now advertising ").setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN))
+                        .append(Component.literal(id).setStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)))
+                        .append(Component.literal(" from the server's own copy. Players download it "
+                                + "over their game connection — no external link involved.")
+                            .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY))),
+                    false);
+                return 1;
+            }
+            case BAD_FILE -> ctx.getSource().sendFailure(Component.literal(
+                "Invalid filename. Use a plain .jar name that sits directly in config/almin/modfiles/."));
+            case MISSING_FILE -> ctx.getSource().sendFailure(Component.literal(
+                "config/almin/modfiles/" + file + " doesn't exist. /almin mods files to see what's there."));
+            case FULL -> ctx.getSource().sendFailure(Component.literal(
+                "Already advertising the maximum of " + ModOffers.MAX_OFFERS + " mods."));
+            case NOT_LOADED -> ctx.getSource().sendFailure(Component.literal(
+                "Mod offers aren't loaded yet — try again once the server has finished starting."));
+            default -> ctx.getSource().sendFailure(Component.literal(
+                "Added in memory but mods.json couldn't be written — check the Almin log."));
+        }
+        return 0;
+    }
+
+    /** Lists the jars available to advertise from modfiles/. */
+    private static int modsFiles(CommandContext<CommandSourceStack> ctx) {
+        List<String> files = ModOffers.availableFiles();
+        if (files.isEmpty()) {
+            ctx.getSource().sendSuccess(() ->
+                Component.literal("config/almin/modfiles/ is empty. Upload jars there "
+                        + "(web panel Mods tab, or the in-game file browser) and they'll appear here.")
+                    .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)),
+                false);
+            return 0;
+        }
+        MutableComponent out = Component.literal("=== modfiles/ (" + files.size() + ") ===\n")
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.GOLD));
+        for (String f : files) {
+            out.append(Component.literal("  " + f + "\n")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)));
+        }
+        out.append(Component.literal("/almin mods addfile <id> <file> to advertise one")
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)));
+        ctx.getSource().sendSuccess(() -> out, false);
+        return 1;
     }
 
     private static int modsRemove(CommandContext<CommandSourceStack> ctx) {

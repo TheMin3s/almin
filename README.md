@@ -116,19 +116,34 @@ A server can suggest mods to joining players. Manage the list with
 
 ```
 /almin mods                          list what's advertised
-/almin mods add <id> <https-url>     advertise a mod
+/almin mods files                    list jars this server holds
+/almin mods addfile <id> <file>      advertise a jar the server hosts
+/almin mods add <id> <https-url>     advertise one by external link
 /almin mods required <id> true       mark it required
 /almin mods remove <id>              stop advertising it
 /almin mods reload                   re-read mods.json
 ```
 
-Set a version and a `sha256` in `config/almin/mods.json` — the checksum pins the
-exact file, and a client refuses a download that doesn't match it.
+### Where the jar comes from
+
+**Preferred: host it yourself.** Drop the jar in `config/almin/modfiles/` — or
+upload it in the web panel's Mods tab — then advertise it with
+`/almin mods addfile`. Players download it straight from your server over the
+game connection they're already on. Nothing needs a public link, no third-party
+host is involved, and the file never has to be reachable from the internet.
+Jars are capped at 32 MB.
+
+**Alternative: an external link.** `/almin mods add <id> <https-url>` points at
+someone else's host. It must be `https://`.
+
+Either way you can set a `sha256` in `config/almin/mods.json` to pin the exact
+file; a client refuses a download that doesn't match.
 
 ### What a player sees
 
 On join, a client running Almin shows the list: each mod's name, version, and
-**the host the file would come from**. Nothing downloads until they press
+where it comes from — **this server**, or the external host that would serve it.
+Nothing downloads until they press
 Approve. Mods already installed are filtered out, so returning players aren't
 asked again. Approved jars land in `mods/` and load on the client's **next
 launch** — nothing is injected into the running game.
@@ -152,8 +167,14 @@ Fabric gives a server no reliable way to inspect what a client has loaded. Use
 it to steer honest players; don't rely on it to keep dishonest ones out.
 
 **Approving runs someone else's code.** That is the nature of the feature. The
-guards are: `https://` only (enforced when the offer is stored, again before it
-is sent, and again by the client), an optional SHA-256 pin, a 64 MB cap, a check
-that the download really is a Fabric mod jar, and a filename derived from the
-mod id rather than the URL. Only advertise files you control or trust, and
-prefer setting a checksum.
+guards are: `https://` only for external links (enforced when the offer is
+stored, again before it is sent, and again by the client), an optional SHA-256
+pin, a size cap, a check that the download really is a Fabric mod jar, and a
+filename derived from the mod id rather than the URL. Hosting the jar yourself
+removes the third-party host from the picture entirely, which is why it's the
+recommended route.
+
+A client asking for a server-hosted jar sends **only a mod id**. The filename
+comes from the server's own offer list, and `modfiles/` names are restricted to
+a plain `.jar` in that one folder — so the request path can't be turned into
+"read me any file on the server".
