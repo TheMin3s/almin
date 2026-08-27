@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
@@ -29,25 +30,39 @@ public final class DashboardScreen extends Screen {
     private static final int VALUE_COLOR  = 0xFFFFFFFF;
     private static final int NOTE_COLOR   = 0xFF777777;
 
+    // Same palette as the web panel, so the two views read as one product.
+    private static final int TILE_BG      = 0xC0181B21;
+    private static final int TILE_LINE    = 0xFF2B3039;
+    private static final int TRACK        = 0xFF272C35;
+    private static final int GOOD         = 0xFF0CA30C;
+    private static final int WARN         = 0xFFFAB219;
+    private static final int CRIT         = 0xFFD03B3B;
+    private static final int CAP_COLOR    = 0xFF6B7480;
+
+    private static final int TILE_H = 34;
+    private static final int TILES_TOP = 22;
+
     private final List<DashboardPayload.Row> rows;
+    private final DashboardPayload.Tiles tiles;
     private final boolean trusted;
     private RowList list;
 
-    public DashboardScreen(List<DashboardPayload.Row> rows, boolean trusted) {
+    public DashboardScreen(List<DashboardPayload.Row> rows, DashboardPayload.Tiles tiles, boolean trusted) {
         super(Component.literal("Almin — Dashboard"));
         this.rows = rows;
+        this.tiles = tiles;
         this.trusted = trusted;
     }
 
     /** Replaces the open dashboard, or opens one if the screen isn't up. */
-    public static void show(List<DashboardPayload.Row> rows, boolean trusted) {
+    public static void show(List<DashboardPayload.Row> rows, DashboardPayload.Tiles tiles, boolean trusted) {
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(new DashboardScreen(rows, trusted));
+        mc.setScreen(new DashboardScreen(rows, tiles, trusted));
     }
 
     @Override
     protected void init() {
-        int listTop = 24;
+        int listTop = TILES_TOP + TILE_H + 8;
         int listHeight = Math.max(ENTRY_HEIGHT, this.height - listTop - 56);
 
         list = new RowList(this.minecraft, this.width, listHeight, listTop, ENTRY_HEIGHT);
@@ -70,10 +85,22 @@ public final class DashboardScreen extends Screen {
         nav.layout();
 
         // Refresh keeps the screen up — the reply payload replaces it in place.
-        addRenderableWidget(Button.builder(Component.literal("Refresh"), b -> send("almin"))
-            .bounds(this.width / 2 - 76, ctlY, 74, 20).build());
-        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
-            .bounds(this.width / 2 + 2, ctlY, 74, 20).build());
+        // Stop is trusted-only and confirmed; the server re-checks regardless.
+        // There is deliberately no Start here: stopping the server disconnects
+        // this client, so nothing in game would be left to press it.
+        if (trusted) {
+            addRenderableWidget(Button.builder(Component.literal("Refresh"), b -> send("almin"))
+                .bounds(this.width / 2 - 116, ctlY, 74, 20).build());
+            addRenderableWidget(Button.builder(Component.literal("Stop server"), b -> confirmStop())
+                .bounds(this.width / 2 - 38, ctlY, 78, 20).build());
+            addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
+                .bounds(this.width / 2 + 44, ctlY, 74, 20).build());
+        } else {
+            addRenderableWidget(Button.builder(Component.literal("Refresh"), b -> send("almin"))
+                .bounds(this.width / 2 - 76, ctlY, 74, 20).build());
+            addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
+                .bounds(this.width / 2 + 2, ctlY, 74, 20).build());
+        }
     }
 
     /**
@@ -93,10 +120,80 @@ public final class DashboardScreen extends Screen {
         mc.getConnection().sendCommand(command);
     }
 
+    /** Stopping the server drops everyone, so it asks first. */
+    private void confirmStop() {
+        Minecraft mc = this.minecraft;
+        if (mc == null) return;
+        mc.setScreen(new ConfirmScreen(
+            yes -> {
+                if (yes) {
+                    send("almin op restart");
+                    onClose();
+                } else {
+                    mc.setScreen(this);
+                }
+            },
+            Component.literal("Stop the server?"),
+            Component.literal("Every player, including you, will be disconnected.")));
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(g, mouseX, mouseY, partialTick);
-        g.centeredText(this.font, this.title, this.width / 2, 8, 0xFFFFFFFF);
+        g.centeredText(this.font, this.title, this.width / 2, 7, 0xFFFFFFFF);
+        drawTiles(g);
+    }
+
+    /**
+     * The KPI strip: the same four headline numbers the web panel leads with.
+     * Status colours always sit next to a word ("healthy", "high"), so the
+     * state is never carried by colour alone.
+     */
+    private void drawTiles(GuiGraphicsExtractor g) {
+        if (tiles == null) return;
+        int gap = 4;
+        int total = Math.min(this.width - 16, 460);
+        int w = (total - gap * 3) / 4;
+        int x0 = (this.width - total) / 2;
+        int y = TILES_TOP;
+
+        double tps = tiles.tps();
+        float target = tiles.tpsTarget() <= 0 ? 20f : tiles.tpsTarget();
+        int tpsColor = tps >= target - 0.5 ? GOOD : tps >= target * 0.75 ? WARN : CRIT;
+        String tpsWord = tps >= target - 0.5 ? "healthy" : tps >= target * 0.75 ? "strained" : "critical";
+        tile(g, x0, y, w, "TPS", String.format(java.util.Locale.ROOT, "%.2f", tps),
+            tpsWord, tpsColor, (int) Math.round(Math.min(100, tps / target * 100)), tpsColor);
+
+        int pPct = tiles.maxPlayers() > 0 ? tiles.players() * 100 / tiles.maxPlayers() : 0;
+        tile(g, x0 + (w + gap), y, w, "PLAYERS",
+            tiles.players() + " / " + tiles.maxPlayers(), "", VALUE_COLOR, pPct, HEADER_COLOR);
+
+        int mp = tiles.memPct();
+        int memColor = mp >= 90 ? CRIT : mp >= 75 ? WARN : GOOD;
+        String memWord = mp >= 90 ? "critical" : mp >= 75 ? "high" : "normal";
+        tile(g, x0 + (w + gap) * 2, y, w, "MEMORY", mp + "%", memWord, memColor, mp, memColor);
+
+        tile(g, x0 + (w + gap) * 3, y, w, "UPTIME", tiles.uptime(), "", VALUE_COLOR, -1, 0);
+    }
+
+    private void tile(GuiGraphicsExtractor g, int x, int y, int w,
+                      String caption, String value, String word, int valueColor,
+                      int meterPct, int meterColor) {
+        g.fill(x, y, x + w, y + TILE_H, TILE_BG);
+        g.fill(x, y, x + w, y + 1, TILE_LINE);                      // top rule
+        g.fill(x, y + TILE_H - 1, x + w, y + TILE_H, TILE_LINE);    // bottom rule
+        g.text(this.font, Component.literal(caption), x + 4, y + 4, CAP_COLOR, false);
+        g.text(this.font, Component.literal(value), x + 4, y + 14, valueColor, false);
+        if (!word.isEmpty()) {
+            int vw = this.font.width(value);
+            g.text(this.font, Component.literal(word), x + 6 + vw, y + 14, valueColor, false);
+        }
+        if (meterPct >= 0) {
+            int mx = x + 4, my = y + TILE_H - 7, mw = w - 8;
+            g.fill(mx, my, mx + mw, my + 3, TRACK);
+            int filled = Math.max(0, Math.min(mw, mw * Math.min(100, meterPct) / 100));
+            if (filled > 0) g.fill(mx, my, mx + filled, my + 3, meterColor);
+        }
     }
 
     @Override

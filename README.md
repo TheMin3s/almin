@@ -178,3 +178,37 @@ A client asking for a server-hosted jar sends **only a mod id**. The filename
 comes from the server's own offer list, and `modfiles/` names are restricted to
 a plain `.jar` in that one folder — so the request path can't be turned into
 "read me any file on the server".
+
+
+## Who can open the admin UI
+
+The in-game panel is not something a client can open by itself. Every admin
+screen appears only in response to a packet the server chose to send, and the
+server only sends it to a caller who passed a permission check:
+
+| Screen | Opened by | Gate |
+|---|---|---|
+| `/almin` dashboard | `/almin`, `/almin dashboard` | vanilla op **or** TrustedOps UUID |
+| Console viewer | `/almin op console` | TrustedOps UUID |
+| File browser | `/almin op dir` | TrustedOps UUID |
+| Nano editor | `/almin op nano` | TrustedOps UUID |
+| Mod offer prompt | join | everyone — it is player-facing by design |
+
+There is no keybind and no client-side command that opens any of them.
+
+The dashboard's `trusted` flag only decides which buttons are *drawn*. That is
+cosmetic: a modified client can draw whatever it likes, and it gains nothing,
+because every button re-issues an ordinary command and every client→server
+packet re-checks permission on arrival:
+
+| Packet from client | Re-checked against |
+|---|---|
+| console subscribe | `TrustedOps.isTrusted` |
+| directory listing request | `TrustedOps.isTrusted` |
+| nano save (file write) | `TrustedOps.isTrusted` |
+| file upload | `TrustedOps.isTrusted` |
+| mod file request | must be a mod this server currently advertises |
+
+So the answer to "can a normal player reach the admin tools" is no, at both
+layers: they are never handed the screen, and the server would refuse the
+actions even if they built their own.

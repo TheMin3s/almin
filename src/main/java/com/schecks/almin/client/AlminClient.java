@@ -35,7 +35,7 @@ public class AlminClient implements ClientModInitializer {
 
         // Receive a dashboard snapshot; open (or replace) the dashboard screen.
         ClientPlayNetworking.registerGlobalReceiver(DashboardPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> DashboardScreen.show(payload.rows(), payload.trusted())));
+            context.client().execute(() -> DashboardScreen.show(payload.rows(), payload.tiles(), payload.trusted())));
 
         // Receive a nano editing session; open the editor on the main thread.
         ClientPlayNetworking.registerGlobalReceiver(NanoOpenPayload.TYPE, (payload, context) ->

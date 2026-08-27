@@ -17,7 +17,30 @@ import java.util.List;
  * destinations — the commands behind those buttons re-check the caller
  * server-side regardless, so this only decides what is worth drawing.
  */
-public record DashboardPayload(List<Row> rows, boolean trusted) implements CustomPacketPayload {
+public record DashboardPayload(List<Row> rows, Tiles tiles, boolean trusted) implements CustomPacketPayload {
+
+    /**
+     * The handful of headline numbers the in-game screen draws as stat tiles,
+     * sent as values rather than formatted strings so the client can size a
+     * meter bar and colour it. Mirrors what the web panel's tiles show.
+     */
+    public record Tiles(double tps, float tpsTarget, int memPct, String memory,
+                        int players, int maxPlayers, String uptime) {
+        public static final StreamCodec<RegistryFriendlyByteBuf, Tiles> CODEC =
+            StreamCodec.composite(
+                ByteBufCodecs.DOUBLE, Tiles::tps,
+                ByteBufCodecs.FLOAT, Tiles::tpsTarget,
+                ByteBufCodecs.VAR_INT, Tiles::memPct,
+                ByteBufCodecs.stringUtf8(64), Tiles::memory,
+                ByteBufCodecs.VAR_INT, Tiles::players,
+                ByteBufCodecs.VAR_INT, Tiles::maxPlayers,
+                ByteBufCodecs.stringUtf8(32), Tiles::uptime,
+                Tiles::new
+            );
+
+        /** Placeholder for the console, which has no screen to draw on. */
+        public static Tiles empty() { return new Tiles(0, 20, 0, "—", 0, 0, "—"); }
+    }
 
     /** Row kinds. {@link #HEADER} starts a section; {@link #NOTE} is a full-width line. */
     public static final int HEADER = 0;
@@ -54,6 +77,7 @@ public record DashboardPayload(List<Row> rows, boolean trusted) implements Custo
     public static final StreamCodec<RegistryFriendlyByteBuf, DashboardPayload> CODEC =
         StreamCodec.composite(
             Row.CODEC.apply(ByteBufCodecs.list(MAX_ROWS)), DashboardPayload::rows,
+            Tiles.CODEC, DashboardPayload::tiles,
             ByteBufCodecs.BOOL, DashboardPayload::trusted,
             DashboardPayload::new
         );

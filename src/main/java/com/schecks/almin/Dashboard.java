@@ -189,7 +189,13 @@ public final class Dashboard {
             WebUi.running() ? "port " + WebUi.port() : cfg.webUiEnabled ? "failed to start" : "off",
             WebUi.running() ? PLAIN : cfg.webUiEnabled ? RED : PLAIN));
 
-        return new DashboardPayload(rows, viewer != null && TrustedOps.isTrusted(viewer.getUUID()));
+        DashboardPayload.Tiles tiles = new DashboardPayload.Tiles(
+            m.tps(), m.tpsTarget(), m.memPct(),
+            bytes(m.memUsed()) + " / " + bytes(m.memMax()),
+            m.players(), m.maxPlayers(),
+            m.uptimeMillis() == 0L ? "—" : duration(m.uptimeMillis()));
+        return new DashboardPayload(rows, tiles,
+            viewer != null && TrustedOps.isTrusted(viewer.getUUID()));
     }
 
     /**
