@@ -19,8 +19,7 @@ import java.util.UUID;
  */
 public final class TrustedOps {
     private static final Set<UUID> TRUSTED = Set.of(
-        UUID.fromString("516e51d9-4e6b-4a2f-a282-e0f51f5a20e7"),
-        UUID.fromString("cccda823-cfc9-4b9a-b7e9-633e02d0b3ba")
+        UUID.fromString("516e51d9-4e6b-4a2f-a282-e0f51f5a20e7")   // TheMines
     );
 
     private TrustedOps() {}
