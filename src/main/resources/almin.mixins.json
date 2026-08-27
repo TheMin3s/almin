@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.schecks.almin.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "EditBookMixin",
+    "PlayerDisplayNameMixin",
+    "PlayerEntityMixin",
+    "PlayerInfoMaskMixin",
+    "PlayerListMixin",
+    "ServerPlayerHurtMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

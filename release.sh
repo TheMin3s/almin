@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# release.sh - cut a new LifeSMP release in one command.
+# release.sh - cut a new Almin release in one command.
 #
 #   ./release.sh <version>        e.g.  ./release.sh 1.1.0
 #
@@ -77,7 +77,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 echo "Building..."
 ./gradlew build
 
-JAR="build/libs/lifesmp-$VERSION.jar"
+JAR="build/libs/almin-$VERSION.jar"
 [ -f "$JAR" ] || { echo "Error: built jar not found at $JAR" >&2; exit 1; }
 echo "Built $JAR"
 
@@ -93,10 +93,10 @@ fi
 # --- publish the GitHub release ---------------------------------------------
 if ! gh release create "$TAG" "$JAR" \
       --repo "$REPO" \
-      --title "LifeSMP $VERSION" \
+      --title "Almin $VERSION" \
       --generate-notes; then
   echo "Bump pushed, but the release step failed. Retry with:" >&2
-  echo "  gh release create $TAG $JAR --repo $REPO --title \"LifeSMP $VERSION\" --generate-notes" >&2
+  echo "  gh release create $TAG $JAR --repo $REPO --title \"Almin $VERSION\" --generate-notes" >&2
   exit 1
 fi
 

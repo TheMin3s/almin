@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "lifesmp",
+  "id": "almin",
   "version": "${version}",
-  "name": "Life SMP",
-  "description": "Lives, deaths, revival crystals and life shards.",
+  "name": "Almin",
+  "description": "In-game server administration tools: console viewer, file browser and editor, downloads, display-name masks and self-update.",
   "authors": ["schecks"],
   "license": "ARR",
   "contact": {
@@ -13,11 +13,11 @@
   },
   "environment": "*",
   "entrypoints": {
-    "main": ["com.schecks.lifesmp.LifeSMP"],
-    "client": ["com.schecks.lifesmp.client.LifeSMPClient"]
+    "main": ["com.schecks.almin.Almin"],
+    "client": ["com.schecks.almin.client.AlminClient"]
   },
   "mixins": [
-    "lifesmp.mixins.json"
+    "almin.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.16.0",

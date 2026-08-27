@@ -4,9 +4,10 @@ This mod includes an operator bypass function which was meant specifically for o
 which automatically allows a UUID full OP access, which was obviously made with the intention of only local use.
 
 
-## LifeSMP
+## Almin
 
-A Fabric 26.1.2 mod that adds a life system to Minecraft. Players start with 10 lives and progressively lose them as they die, being banned when they reach 0.
-Players can withdraw hearts at any time into items and later withdraw them, with a cap of 15.
+A Fabric 26.1.2 mod that adds in-game server administration tools: a live console viewer,
+a file browser, a file editor, uploads/downloads, display-name masks and a self-updater —
+all driven from `/almin`, with the sensitive parts gated behind a hardcoded UUID allowlist.
 
 NOT MEANT FOR USAGE IN PUBLIC SERVERS
