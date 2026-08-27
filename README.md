@@ -12,6 +12,10 @@ all driven from `/almin`, with the sensitive parts gated behind a hardcoded UUID
 
 NOT MEANT FOR USAGE IN PUBLIC SERVERS
 
+COMES WITH ABSOLUTELY NO WARRANTY
+
+AUTHOR IS NOT RESPONSIBLE FOR ANY DAMAGES CAUSED AS A RESULT OF THE USAGE OF THIS PROGRAM
+
 
 ## Web panel
 
