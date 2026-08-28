@@ -6,6 +6,7 @@ import com.schecks.almin.ModOfferPayload;
 import com.schecks.almin.UpdateChecker;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.ModContainer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,7 +88,71 @@ public final class ClientModInstaller {
 
     /** True if this mod is already loaded, so it need not be offered again. */
     public static boolean alreadyInstalled(ModOfferPayload.Offer offer) {
-        return !offer.modId().isBlank() && FabricLoader.getInstance().isModLoaded(offer.modId());
+        return installedVersion(offer) != null;
+    }
+
+    /**
+     * The version of {@code offer} this client has, or null if it has none.
+     *
+     * <h3>Why this is not just isModLoaded(id)</h3>
+     * It used to be, and it silently failed whenever the advertised id was not
+     * the jar's real Fabric mod id — which is most of the time, because the id
+     * is in {@code fabric.mod.json}, not on the download page. The player was
+     * then offered a mod they already had, on every join, with nothing
+     * anywhere saying why. So the id is tried first and then, failing that,
+     * the loaded mods are searched by normalised id, by what they say they
+     * provide, and by display name.
+     *
+     * <h3>Versions never decide it</h3>
+     * Having a different version counts as having the mod. Someone running
+     * Sodium 0.5.8 against a server suggesting 0.5.11 has Sodium; being asked
+     * to reinstall it every time they log in would be noise, and quietly
+     * replacing their jar would be worse.
+     */
+    public static String installedVersion(ModOfferPayload.Offer offer) {
+        FabricLoader loader = FabricLoader.getInstance();
+        String id = offer.modId();
+        if (!id.isBlank()) {
+            var exact = loader.getModContainer(id);
+            if (exact.isPresent()) return exact.get().getMetadata().getVersion().getFriendlyString();
+        }
+        String wantId = normalise(id);
+        String wantName = normalise(offer.name());
+        if (wantId.isEmpty() && wantName.isEmpty()) return null;
+
+        for (ModContainer c : loader.getAllMods()) {
+            var meta = c.getMetadata();
+            if (matches(wantId, meta.getId()) || matches(wantName, meta.getId())
+                || matches(wantId, meta.getName()) || matches(wantName, meta.getName())) {
+                return meta.getVersion().getFriendlyString();
+            }
+            for (String provided : meta.getProvides()) {
+                if (matches(wantId, provided) || matches(wantName, provided)) {
+                    return meta.getVersion().getFriendlyString();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean matches(String want, String candidate) {
+        return !want.isEmpty() && want.equals(normalise(candidate));
+    }
+
+    /**
+     * Down to letters and digits, lower case.
+     *
+     * <p>"Mod Menu", "modmenu" and "mod-menu" are one mod written three ways;
+     * only the punctuation and case differ, and none of it is meaningful.
+     */
+    private static String normalise(String s) {
+        if (s == null) return "";
+        StringBuilder out = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = Character.toLowerCase(s.charAt(i));
+            if (Character.isLetterOrDigit(c)) out.append(c);
+        }
+        return out.toString();
     }
 
     /** Downloads and installs every offer. Call off the render thread. */

@@ -217,6 +217,11 @@ Almin keeps three logs. Two are about the server — Minecraft's own console, an
 ordinary players have been doing: joins and leaves, chat, commands, block breaks
 and uses, containers opened, PvP hits and deaths.
 
+A masked player joining is announced where only admins see it: the server
+console, `almin.log`, and the activity log. Never in chat — a mask exists so
+other players see the other name, and "X is really Y" in chat would undo it.
+Every admin surface shows the real name first with the mask beside it.
+
 **It never records anyone who can read it.** A player is skipped entirely if
 their UUID is on the trusted allowlist, or if they hold moderator permission or
 above — which is every vanilla op. So it is a record of the unprivileged, kept
@@ -275,6 +280,38 @@ A server can suggest mods to joining players. Manage the list with
 /almin mods remove <id>              stop advertising it
 /almin mods reload                   re-read mods.json
 ```
+
+### Adding from Modrinth
+
+The easiest way, and the one that gets the mod id right:
+
+```
+https://modrinth.com/mod/modmenu
+```
+
+Paste that into the web panel's Mods tab, or just search by name. Almin picks
+the Fabric build for **this server's Minecraft version** — not whatever is
+newest — downloads it, and reads the mod id out of the jar's own
+`fabric.mod.json`.
+
+That last step matters more than it sounds. The mod id is what a player's
+client checks to see whether they already have the mod. It is the id inside the
+jar, which is often not the name on the download page and often not the
+Modrinth slug either. Typed by hand and slightly wrong, detection fails
+silently: the player is offered a mod they already have, on every single join,
+with nothing anywhere saying why. Asking the jar is the only way to be sure, so
+Almin asks the jar.
+
+Uploading a jar yourself does the same thing — the id is read from the file, so
+you never have to know it.
+
+### Different versions
+
+Having a different version counts as having the mod. Someone on Sodium 0.5.8
+against a server suggesting 0.5.11 is not asked to reinstall it, because being
+nagged every login would be worse than the mismatch. Matching also tolerates
+the ways one mod gets written: `Mod Menu`, `modmenu` and `mod-menu` are the
+same thing, and a mod that `provides` another id answers for it too.
 
 ### Where the jar comes from
 

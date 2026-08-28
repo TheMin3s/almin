@@ -281,6 +281,7 @@ public final class WebUi {
         http.createContext("/api/mods/files", guard("/api/mods/files", ui::handleModFiles));
         http.createContext("/api/mods/upload", guard("/api/mods/upload", ui::handleModUpload));
         http.createContext("/api/mods/files/delete", guard("/api/mods/files/delete", ui::handleModFileDelete));
+        http.createContext("/api/mods/modrinth", guard("/api/mods/modrinth", ui::handleModrinth));
         http.createContext("/api/config", guard("/api/config", ui::handleConfig));
         http.createContext("/api/config/reload", guard("/api/config/reload", ui::handleConfigReload));
         http.createContext("/api/password", guard("/api/password", ui::handlePassword));
@@ -1066,8 +1067,10 @@ public final class WebUi {
                 b.has("sha256") ? b.get("sha256").getAsString().trim() : "",
                 b.has("required") && b.get("required").getAsBoolean(),
                 b.has("file") ? b.get("file").getAsString().trim() : "");
+            // If the server holds the jar, believe the jar about its own id.
+            mod = ModOffers.correctFromJar(mod);
             ModOffers.AddResult r = ModOffers.add(mod);
-            AlminLog.info("[almin] web set mod offer {} -> {} ({})", id, url, r);
+            AlminLog.info("[almin] web set mod offer {} -> {} ({})", mod.modId(), url, r);
             switch (r) {
                 case OK -> json(ex, 200, "{\"ok\":true}");
                 case BAD_URL -> json(ex, 400, err("The URL must be https:// — clients refuse anything else."));
@@ -1483,6 +1486,133 @@ public final class WebUi {
         return o.toString();
     }
 
+    /**
+     * Modrinth: search for a mod, or add one by slug or link.
+     *
+     * <p>Adding downloads the file that fits <em>this</em> server's Minecraft
+     * version into {@code modfiles/} and then reads the jar's own
+     * {@code fabric.mod.json} for the mod id. That last step is the point: the
+     * id decides whether a client can tell it already has the mod, and no
+     * amount of care typing it by hand is as reliable as asking the file.
+     *
+     * <p>Both calls reach the internet, so both run on a web thread with the
+     * timeouts that live in {@link Modrinth} and {@link FileFetcher}. Neither
+     * touches the server thread.
+     */
+    private void handleModrinth(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject body = readBody(ex);
+            String action = body.has("action") ? body.get("action").getAsString() : "";
+            String gameVersion = serverGameVersion();
+
+            if ("search".equals(action)) {
+                String query = body.has("query") ? body.get("query").getAsString().trim() : "";
+                if (query.isEmpty()) { json(ex, 400, err("Type something to search for.")); return; }
+                JsonArray hits = new JsonArray();
+                for (Modrinth.Hit h : Modrinth.search(query, gameVersion)) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("slug", h.slug());
+                    o.addProperty("title", h.title());
+                    o.addProperty("description", h.description());
+                    o.addProperty("downloads", h.downloads());
+                    hits.add(o);
+                }
+                JsonObject out = new JsonObject();
+                out.add("hits", hits);
+                out.addProperty("gameVersion", gameVersion);
+                json(ex, 200, out.toString());
+                return;
+            }
+
+            if (!"add".equals(action)) { json(ex, 400, err("Unknown action.")); return; }
+
+            String link = body.has("link") ? body.get("link").getAsString().trim() : "";
+            boolean required = body.has("required") && body.get("required").getAsBoolean();
+            Modrinth.Resolved found = Modrinth.resolve(link, gameVersion);
+            if (!found.ok()) { json(ex, 400, err(found.problem())); return; }
+
+            Path dir = ModOffers.modFilesDir();
+            if (dir == null) { json(ex, 409, err("Mod file storage isn't ready yet.")); return; }
+            Path target = ModOffers.resolveModFile(found.filename());
+            if (target == null) {
+                json(ex, 400, err("Modrinth gave a filename Almin won't store: " + found.filename()));
+                return;
+            }
+
+            AlminLog.info("[almin] fetching {} {} from Modrinth for MC {}",
+                found.slug(), found.version(), gameVersion);
+            FileFetcher.FetchResult fetched =
+                FileFetcher.fetch(found.url(), target, server.getServerDirectory());
+            if (!fetched.ok()) { json(ex, 400, err("Download failed: " + fetched.message())); return; }
+            if (!UpdateChecker.looksLikeValidMod(target)) {
+                try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+                json(ex, 400, err("That download isn't a Fabric mod jar."));
+                return;
+            }
+
+            // The jar's own id, which is the whole reason for downloading it here.
+            ModJars.Meta meta = ModJars.read(target);
+            ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(
+                meta.ok() ? meta.modId() : found.slug(),
+                meta.ok() && !meta.name().isBlank() ? meta.name() : found.title(),
+                meta.ok() && !meta.version().isBlank() ? meta.version() : found.version(),
+                "", sha256Of(target), required, found.filename());
+            ModOffers.AddResult r = ModOffers.add(mod);
+
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", r == ModOffers.AddResult.OK);
+            out.addProperty("modId", mod.modId());
+            out.addProperty("name", mod.name());
+            out.addProperty("version", mod.version());
+            out.addProperty("file", mod.file());
+            out.addProperty("bytes", fetched.bytes());
+            out.addProperty("message", r == ModOffers.AddResult.OK
+                ? "Added " + mod.name() + " " + mod.version() + " as " + mod.modId()
+                : "Downloaded, but the list refused it: " + r);
+            json(ex, r == ModOffers.AddResult.OK ? 200 : 400, out.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** The display name a player is currently wearing, or "" for none. */
+    private static String maskOf(String uuid) {
+        try {
+            String mask = MaskConfig.maskFor(java.util.UUID.fromString(uuid));
+            return mask == null ? "" : mask;
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** The Minecraft version this server is, as Modrinth spells it. */
+    private String serverGameVersion() {
+        try {
+            return server.getServerVersion();
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** SHA-256 of a file, so an advertisement can pin what it points at. */
+    private static String sha256Of(Path file) {
+        try (var in = Files.newInputStream(file)) {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) digest.update(buf, 0, n);
+            StringBuilder hex = new StringBuilder(64);
+            for (byte b : digest.digest()) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     // ---------- routes: player activity ----------
 
     /** Rows sent to a browser in one response. The page scrolls; it doesn't need all of them. */
@@ -1527,6 +1657,10 @@ public final class WebUi {
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
+            // The mask is a live lookup, not part of the row: masks change, and
+            // the log is a record of who did something, not of what they were
+            // called at the time.
+            o.addProperty("mask", maskOf(e.uuid()));
             o.addProperty("action", e.action());
             o.addProperty("detail", e.detail());
             o.addProperty("where", e.where());

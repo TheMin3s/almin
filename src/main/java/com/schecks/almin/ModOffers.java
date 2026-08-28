@@ -211,6 +211,33 @@ public final class ModOffers {
     public enum AddResult { OK, BAD_URL, BAD_FILE, MISSING_FILE, DUPLICATE, FULL, NOT_LOADED, IO_ERROR }
 
     /** Adds (or replaces) an offer and writes mods.json. */
+    /**
+     * Corrects an advertisement against the jar it points at.
+     *
+     * <p>The mod id decides whether a client can tell it already has the mod,
+     * and a hand-typed one is usually the Modrinth slug or the display name
+     * rather than the id in {@code fabric.mod.json}. When the server holds the
+     * jar it can simply read the truth, so it does — the typed id becomes a
+     * fallback for when the file says nothing.
+     */
+    public static AdvertisedMod correctFromJar(AdvertisedMod mod) {
+        if (!mod.serverHosted()) return mod;
+        Path jar = resolveModFile(mod.file());
+        if (jar == null) return mod;
+        ModJars.Meta meta = ModJars.read(jar);
+        if (!meta.ok()) return mod;
+        String name = mod.name() == null || mod.name().isBlank() || mod.name().equals(mod.modId())
+            ? meta.name() : mod.name();
+        String version = mod.version() == null || mod.version().isBlank()
+            ? meta.version() : mod.version();
+        if (!meta.modId().equals(mod.modId())) {
+            AlminLog.info("[almin] mod id for {} corrected to '{}' from the jar itself",
+                mod.file(), meta.modId());
+        }
+        return new AdvertisedMod(meta.modId(), name, version,
+            mod.url(), mod.sha256(), mod.required(), mod.file());
+    }
+
     public static synchronized AddResult add(AdvertisedMod mod) {
         if (path == null) return AddResult.NOT_LOADED;
         if (mod.modId() == null || mod.modId().isBlank()) return AddResult.BAD_URL;

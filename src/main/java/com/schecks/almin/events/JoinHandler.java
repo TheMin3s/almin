@@ -1,5 +1,6 @@
 package com.schecks.almin.events;
 
+import com.schecks.almin.ActivityLog;
 import com.schecks.almin.AlminConfig;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
@@ -18,6 +19,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
 public final class JoinHandler {
+    /** Masked joins are one of the few things worth putting on the console. */
+    private static final org.slf4j.Logger CONSOLE = org.slf4j.LoggerFactory.getLogger("almin");
+
     private JoinHandler() {}
 
     public static void register() {
@@ -37,6 +41,7 @@ public final class JoinHandler {
             }
 
             onJoin(server, player);
+            noteMask(player);
             AlminUtil.refreshAllTabs(server);
             // Modded clients self-sync; vanilla clients get a chat warning.
             if (hasClientMod) {
@@ -60,6 +65,23 @@ public final class JoinHandler {
             // Bank this session's playtime before the player is gone.
             PlayerHistory.get(server).recordLeave(player.getUUID());
         });
+    }
+
+    /**
+     * Says, where only admins will see it, that a masked player has joined.
+     *
+     * <p>Deliberately not a broadcast. A mask exists so other players see the
+     * other name; announcing "X is really Y" in chat would undo it. This goes
+     * to the server console, to almin.log, and into the activity log — the
+     * three places only someone with access is looking.
+     */
+    private static void noteMask(ServerPlayer player) {
+        String mask = MaskConfig.maskFor(player.getUUID());
+        if (mask == null || mask.isBlank()) return;
+        String real = player.getGameProfile().name();
+        AlminLog.info("[almin] {} joined wearing the mask '{}'", real, mask);
+        CONSOLE.info("[almin] {} is appearing as '{}'", real, mask);
+        ActivityLog.record(player, "mask", "appearing as " + mask);
     }
 
     /** Three chat lines nudging a vanilla client to install the Almin mod. */

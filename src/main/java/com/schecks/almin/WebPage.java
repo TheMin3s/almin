@@ -142,7 +142,7 @@ final class WebPage {
           .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:9px;font-size:12px;color:var(--dim)}
           .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;
                     margin-right:4px;vertical-align:-1px}
-          .arow{display:grid;grid-template-columns:52px 130px 110px 1fr auto;gap:10px;align-items:baseline;
+          .arow{display:grid;grid-template-columns:52px 190px 110px 1fr auto;gap:10px;align-items:baseline;
                 padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.045);font-size:13px}
           .arow:last-child{border-bottom:0}
           .arow .ago{color:var(--mute);font-variant-numeric:tabular-nums}
@@ -604,8 +604,11 @@ final class WebPage {
           const row=document.createElement('div'); row.className='row';
           row.style.alignItems='center'; row.style.gap='8px';
           const left=document.createElement('span'); left.className='k'; left.style.whiteSpace='normal';
+          // Real name first and always: an admin screen that showed only the
+          // mask would be the one place the mask was not supposed to work.
           left.innerHTML='<b style="color:var(--ink)">'+esc(p.name)+'</b>'+
-            (p.mask?' <span class="muted">shown as</span> <span style="color:var(--brand)">'+esc(p.mask)+'</span>':'')+
+            (p.mask?' <span class="muted">appears to players as</span> '+
+              '<span style="color:var(--brand)">'+esc(p.mask)+'</span>':'')+
             '<br><span class="muted" style="font-size:12px">'+esc(sub)+'</span>';
           const set=document.createElement('button'); set.className='btn';
           set.textContent=p.mask?'Change mask':'Set mask'; set.style.marginLeft='auto';
@@ -825,7 +828,9 @@ final class WebPage {
             const d=document.createElement('div'); d.className='arow';
             const col=ACTION_COLOR[e.action]||'#9aa3ae';
             d.innerHTML='<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
-              '<span class="who">'+esc(e.player)+'</span>'+
+              '<span class="who">'+esc(e.player)+
+                (e.mask?' <span class="muted" style="font-weight:400">as '+
+                  esc(e.mask)+'</span>':'')+'</span>'+
               '<span class="what" style="color:'+col+'">'+esc(e.action)+
                 (e.count>1?' &times;'+e.count:'')+'</span>'+
               '<span class="det" title="'+esc(e.detail)+'">'+esc(e.detail)+'</span>'+
@@ -1016,22 +1021,38 @@ final class WebPage {
         // ---- advertised mods ----
         function modsPanel(){
           const wrap=document.createElement('div');
-          wrap.innerHTML='<p class="muted">Mods offered to players when they join. '+
-            'Nothing is pushed &mdash; each player sees this list and chooses. '+
-            'Prefer uploading the jar here: players then fetch it straight from this server. '+
-            'External URLs must be <code>https://</code>; a SHA-256 pins the exact file.</p>'+
+          wrap.innerHTML='<p class="muted">Mods this server suggests when someone joins. '+
+            'Nothing is installed without the player agreeing.</p>'+
             '<div id="modsettings" class="muted" style="margin-bottom:10px"></div>'+
-            '<div id="modlist"></div>'+
-            '<section style="margin-top:14px"><h2>Upload a jar to this server</h2>'+
+            '<section><h2>Add from Modrinth</h2>'+
+            '<p class="muted">The easiest way, and the one that gets the mod id right: Almin '+
+            'downloads the build that fits the Minecraft version this server runs, and reads '+
+            'the id '+
+            'out of the jar. Search, or paste a link like '+
+            '<code>https://modrinth.com/mod/modmenu</code>.</p>'+
+            '<div class="term"><input id="mr-q" placeholder="search Modrinth, or paste a project link">'+
+            '<button class="btn" id="mr-go">Search</button>'+
+            '<button class="btn go" id="mr-add">Add link</button></div>'+
+            '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
+            '<input type="checkbox" id="mr-req" style="width:auto"> Mark anything added as required</label>'+
+            '<div class="msg" id="mr-msg"></div>'+
+            '<div id="mr-hits"></div></section>'+
+            '<div id="modlist" style="margin-top:13px"></div>'+
+            '<section style="margin-top:14px"><h2>Or upload a jar yourself</h2>'+
             '<p class="muted">Stored in <code>config/almin/modfiles/</code>. Players download it '+
-            'over their game connection &mdash; no public link, nothing else to host.</p>'+
+            'over their game connection &mdash; no public link, nothing else to host. Almin reads '+
+            'the mod id out of the jar, so you do not have to know it.</p>'+
             '<input type="file" id="m-file" accept=".jar">'+
             '<button class="btn" id="m-upload" style="margin-top:8px">Upload</button>'+
             '<div class="msg" id="m-upmsg"></div>'+
             '<div id="m-files" style="margin-top:10px"></div></section>'+
-            '<section style="margin-top:14px"><h2>Advertise a mod</h2>'+
+            '<section style="margin-top:14px"><h2>Advertise by hand</h2>'+
+            '<p class="muted">Only needed for a mod that is not on Modrinth. The mod id must be '+
+            'the one inside <code>fabric.mod.json</code> in the jar &mdash; not the name on the '+
+            'download page &mdash; or a client cannot tell it already has the mod. '+
+            'Upload the jar instead and Almin works it out.</p>'+
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
-            '<input id="m-id" placeholder="mod id (e.g. sodium)">'+
+            '<input id="m-id" placeholder="fabric mod id (e.g. sodium)">'+
             '<input id="m-name" placeholder="display name (optional)">'+
             '<input id="m-ver" placeholder="version (optional)">'+
             '<input id="m-sha" placeholder="sha256 (optional, recommended)">'+
@@ -1048,8 +1069,56 @@ final class WebPage {
             '<div class="msg" id="m-msg"></div></section>';
           setTimeout(()=>{ loadMods(); loadModFiles();
             $('m-save').onclick=saveMod; $('m-upload').onclick=uploadMod;
+            $('mr-go').onclick=searchModrinth;
+            $('mr-add').onclick=()=>addModrinth($('mr-q').value.trim());
+            $('mr-q').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); searchModrinth(); } };
             $('m-src').onchange=()=>{ $('m-url').style.display=$('m-src').value?'none':''; }; },0);
           return wrap;
+        }
+
+        // ---- Modrinth ----
+        async function searchModrinth(){
+          const q=$('mr-q').value.trim(), msg=$('mr-msg'), box=$('mr-hits');
+          if(!q){ msg.className='msg err'; msg.textContent='Type something to search for.'; return; }
+          // A pasted link is not a search; it is the thing itself.
+          if(/modrinth\\.com\\//i.test(q)) return addModrinth(q);
+          msg.className='msg'; msg.textContent='Searching…'; box.innerHTML='';
+          const r=await jpost('/api/mods/modrinth',{action:'search',query:q});
+          if(r.status!==200){ msg.className='msg err';
+            msg.textContent=r.body.error||'search failed'; return; }
+          const hits=r.body.hits||[];
+          msg.className='msg';
+          msg.textContent=hits.length
+            ? hits.length+' Fabric mod'+(hits.length===1?'':'s')+' for Minecraft '+r.body.gameVersion
+            : 'Nothing on Modrinth matches that for Minecraft '+r.body.gameVersion+'.';
+          box.innerHTML='';
+          if(!hits.length) return;
+          const sec=document.createElement('section'); sec.style.marginTop='10px';
+          for(const h of hits){
+            const row=document.createElement('div'); row.className='row';
+            row.style.alignItems='center'; row.style.gap='8px';
+            const left=document.createElement('span'); left.className='k';
+            left.style.whiteSpace='normal';
+            left.innerHTML='<b style="color:var(--ink)">'+esc(h.title)+'</b> '+
+              '<span class="muted">'+h.downloads.toLocaleString()+' downloads</span>'+
+              '<br><span class="muted" style="font-size:12px">'+esc(h.description)+'</span>';
+            const btn=document.createElement('button'); btn.className='btn go'; btn.textContent='Add';
+            btn.style.marginLeft='auto';
+            btn.onclick=()=>addModrinth(h.slug);
+            row.append(left,btn); sec.appendChild(row);
+          }
+          box.appendChild(sec);
+        }
+        async function addModrinth(link){
+          const msg=$('mr-msg');
+          if(!link){ msg.className='msg err'; msg.textContent='Paste a link or search first.'; return; }
+          msg.className='msg'; msg.textContent='Fetching '+esc(link)+'…';
+          const r=await jpost('/api/mods/modrinth',
+            {action:'add',link:link,required:$('mr-req').checked});
+          msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent=r.body.message||r.body.error||'failed';
+          if(r.status===200){ $('mr-q').value=''; $('mr-hits').innerHTML='';
+            loadMods(); loadModFiles(); }
         }
         async function loadMods(){
           const r=await jget('/api/mods');
@@ -1068,12 +1137,13 @@ final class WebPage {
           for(const m of mods){
             const row=document.createElement('div'); row.className='row';
             const left=document.createElement('span'); left.className='k';
+            left.style.whiteSpace='normal';
             left.innerHTML='<b style="color:var(--ink)">'+esc(m.name||m.id)+'</b>'+
               (m.version?' <span class="muted">'+esc(m.version)+'</span>':'')+
               (m.required?' <span class="state warn">REQUIRED</span>':' <span class="muted">optional</span>')+
               (m.sha256?' <span class="muted">&middot; pinned</span>':'')+
-              '<br><span class="muted" style="font-size:12px">'+
-              (m.file? 'served by this server &middot; modfiles/'+esc(m.file) : esc(m.url))+'</span>';
+              '<br><span class="muted" style="font-size:12px">id <code>'+esc(m.id)+'</code>'+
+              ' &middot; '+(m.file? 'served by this server ('+esc(m.file)+')' : esc(m.url))+'</span>';
             const btn=document.createElement('button'); btn.className='btn danger'; btn.textContent='Remove';
             btn.style.marginLeft='auto';
             btn.onclick=async()=>{ if(!confirm('Stop advertising '+m.id+'?')) return;
