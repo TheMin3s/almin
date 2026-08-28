@@ -56,6 +56,9 @@ public final class DashboardScreen extends Screen {
 
     /** Replaces the open dashboard, or opens one if the screen isn't up. */
     public static void show(List<DashboardPayload.Row> rows, DashboardPayload.Tiles tiles, boolean trusted) {
+        // The other screens draw their tab strip from this, so it has to be
+        // current before any of them can open.
+        AlminNav.setTrusted(trusted);
         Minecraft mc = Minecraft.getInstance();
         mc.setScreenAndShow(new DashboardScreen(rows, tiles, trusted));
     }
@@ -109,8 +112,16 @@ public final class DashboardScreen extends Screen {
      * screen; the ones that open their own screen replace it anyway.
      */
     private void run(String command) {
+        // onClose() first — it clears the flag, so mark the launch after it.
         onClose();
+        AlminNav.launchedFromDashboard();
         send(command);
+    }
+
+    @Override
+    public void onClose() {
+        AlminNav.leftAdminUi();
+        super.onClose();
     }
 
     /** Runs a command without closing the dashboard. */

@@ -35,12 +35,16 @@ public final class ConsoleScreen extends Screen {
     @Override
     protected void init() {
         int listTop = 24;
-        int listHeight = Math.max(ENTRY_HEIGHT, this.height - listTop - 36);
+        // Room for the tab strip above the Done row.
+        int listHeight = Math.max(ENTRY_HEIGHT, this.height - listTop - 60);
 
         list = new ConsoleList(this.minecraft, this.width, listHeight, listTop, ENTRY_HEIGHT);
         for (String line : buffer) list.add(new LineEntry(line));
         addRenderableWidget(list);
 
+        for (var b : AlminNav.bar(this.width, this.height - 52, "Console", this::navigateTo)) {
+            addRenderableWidget(b);
+        }
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
             .bounds(this.width / 2 - 75, this.height - 28, 150, 20)
             .build());
@@ -55,11 +59,26 @@ public final class ConsoleScreen extends Screen {
 
     @Override
     public void onClose() {
+        unsubscribe();
+        AlminNav.leftAdminUi();
+        super.onClose();
+    }
+
+    /**
+     * Leaves for another admin screen. Unsubscribes first — the server would
+     * otherwise keep streaming console lines to a screen that is gone — but
+     * keeps the dashboard breadcrumb, since we're still inside the admin UI.
+     */
+    private void navigateTo(String command) {
+        unsubscribe();
+        AlminNav.send(command);
+    }
+
+    private void unsubscribe() {
         if (subscribed) {
             ClientPlayNetworking.send(new ConsoleSubscribePayload(false));
             subscribed = false;
         }
-        super.onClose();
     }
 
     /** Receives a batch of lines from the network. Called from AlminClient. */

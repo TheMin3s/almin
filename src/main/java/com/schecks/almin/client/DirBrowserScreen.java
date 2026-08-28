@@ -51,7 +51,8 @@ public final class DirBrowserScreen extends Screen {
     @Override
     protected void init() {
         int listTop = 28;
-        int listHeight = Math.max(ENTRY_HEIGHT, this.height - listTop - 46);
+        // Room for the tab strip above the file-action row.
+        int listHeight = Math.max(ENTRY_HEIGHT, this.height - listTop - 70);
 
         list = new DirList(this.minecraft, this.width, listHeight, listTop, ENTRY_HEIGHT);
         for (DirListingPayload.Entry e : entries) {
@@ -81,8 +82,20 @@ public final class DirBrowserScreen extends Screen {
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
             .bounds(this.width - 48, by, 44, 20).build());
 
+        for (var b : AlminNav.bar(this.width, by - 24, "Files", AlminNav::send)) {
+            addRenderableWidget(b);
+        }
+
         upButton.active = !path.isEmpty();
         uploadButton.active = isUploadable(path);
+    }
+
+    @Override
+    public void onClose() {
+        // Leaving for the game, not for another admin screen — drop the
+        // dashboard breadcrumb so a later hand-typed command doesn't inherit it.
+        AlminNav.leftAdminUi();
+        super.onClose();
     }
 
     private DirListingPayload.Entry selected() {
