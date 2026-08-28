@@ -52,7 +52,10 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
             buf.writeUtf(clip(e.uuid(), MAX_UUID), MAX_UUID);
             buf.writeUtf(clip(e.action(), MAX_ACTION), MAX_ACTION);
             buf.writeUtf(clip(e.detail(), MAX_DETAIL), MAX_DETAIL);
-            buf.writeUtf(clip(e.where(), MAX_WHERE), MAX_WHERE);
+            buf.writeUtf(clip(e.dim(), MAX_WHERE), MAX_WHERE);
+            buf.writeVarInt(e.x());
+            buf.writeVarInt(e.y());
+            buf.writeVarInt(e.z());
             buf.writeVarInt(Math.max(1, e.count()));
         }
         buf.writeVarInt(p.total);
@@ -71,6 +74,9 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
                 buf.readUtf(MAX_ACTION),
                 buf.readUtf(MAX_DETAIL),
                 buf.readUtf(MAX_WHERE),
+                buf.readVarInt(),
+                buf.readVarInt(),
+                buf.readVarInt(),
                 buf.readVarInt()));
         }
         return new ActivityPayload(rows, buf.readVarInt(), buf.readVarInt(), buf.readBoolean());

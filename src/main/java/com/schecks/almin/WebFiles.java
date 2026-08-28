@@ -194,14 +194,39 @@ public final class WebFiles {
 
     /** Applies the write rules to {@code rel} without touching its contents. */
     public static Target uploadTarget(MinecraftServer server, String rel) {
-        Path target = resolveSafe(server, rel);
-        if (target == null) return new Target(null, "Path escapes server directory");
+        Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR)
+            .toAbsolutePath().normalize().getParent();
+        return uploadTarget(root(server), AlminConfig.get().dirWritableRootsAsSet(),
+            datapacks, rel);
+    }
+
+    /**
+     * The same rules, without a server behind them.
+     *
+     * <p>None of this touches world state — it is path arithmetic, the config,
+     * and one {@code isDirectory} — so it does not belong on the server thread,
+     * and hopping there only added a way for an upload to time out and report
+     * something misleading. Server-free also means it can be exercised for
+     * real, against a real directory, which is how the rules are checked.
+     */
+    public static Target uploadTarget(Path root, java.util.Set<String> writableRoots,
+                                      Path datapacksParent, String rel) {
+        Path target = resolveUnder(root, rel);
+        if (target == null) return new Target(null, "Path escapes the server directory");
         if (isOwnJar(target)) return new Target(null, "Refusing to overwrite Almin's own jar");
-        if (!isWritable(server, target)) {
-            return new Target(null, "Uploads are limited to: " + AlminConfig.get().dirWritableRoots
-                + " (or a world's datapacks/)");
+        if (target.equals(root.toAbsolutePath().normalize())) {
+            return new Target(null, "That is the server directory itself");
         }
-        if (Files.isDirectory(target)) return new Target(null, "Path is a directory");
+        Path relative = root.toAbsolutePath().normalize().relativize(target);
+        if (relative.getNameCount() == 0) return new Target(null, "No filename given");
+        String top = relative.getName(0).toString();
+        boolean allowed = writableRoots.contains(top)
+            || (datapacksParent != null && target.startsWith(datapacksParent));
+        if (!allowed) {
+            return new Target(null, "Uploads are limited to " + String.join(", ", writableRoots)
+                + " (or a world's datapacks folder) — " + top + " is not one of them");
+        }
+        if (Files.isDirectory(target)) return new Target(null, "A folder already exists there");
         return new Target(target, "");
     }
 
@@ -213,7 +238,12 @@ public final class WebFiles {
      * to fit in a textarea.
      */
     public static Path downloadable(MinecraftServer server, String rel) {
-        Path target = resolveSafe(server, rel);
+        return downloadable(root(server), rel);
+    }
+
+    /** As above, without a server: a read is path arithmetic and a stat. */
+    public static Path downloadable(Path root, String rel) {
+        Path target = resolveUnder(root, rel);
         if (target == null || !Files.isRegularFile(target)) return null;
         return target;
     }

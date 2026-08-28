@@ -70,9 +70,21 @@ public final class ActivityLog {
     /** Hard ceiling on one field, so a crafted name or sign can't bloat a row. */
     private static final int MAX_FIELD = 160;
 
-    /** One thing a player did. {@code count} is 1 unless rows were folded. */
+    /**
+     * One thing a player did. {@code count} is 1 unless rows were folded.
+     *
+     * <p>The place is kept as numbers rather than a formatted string so it can
+     * be drawn on a map as well as read in a list.
+     */
     public record Entry(long at, String player, String uuid, String action,
-                        String detail, String where, int count) {}
+                        String detail, String dim, int x, int y, int z, int count) {
+
+        /** "overworld 1,2,3", for anywhere that shows a line rather than a map. */
+        public String where() {
+            if (dim == null || dim.isEmpty()) return "";
+            return dim + " " + x + "," + y + "," + z;
+        }
+    }
 
     /** Rows allowed to wait for the writer before the oldest are dropped. */
     private static final int MAX_PENDING = 50_000;
@@ -171,10 +183,23 @@ public final class ActivityLog {
 
     /** Records one action, if the log is on and this player is watched. */
     public static void record(ServerPlayer player, String action, String detail) {
+        record(player, action, detail, false);
+    }
+
+    /**
+     * As above, but folding a repeat of the same thing into the previous row.
+     * Used for anything a player can do many times a second — damage ticks,
+     * eating, clicking an entity.
+     */
+    public static void recordFolded(ServerPlayer player, String action, String detail) {
+        record(player, action, detail, true);
+    }
+
+    private static void record(ServerPlayer player, String action, String detail, boolean fold) {
         if (!AlminConfig.get().activityLog) return;
         if (!watched(player)) return;
         store(player.getGameProfile().name(), player.getUUID().toString(),
-            action, detail, where(player), false);
+            action, detail, player, player.blockPosition(), fold);
     }
 
     /**
@@ -186,7 +211,7 @@ public final class ActivityLog {
         if (!cfg.activityLog || !cfg.activityBlocks) return;
         if (!watched(player)) return;
         store(player.getGameProfile().name(), player.getUUID().toString(),
-            action, block, where(player, pos), true);
+            action, block, player, pos, true);
     }
 
     /**
@@ -200,7 +225,13 @@ public final class ActivityLog {
      *                 previous row's count instead of adding another
      */
     private static void store(String rawName, String uuid, String action, String rawDetail,
-                              String where, boolean foldable) {
+                              ServerPlayer at, BlockPos pos, boolean foldable) {
+        store(rawName, uuid, action, rawDetail, dimensionOf(at),
+            pos.getX(), pos.getY(), pos.getZ(), foldable);
+    }
+
+    private static void store(String rawName, String uuid, String action, String rawDetail,
+                              String dim, int x, int y, int z, boolean foldable) {
         String name = clip(rawName);
         String detail = clip(rawDetail);
         long now = System.currentTimeMillis();
@@ -209,17 +240,17 @@ public final class ActivityLog {
                 Entry last = entries.peekLast();
                 if (last != null && last.action().equals(action) && last.player().equals(name)
                         && last.detail().equals(detail) && now - last.at() < COALESCE_MS) {
-                    // Replace the tail with a bumped count. The copy already
-                    // queued for disk is superseded at the next prune, which
-                    // rewrites the file from memory.
+                    // Replace the tail with a bumped count, moved to where it
+                    // last happened. The copy already queued for disk is
+                    // superseded at the next prune, which rewrites from memory.
                     entries.pollLast();
                     entries.addLast(new Entry(now, name, last.uuid(), action, detail,
-                        where, last.count() + 1));
+                        dim, x, y, z, last.count() + 1));
                     return;
                 }
             }
         }
-        add(new Entry(now, name, uuid, action, detail, where, 1));
+        add(new Entry(now, name, uuid, action, detail, dim, x, y, z, 1));
     }
 
     private static void add(Entry e) {
@@ -240,13 +271,13 @@ public final class ActivityLog {
         pendingCount.incrementAndGet();
     }
 
-    private static String where(ServerPlayer p) {
-        return where(p, p.blockPosition());
-    }
-
-    private static String where(ServerPlayer p, BlockPos pos) {
-        String dim = p.level().dimension().identifier().getPath();
-        return dim + " " + pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    /** The short dimension name, e.g. "overworld" or "the_nether". */
+    public static String dimensionOf(ServerPlayer p) {
+        try {
+            return p.level().dimension().identifier().getPath();
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     private static String clip(String s) {
@@ -276,6 +307,8 @@ public final class ActivityLog {
         synchronized (ActivityLog.class) {
             entries.clear();
         }
+        // The map is the same record seen another way; it goes too.
+        PlayerTracks.clear();
         pending.clear();
         pendingCount.set(0);
         Path f = file;
@@ -378,7 +411,10 @@ public final class ActivityLog {
         o.addProperty("uuid", e.uuid());
         o.addProperty("action", e.action());
         o.addProperty("detail", e.detail());
-        o.addProperty("where", e.where());
+        o.addProperty("dim", e.dim());
+        o.addProperty("x", e.x());
+        o.addProperty("y", e.y());
+        o.addProperty("z", e.z());
         o.addProperty("count", e.count());
         return o;
     }
@@ -386,13 +422,45 @@ public final class ActivityLog {
     private static Entry fromJson(String line) {
         try {
             JsonObject o = JsonParser.parseString(line).getAsJsonObject();
+            // Rows written before the place became numbers carry a "where"
+            // string instead; read what can be read and keep the rest.
+            String dim = str(o, "dim");
+            int x = num(o, "x"), y = num(o, "y"), z = num(o, "z");
+            if (dim.isEmpty() && o.has("where")) {
+                String[] parts = str(o, "where").split(" ");
+                if (parts.length == 2) {
+                    dim = parts[0];
+                    String[] xyz = parts[1].split(",");
+                    if (xyz.length == 3) {
+                        x = parseOr(xyz[0], 0);
+                        y = parseOr(xyz[1], 0);
+                        z = parseOr(xyz[2], 0);
+                    }
+                }
+            }
             return new Entry(
                 o.get("at").getAsLong(),
-                str(o, "player"), str(o, "uuid"), str(o, "action"),
-                str(o, "detail"), str(o, "where"),
+                str(o, "player"), str(o, "uuid"), str(o, "action"), str(o, "detail"),
+                dim, x, y, z,
                 o.has("count") ? o.get("count").getAsInt() : 1);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    private static int num(JsonObject o, String k) {
+        try {
+            return o.has(k) && !o.get(k).isJsonNull() ? o.get(k).getAsInt() : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static int parseOr(String s, int fallback) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
         }
     }
 

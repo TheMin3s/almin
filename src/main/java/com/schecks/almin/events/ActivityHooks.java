@@ -1,16 +1,21 @@
 package com.schecks.almin.events;
 
 import com.schecks.almin.ActivityLog;
+import com.schecks.almin.AlminConfig;
 import com.schecks.almin.AlminLog;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -89,14 +94,30 @@ public final class ActivityHooks {
             return InteractionResult.PASS;
         });
 
+        // Every swing at anything, not only at people: hitting a mob is the
+        // difference between a fight and a grief report. Folded, because a
+        // player fighting produces one of these per swing.
         AttackEntityCallback.EVENT.register((player, level, hand, target, hit) -> {
-            // Hitting mobs is noise; hitting people is the point.
-            if (!level.isClientSide() && player instanceof ServerPlayer p
-                    && target instanceof ServerPlayer victim) {
+            if (!level.isClientSide() && player instanceof ServerPlayer p && combat()) {
                 safely("attack", () ->
-                    ActivityLog.record(p, "attack", victim.getGameProfile().name()));
+                    ActivityLog.recordFolded(p, "attack", nameOf(target)));
             }
             return InteractionResult.PASS;
+        });
+
+        // Damage taken, which is where "who hit whom" actually lives: an arrow,
+        // a potion or a mob never goes through the attack callback at all.
+        ServerLivingEntityEvents.AFTER_DAMAGE.register((entity, source, blocked, taken, byShield) -> {
+            if (entity instanceof ServerPlayer p && combat()) {
+                safely("hurt", () -> {
+                    String from = source.getEntity() != null
+                        ? nameOf(source.getEntity())
+                        : source.type().msgId();
+                    String detail = from + "  " + Math.round(taken) + " damage"
+                        + (byShield ? " (blocked)" : "");
+                    ActivityLog.recordFolded(p, "hurt", detail);
+                });
+            }
         });
 
         ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
@@ -105,6 +126,46 @@ public final class ActivityHooks {
                     ActivityLog.record(p, "death", source.getLocalizedDeathMessage(p).getString()));
             }
         });
+
+        ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
+            safely("respawn", () -> ActivityLog.record(newPlayer, "respawn",
+                alive ? "returned from the End" : "")));
+
+        // Eating, drinking, throwing, firing a bow. Folded — eating one meal is
+        // several of these.
+        UseItemCallback.EVENT.register((player, level, hand) -> {
+            if (!level.isClientSide() && player instanceof ServerPlayer p && items()) {
+                ItemStack held = p.getItemInHand(hand);
+                if (!held.isEmpty()) {
+                    safely("item", () -> ActivityLog.recordFolded(p, "item", itemName(held)));
+                }
+            }
+            return InteractionResult.PASS;
+        });
+
+        // Right-clicking an entity: trading with a villager, naming, leashing,
+        // shearing, mounting.
+        UseEntityCallback.EVENT.register((player, level, hand, target, hit) -> {
+            if (!level.isClientSide() && player instanceof ServerPlayer p && items()) {
+                safely("interact", () -> ActivityLog.recordFolded(p, "interact", nameOf(target)));
+            }
+            return InteractionResult.PASS;
+        });
+    }
+
+    private static boolean combat() {
+        return AlminConfig.get().activityCombat;
+    }
+
+    private static boolean items() {
+        return AlminConfig.get().activityItems;
+    }
+
+    /** A player's account name, or an entity's type name. */
+    private static String nameOf(Entity e) {
+        if (e == null) return "?";
+        if (e instanceof ServerPlayer p) return p.getGameProfile().name();
+        return e.getType().getDescription().getString();
     }
 
     private static String blockName(BlockState state) {

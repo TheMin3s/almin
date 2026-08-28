@@ -114,7 +114,7 @@ in `config/almin/config.json` and `/almin config`.
 |---|---|
 | Overview | live metrics, TPS trend, the dashboard rows |
 | Console | the server log, tailing, with a command box under it |
-| Files | browse, edit, upload, download, rename, delete, and fetch a URL onto the server |
+| Files | browse, upload, download, rename, delete, fetch a URL, and an editor that opens when you pick a file |
 | Activity | what ordinary players have been doing, with a filter |
 | Players | who's online, who's been on before, and display-name masks |
 | Mods | the mods advertised to joining players, and the jars behind them |
@@ -231,7 +231,27 @@ life rather than accumulating: a day by default, from memory and from
 | `activity-log` | `true` | record at all |
 | `activity-retention-minutes` | `1440` | how long a row survives — 5 minutes to 7 days |
 | `activity-max-entries` | `20000` | ceiling on the log; oldest rows drop first |
-| `activity-blocks` | `true` | include block breaks and uses |
+| `activity-blocks` | `true` | block breaks and block use |
+| `activity-combat` | `true` | damage taken, hits landed, deaths |
+| `activity-items` | `true` | item use, entity interaction, containers |
+| `activity-track-seconds` | `5` | position sampling for the map; 0 turns it off |
+
+Recorded: joins and leaves, chat, commands, block breaks and use, containers
+opened, item use, entity interaction, hits landed, damage taken and by what,
+deaths, and respawns.
+
+### The movement map
+
+The web panel's Activity tab draws one player's path from above — X across, Z
+down, the way Minecraft's own maps read — with their actions marked on it.
+Hover a marker for what happened and when. Dimensions are drawn separately,
+because overworld and nether coordinates share numbers without sharing places.
+
+Movement is sampled, not followed: a position every `activity-track-seconds`,
+and only when the player has actually gone somewhere, so standing still adds
+nothing. Points are held in memory only and expire on the same clock as the
+log — they are never written to disk, so a restart starts the map fresh. That
+is a deliberate limit on how long a record of someone's movements can exist.
 
 Block edits would otherwise drown everything else, so consecutive edits of the
 same block by the same player fold into one row with a count — `break ×47

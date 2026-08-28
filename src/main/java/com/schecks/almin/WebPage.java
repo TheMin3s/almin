@@ -106,7 +106,7 @@ final class WebPage {
           input,textarea{background:#0b0d11;border:1px solid var(--line);color:var(--ink);border-radius:8px;
                          padding:9px 11px;font:inherit;width:100%;outline:none}
           input:focus,textarea:focus{border-color:var(--brand)}
-          textarea{font:12px/1.5 ui-monospace,Menlo,monospace;min-height:50vh;resize:vertical}
+          textarea{font:12px/1.5 ui-monospace,Menlo,monospace;min-height:46vh;resize:vertical}
           .term{display:flex;gap:8px;margin-top:12px}
           .term input{font:12px/1.5 ui-monospace,Menlo,monospace}
           .files{display:grid;grid-template-columns:minmax(250px,1fr) 2fr;gap:14px;margin-top:14px}
@@ -132,6 +132,16 @@ final class WebPage {
           .btn.on{border-color:var(--good);color:#a8e6a8}
           .act{max-height:64vh;overflow:auto;background:var(--card);border:1px solid var(--line);
                border-radius:12px;padding:6px 4px}
+          .mapwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;
+                   padding:10px;position:relative}
+          .mapwrap svg{display:block;width:100%;height:min(60vh,560px);
+                       background:#0b0d11;border-radius:8px}
+          .maptip{position:absolute;pointer-events:none;background:#0b0d11;
+                  border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
+                  color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
+          .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:9px;font-size:12px;color:var(--dim)}
+          .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;
+                    margin-right:4px;vertical-align:-1px}
           .arow{display:grid;grid-template-columns:52px 130px 110px 1fr auto;gap:10px;align-items:baseline;
                 padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.045);font-size:13px}
           .arow:last-child{border-bottom:0}
@@ -429,12 +439,10 @@ final class WebPage {
           const wrap=document.createElement('div'); wrap.className='files';
           const listBox=document.createElement('div'); listBox.className='flist'; listBox.id='flist';
           const ed=document.createElement('div'); ed.className='editor';
-          ed.innerHTML='<div class="bar"><input id="fpath" placeholder="path under a writable root, e.g. config/almin/config.json">'+
-            '<button class="btn" id="fsave">Save</button><button class="btn" id="fdl">Download</button>'+
-            '<button class="btn danger" id="fdel">Delete</button>'+
-            '<button class="btn" id="fren">Rename</button></div>'+
-            '<textarea id="fbody" placeholder="Select a file to edit, or type a path above and Save to create one."></textarea>'+
-            '<div class="msg" id="fmsg"></div>'+
+          // The editor is a mode, not the default view. It used to fill this
+          // column with a 50vh textarea whether or not anything was open,
+          // which pushed upload and fetch off the bottom of the page.
+          ed.innerHTML=
             '<section><h2>Put a file in this folder</h2>'+
             '<p class="muted" id="fupwhere"></p>'+
             '<input type="file" id="fup">'+
@@ -443,14 +451,41 @@ final class WebPage {
             '<section><h2>Download a link straight to the server</h2>'+
             '<div class="term"><input id="ffurl" placeholder="https://... link to a jar, pack or config">'+
             '<button class="btn" id="ffgo">Fetch</button></div>'+
-            '<p class="muted" style="margin-top:6px">Saved into the folder shown on the left, '+
+            '<p class="muted" style="margin-top:6px">Saved into the folder on the left, '+
             'keeping the name from the link.</p>'+
-            '<div class="msg" id="ffmsg"></div></section>';
+            '<div class="msg" id="ffmsg"></div></section>'+
+            '<section><h2>Editor</h2>'+
+            '<p class="muted">Click a text file on the left to edit it, or start a new one.</p>'+
+            '<button class="btn" id="fnew">New file\u2026</button></section>';
           wrap.append(listBox,ed);
           setTimeout(()=>{ loadDir(curDir);
-            $('fsave').onclick=saveFile; $('fdel').onclick=delFile; $('fren').onclick=renFile;
-            $('fdl').onclick=dlFile; $('fupgo').onclick=upFile; $('ffgo').onclick=fetchUrl; },0);
+            $('fupgo').onclick=upFile; $('ffgo').onclick=fetchUrl;
+            $('fnew').onclick=()=>openEditor('', true); },0);
           return wrap;
+        }
+
+        /**
+         * Swaps the right-hand column into edit mode. `fresh` means a new file:
+         * the path box starts in the current folder and the body starts empty.
+         */
+        function openEditor(path, fresh){
+          const ed=document.querySelector('.editor'); if(!ed) return;
+          const start = fresh ? (curDir ? curDir+'/' : '') : path;
+          ed.innerHTML='<div class="bar">'+
+            '<input id="fpath" placeholder="path under a writable root">'+
+            '<button class="btn" id="fsave">Save</button>'+
+            '<button class="btn" id="fdl">Download</button>'+
+            '<button class="btn danger" id="fdel">Delete</button>'+
+            '<button class="btn" id="fren">Rename</button>'+
+            '<button class="btn" id="fclose">Close</button></div>'+
+            '<textarea id="fbody" placeholder="'+
+            (fresh?'Type the contents, set the path, then Save.':'Loading\u2026')+'"></textarea>'+
+            '<div class="msg" id="fmsg"></div>';
+          $('fpath').value=start;
+          $('fsave').onclick=saveFile; $('fdel').onclick=delFile; $('fren').onclick=renFile;
+          $('fdl').onclick=dlFile; $('fclose').onclick=()=>{ render(); };
+          if(fresh){ $('fbody').value=''; $('fpath').focus(); }
+          else openFile(path);
         }
         function dlFile(){
           const p=$('fpath').value.trim();
@@ -472,9 +507,9 @@ final class WebPage {
             const b=await r.json().catch(()=>({}));
             msg.className='msg '+(r.status===200?'ok':'err');
             msg.textContent = r.status===200 ? ('uploaded '+b.path+' ('+b.bytes+' bytes)')
-                                             : (b.error||'upload failed');
+                                             : (b.error||('upload failed ('+r.status+')'));
             if(r.status===200){ inp.value=''; loadDir(curDir); }
-          }catch(e){ msg.className='msg err'; msg.textContent='upload failed'; }
+          }catch(e){ msg.className='msg err'; msg.textContent='upload failed: '+e.message; }
         }
         async function fetchUrl(){
           const msg=$('ffmsg'), url=$('ffurl').value.trim();
@@ -504,14 +539,20 @@ final class WebPage {
             const full = path ? path+'/'+e.name : e.name;
             row.innerHTML='<span>'+(e.directory?'📁':'📄')+' '+esc(e.name)+'</span>'+
               (e.directory?'':'<span class="sz">'+(e.size>=0?e.size+' B':'')+'</span>');
-            row.onclick=()=> e.directory ? loadDir(full) : openFile(full);
+            row.onclick=()=> e.directory ? loadDir(full) : openEditor(full, false);
             box.appendChild(row);
           }
         }
         async function openFile(path){
           const r=await jget('/api/file?path='+encodeURIComponent(path));
-          const msg=$('fmsg');
-          if(r.status!==200){ msg.className='msg err'; msg.textContent=r.body.error||'could not open'; return; }
+          const msg=$('fmsg'); if(!msg) return;
+          if(r.status!==200){
+            msg.className='msg err';
+            msg.textContent=(r.body.error||'could not open')+
+              ' — use Download for anything that is not text.';
+            $('fbody').value='';
+            return;
+          }
           $('fpath').value=path; $('fbody').value=r.body.content; msg.className='msg'; msg.textContent='';
         }
         async function saveFile(){
@@ -526,7 +567,7 @@ final class WebPage {
           const r=await jpost('/api/file/delete',{path:p});
           const msg=$('fmsg'); msg.className='msg '+(r.body.ok?'ok':'err');
           msg.textContent=r.body.ok?'deleted':(r.body.message||r.body.error||'delete failed');
-          if(r.body.ok){ $('fbody').value=''; $('fpath').value=''; loadDir(curDir); }
+          if(r.body.ok){ loadDir(curDir); render(); }
         }
         async function renFile(){
           const p=$('fpath').value; if(!p) return;
@@ -608,8 +649,10 @@ final class WebPage {
 
         // ---- player activity ----
         const ACTION_COLOR = { chat:'#7fd1f0', command:'#ffab33', container:'#c792ea',
-                               death:'#e05a5a', attack:'#ff8a65', join:'#57c957',
-                               leave:'#8b9096' };
+                               death:'#e05a5a', attack:'#ff8a65', hurt:'#d98b6a',
+                               join:'#57c957', leave:'#8b9096', respawn:'#8fd98f',
+                               item:'#d3c26a', interact:'#9c8ce0', use:'#7f8a99',
+                               'break':'#9aa3ae' };
         function activityPanel(){
           const wrap=document.createElement('div');
           wrap.innerHTML='<p class="muted">What ordinary players have been doing. '+
@@ -621,17 +664,135 @@ final class WebPage {
             '<button class="btn" id="a-refresh">Refresh</button>'+
             '<button class="btn danger" id="a-clear">Clear log</button></div>'+
             '<div id="a-meta" class="muted" style="margin-bottom:8px"></div>'+
-            '<div class="act" id="a-rows"><div class="note">loading…</div></div>'+
+            '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'+
+            '<span class="muted">Map</span>'+
+            '<select id="a-who" style="background:#0b0d11;border:1px solid var(--line);'+
+            'color:var(--ink);border-radius:8px;padding:7px 10px;font:inherit;min-width:170px"></select>'+
+            '<span class="muted" id="a-dims"></span></div>'+
+            '<div id="a-map"></div>'+
+            '<div class="act" id="a-rows" style="margin-top:12px"><div class="note">loading…</div></div>'+
             '<div class="msg" id="a-msg"></div>';
           setTimeout(()=>{
-            loadActivity();
-            $('a-refresh').onclick=loadActivity;
+            loadActivity(); loadTrackList();
+            $('a-refresh').onclick=()=>{ loadActivity(); loadTrack($('a-who').value); };
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
             $('a-filter').oninput=paintActivity;
+            $('a-who').onchange=()=>loadTrack($('a-who').value);
           },0);
           return wrap;
+        }
+
+        // ---- the movement map ----
+        let trackData=null, trackDim='';
+        async function loadTrackList(){
+          const sel=$('a-who'); if(!sel) return;
+          const r=await jget('/api/track');
+          const players=(r.status===200 && r.body.players)?r.body.players:{};
+          const names=Object.keys(players);
+          sel.innerHTML='<option value="">— pick a player —</option>'+
+            names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+' ('+players[n]+' points)</option>').join('');
+          const box=$('a-map');
+          if(!names.length && box){
+            box.innerHTML='<div class="note">No movement recorded yet'+
+              ((r.body&&r.body.trackSeconds===0)?' — activity-track-seconds is 0, so the map is off.'
+                                                :'. It fills in as people play.')+'</div>';
+          }
+        }
+        async function loadTrack(who){
+          const box=$('a-map'); if(!box) return;
+          if(!who){ box.innerHTML=''; trackData=null; return; }
+          box.innerHTML='<div class="note">loading…</div>';
+          const r=await jget('/api/track?player='+encodeURIComponent(who));
+          if(r.status!==200){ box.innerHTML='<div class="note">'+
+            esc(r.body.error||'unavailable')+'</div>'; return; }
+          trackData=r.body; trackDim='';
+          paintMap();
+        }
+        function paintMap(){
+          const box=$('a-map'); if(!box || !trackData) return;
+          const pts=trackData.points||[], acts=trackData.actions||[];
+          if(!pts.length && !acts.length){
+            box.innerHTML='<div class="note">Nothing recorded for '+esc(trackData.player)+' yet.</div>';
+            $('a-dims').textContent=''; return;
+          }
+          // One dimension at a time: overworld and nether coordinates share
+          // numbers but not places, and drawing them together is a lie.
+          const dims=[...new Set(pts.concat(acts).map(p=>p.dim).filter(Boolean))];
+          if(!trackDim || !dims.includes(trackDim)) trackDim=dims[0]||'';
+          const P=pts.filter(p=>p.dim===trackDim), A=acts.filter(p=>p.dim===trackDim);
+
+          const dimPick=dims.length>1
+            ? dims.map(d=>'<button class="btn'+(d===trackDim?' on':'')+'" '+
+                'data-dim="'+esc(d)+'" style="padding:3px 9px;font-size:12px;margin-right:6px">'+
+                esc(d)+'</button>').join('')
+            : '';
+          $('a-dims').innerHTML = dimPick || esc(trackDim);
+
+          // Top-down: x across, z down, which is how Minecraft's own maps read.
+          const xs=P.concat(A).map(p=>p.x), zs=P.concat(A).map(p=>p.z);
+          let minX=Math.min(...xs), maxX=Math.max(...xs);
+          let minZ=Math.min(...zs), maxZ=Math.max(...zs);
+          const padBlocks=Math.max(8,(Math.max(maxX-minX,maxZ-minZ))*0.06);
+          minX-=padBlocks; maxX+=padBlocks; minZ-=padBlocks; maxZ+=padBlocks;
+          // Square the aspect so a corridor doesn't come out as a smear.
+          const spanX=maxX-minX, spanZ=maxZ-minZ, span=Math.max(spanX,spanZ,16);
+          const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2;
+          const W=1000, H=Math.round(W*0.62);
+          const sx=v=>((v-cx)/span)*W*0.92+W/2;
+          const sz=v=>((v-cz)/span)*H*0.92*(W/H)/(W/H)+H/2;
+
+          const path=P.map((p,i)=>(i?'L':'M')+sx(p.x).toFixed(1)+' '+sz(p.z).toFixed(1)).join(' ');
+          const grid=[];
+          for(let g=0;g<=4;g++){
+            const gx=(W/4)*g, gy=(H/4)*g;
+            grid.push('<line x1="'+gx+'" y1="0" x2="'+gx+'" y2="'+H+'" stroke="#1b1f27"/>');
+            grid.push('<line x1="0" y1="'+gy+'" x2="'+W+'" y2="'+gy+'" stroke="#1b1f27"/>');
+          }
+          const dots=A.map((a,i)=>
+            '<circle class="mk" data-i="'+i+'" cx="'+sx(a.x).toFixed(1)+'" cy="'+sz(a.z).toFixed(1)+
+            '" r="5" fill="'+(ACTION_COLOR[a.action]||'#9aa3ae')+'" fill-opacity=".85" '+
+            'stroke="#0b0d11" stroke-width="1.5"/>').join('');
+          const start=P.length?'<circle cx="'+sx(P[0].x).toFixed(1)+'" cy="'+sz(P[0].z).toFixed(1)+
+            '" r="4" fill="none" stroke="#57c957" stroke-width="2"/>':'';
+          const end=P.length?'<circle cx="'+sx(P[P.length-1].x).toFixed(1)+'" cy="'+
+            sz(P[P.length-1].z).toFixed(1)+'" r="4" fill="#57c957"/>':'';
+
+          box.innerHTML='<div class="mapwrap">'+
+            '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" '+
+            'aria-label="Movement map for '+esc(trackData.player)+'">'+
+            grid.join('')+
+            '<path d="'+path+'" fill="none" stroke="#3d6fb5" stroke-width="2.5" '+
+            'stroke-linejoin="round" stroke-linecap="round"/>'+
+            start+end+dots+'</svg>'+
+            '<div class="maptip" id="a-tip"></div>'+
+            '<div class="legend" id="a-legend"></div></div>';
+
+          const used=[...new Set(A.map(a=>a.action))];
+          $('a-legend').innerHTML=
+            '<span><i style="background:#3d6fb5"></i>path</span>'+
+            '<span><i style="background:#57c957"></i>latest position</span>'+
+            used.map(u=>'<span><i style="background:'+(ACTION_COLOR[u]||'#9aa3ae')+'"></i>'+
+              esc(u)+'</span>').join('')+
+            '<span class="muted">'+P.length+' points · '+A.length+' actions · '+
+            Math.round(span)+' blocks across</span>';
+
+          const svg=box.querySelector('svg'), tip=$('a-tip');
+          box.querySelectorAll('.mk').forEach(el=>{
+            el.addEventListener('mouseenter',e=>{
+              const a=A[+el.getAttribute('data-i')];
+              tip.textContent=a.action+(a.count>1?' ×'+a.count:'')+
+                (a.detail?' · '+a.detail:'')+' · '+a.x+','+a.y+','+a.z+' · '+fmtAgo(a.at);
+              const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect();
+              tip.style.left=(r.left-b.left+(+el.getAttribute('cx'))/W*r.width)+'px';
+              tip.style.top=(r.top-b.top+(+el.getAttribute('cy'))/H*r.height-26)+'px';
+              tip.style.opacity='1';
+            });
+            el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
+          });
+          const dimButtons=$('a-dims').querySelectorAll('[data-dim]');
+          dimButtons.forEach(b=>b.onclick=()=>{ trackDim=b.getAttribute('data-dim'); paintMap(); });
         }
         let activityRows=[], activityMeta=null;
         async function loadActivity(){
@@ -684,7 +845,9 @@ final class WebPage {
           const r=await jpost('/api/activity',{action:'clear'});
           const msg=$('a-msg'); msg.className='msg '+(r.status===200?'ok':'err');
           msg.textContent=r.status===200?'Cleared.':(r.body.error||'failed');
-          loadActivity();
+          trackData=null;
+          loadActivity(); loadTrackList();
+          const box=$('a-map'); if(box) box.innerHTML='';
         }
 
         // ---- settings ----
@@ -1017,7 +1180,7 @@ final class WebPage {
           if(tab==='dash') updateMetrics();
           else if(tab==='term') loadConsole();
           else if(tab==='players') loadPlayers();
-          else if(tab==='activity') loadActivity();
+          else if(tab==='activity') loadActivity();   // the map only reloads on demand
         }
         $('logout').onclick=async()=>{ await jpost('/api/logout',{}); authed=false; tab='dash'; last=null; render(); };
         (async()=>{ await refreshOnce(); render(); poll(); setInterval(poll,3000); })();

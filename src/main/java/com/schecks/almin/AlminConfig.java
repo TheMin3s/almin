@@ -103,6 +103,15 @@ public final class AlminConfig {
      * if you only care about chat, commands, containers and deaths.
      */
     public boolean activityBlocks = true;
+    /** Include combat: damage taken, hits landed, deaths. */
+    public boolean activityCombat = true;
+    /** Include item use, entity interaction and containers. */
+    public boolean activityItems = true;
+    /**
+     * Seconds between position samples for the movement map. 0 turns the map
+     * off. A player standing still is never sampled twice.
+     */
+    public int activityTrackSeconds = 5;
 
     public enum Type { INT, BOOL, TEXT }
 
@@ -209,7 +218,13 @@ public final class AlminConfig {
         intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 50000,
             c -> c.activityMaxEntries, (c, v) -> c.activityMaxEntries = (Integer) v),
         boolKey("activity-blocks", "Include block breaks and uses in the activity log",
-            c -> c.activityBlocks, (c, v) -> c.activityBlocks = (Boolean) v)
+            c -> c.activityBlocks, (c, v) -> c.activityBlocks = (Boolean) v),
+        boolKey("activity-combat", "Include damage, hits and deaths in the activity log",
+            c -> c.activityCombat, (c, v) -> c.activityCombat = (Boolean) v),
+        boolKey("activity-items", "Include item use, entity interaction and containers",
+            c -> c.activityItems, (c, v) -> c.activityItems = (Boolean) v),
+        intKey("activity-track-seconds", "Seconds between position samples for the map (0 = no map)", 0, 300,
+            c -> c.activityTrackSeconds, (c, v) -> c.activityTrackSeconds = (Integer) v)
     );
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */

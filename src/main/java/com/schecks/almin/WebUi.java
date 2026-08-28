@@ -262,36 +262,37 @@ public final class WebUi {
         HttpServer http = HttpServer.create(new InetSocketAddress(bind, port), 32);
         ExecutorService pool = Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor));
         WebUi ui = new WebUi(http, pool, server, bind, port);
-        http.createContext("/", ui::handleRoot);
-        http.createContext("/api/session", ui::handleSession);
-        http.createContext("/api/public", ui::handlePublic);
-        http.createContext("/api/login", ui::handleLogin);
-        http.createContext("/api/logout", ui::handleLogout);
-        http.createContext("/api/state", ui::handleState);
-        http.createContext("/api/console", ui::handleConsole);
-        http.createContext("/api/exec", ui::handleExec);
-        http.createContext("/api/files", ui::handleFiles);
-        http.createContext("/api/file", ui::handleFile);
-        http.createContext("/api/file/delete", ui::handleFileDelete);
-        http.createContext("/api/file/rename", ui::handleFileRename);
-        http.createContext("/api/server", ui::handleServerControl);
-        http.createContext("/api/mods", ui::handleMods);
-        http.createContext("/api/mods/save", ui::handleModSave);
-        http.createContext("/api/mods/delete", ui::handleModDelete);
-        http.createContext("/api/mods/files", ui::handleModFiles);
-        http.createContext("/api/mods/upload", ui::handleModUpload);
-        http.createContext("/api/mods/files/delete", ui::handleModFileDelete);
-        http.createContext("/api/config", ui::handleConfig);
-        http.createContext("/api/config/reload", ui::handleConfigReload);
-        http.createContext("/api/password", ui::handlePassword);
-        http.createContext("/api/update", ui::handleUpdate);
-        http.createContext("/api/clearlog", ui::handleClearLog);
-        http.createContext("/api/players", ui::handlePlayers);
-        http.createContext("/api/mask", ui::handleMask);
-        http.createContext("/api/file/upload", ui::handleFileUpload);
-        http.createContext("/api/file/download", ui::handleFileDownload);
-        http.createContext("/api/fetch", ui::handleFetch);
-        http.createContext("/api/activity", ui::handleActivity);
+        http.createContext("/", guard("/", ui::handleRoot));
+        http.createContext("/api/session", guard("/api/session", ui::handleSession));
+        http.createContext("/api/public", guard("/api/public", ui::handlePublic));
+        http.createContext("/api/login", guard("/api/login", ui::handleLogin));
+        http.createContext("/api/logout", guard("/api/logout", ui::handleLogout));
+        http.createContext("/api/state", guard("/api/state", ui::handleState));
+        http.createContext("/api/console", guard("/api/console", ui::handleConsole));
+        http.createContext("/api/exec", guard("/api/exec", ui::handleExec));
+        http.createContext("/api/files", guard("/api/files", ui::handleFiles));
+        http.createContext("/api/file", guard("/api/file", ui::handleFile));
+        http.createContext("/api/file/delete", guard("/api/file/delete", ui::handleFileDelete));
+        http.createContext("/api/file/rename", guard("/api/file/rename", ui::handleFileRename));
+        http.createContext("/api/server", guard("/api/server", ui::handleServerControl));
+        http.createContext("/api/mods", guard("/api/mods", ui::handleMods));
+        http.createContext("/api/mods/save", guard("/api/mods/save", ui::handleModSave));
+        http.createContext("/api/mods/delete", guard("/api/mods/delete", ui::handleModDelete));
+        http.createContext("/api/mods/files", guard("/api/mods/files", ui::handleModFiles));
+        http.createContext("/api/mods/upload", guard("/api/mods/upload", ui::handleModUpload));
+        http.createContext("/api/mods/files/delete", guard("/api/mods/files/delete", ui::handleModFileDelete));
+        http.createContext("/api/config", guard("/api/config", ui::handleConfig));
+        http.createContext("/api/config/reload", guard("/api/config/reload", ui::handleConfigReload));
+        http.createContext("/api/password", guard("/api/password", ui::handlePassword));
+        http.createContext("/api/update", guard("/api/update", ui::handleUpdate));
+        http.createContext("/api/clearlog", guard("/api/clearlog", ui::handleClearLog));
+        http.createContext("/api/players", guard("/api/players", ui::handlePlayers));
+        http.createContext("/api/mask", guard("/api/mask", ui::handleMask));
+        http.createContext("/api/file/upload", guard("/api/file/upload", ui::handleFileUpload));
+        http.createContext("/api/file/download", guard("/api/file/download", ui::handleFileDownload));
+        http.createContext("/api/fetch", guard("/api/fetch", ui::handleFetch));
+        http.createContext("/api/activity", guard("/api/activity", ui::handleActivity));
+        http.createContext("/api/track", guard("/api/track", ui::handleTrack));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -318,6 +319,67 @@ public final class WebUi {
         CONSOLE.info("[almin] web panel on {}  ({})", browsableUrl(),
             pw ? "log in with your admin password"
                : "no password set yet — /almin op web password <pw>");
+    }
+
+    /**
+     * Wraps a route so a fault becomes an error the browser can read.
+     *
+     * <p>{@code HttpServer} does not catch what a handler throws: the exchange
+     * is closed with no status line at all, and every client sees the same
+     * thing — a connection that died. In a browser {@code fetch} simply
+     * rejects, so an upload that hit an unexpected NPE was indistinguishable
+     * from one that was never sent, and the panel could only say "failed".
+     *
+     * <p>Now the reason reaches the person who caused it, and the log.
+     */
+    private static com.sun.net.httpserver.HttpHandler guard(
+            String route, com.sun.net.httpserver.HttpHandler inner) {
+        // route is only for readability at the call sites; fault() reads the
+        // real path off the exchange.
+        return ex -> {
+            try {
+                inner.handle(ex);
+            } catch (Throwable t) {
+                // Belt to the routes' own braces: this catches anything thrown
+                // before a handler's try block was even entered.
+                fault(ex, t);
+                try {
+                    ex.close();
+                } catch (Throwable ignored) {
+                    // Closing twice is fine.
+                }
+            }
+        };
+    }
+
+    /**
+     * Answers a request whose handler threw.
+     *
+     * <p>Called from each route's own catch, which has to run before the
+     * {@code finally} that closes the exchange — once it is closed there is
+     * nothing left to write a status onto, and the client sees a connection
+     * that simply died. That is what an unexpected fault used to look like
+     * from a browser: {@code fetch} rejects with no status and no message, so
+     * the panel could only say "failed".
+     */
+    private static void fault(HttpExchange ex, Throwable t) {
+        String route = ex.getRequestURI() == null ? "?" : ex.getRequestURI().getPath();
+        AlminLog.warn("[almin] web route {} failed: {}", route, t.toString());
+        CONSOLE.warn("[almin] web route {} failed", route, t);
+        try {
+            send(ex, 500, "application/json; charset=utf-8",
+                err(route + " failed — " + describe(t)));
+        } catch (Throwable ignored) {
+            // Already answered, or the socket is gone.
+        }
+    }
+
+    /** A one-line reason, since a stack trace is no use in a browser. */
+    private static String describe(Throwable t) {
+        String message = t.getMessage();
+        return message == null || message.isBlank()
+            ? t.getClass().getSimpleName()
+            : t.getClass().getSimpleName() + ": " + message;
     }
 
     /**
@@ -577,6 +639,8 @@ public final class WebUi {
             if (path.equals("/favicon.ico")) { ex.sendResponseHeaders(204, -1); return; }
             if (!path.equals("/")) { send(ex, 404, "text/plain", "Not found"); return; }
             send(ex, 200, "text/html; charset=utf-8", WebPage.HTML);
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -597,6 +661,8 @@ public final class WebUi {
             o.addProperty("canStart", cfg.webSupervisor
                 && cfg.webStartCommand != null && !cfg.webStartCommand.isBlank());
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -606,6 +672,8 @@ public final class WebUi {
         try {
             if (!AlminConfig.get().webPublicMetrics) { json(ex, 403, "{\"disabled\":true}"); return; }
             json(ex, 200, publicJson);
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -615,6 +683,8 @@ public final class WebUi {
         try {
             if (!requireAuth(ex)) return;
             json(ex, 200, fullJson);
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -629,6 +699,8 @@ public final class WebUi {
             if (tap != null) for (String l : tap.recentLines(CONSOLE_LINES)) lines.add(l);
             o.add("lines", lines);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -671,6 +743,8 @@ public final class WebUi {
                 AlminLog.warn("[almin] web login FAILED for {} ({} attempt(s) left)", key, remaining);
                 json(ex, 401, "{\"ok\":false,\"remaining\":" + remaining + "}");
             }
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -681,6 +755,8 @@ public final class WebUi {
             sessions.close(cookie(ex, SESSION_COOKIE));
             clearSessionCookie(ex);
             json(ex, 200, "{\"ok\":true}");
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -706,6 +782,8 @@ public final class WebUi {
             o.addProperty("ok", ok);
             o.addProperty("ran", command);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -784,6 +862,8 @@ public final class WebUi {
             }
 
             json(ex, 400, err("Unknown action: " + action));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -856,6 +936,8 @@ public final class WebUi {
             }
             o.add("entries", arr);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -889,6 +971,8 @@ public final class WebUi {
             } else {
                 json(ex, 405, "{\"error\":\"method\"}");
             }
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -904,6 +988,8 @@ public final class WebUi {
             WebFiles.Result r = onServer(() -> WebFiles.delete(server, rel), WebFiles.Result.fail("timeout"));
             AlminLog.info("[almin] web deleted {} ({})", rel, r.ok() ? "ok" : r.message());
             json(ex, r.ok() ? 200 : 400, result(r));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -920,6 +1006,8 @@ public final class WebUi {
             WebFiles.Result r = onServer(() -> WebFiles.rename(server, rel, name), WebFiles.Result.fail("timeout"));
             AlminLog.info("[almin] web renamed {} -> {} ({})", rel, name, r.ok() ? "ok" : r.message());
             json(ex, r.ok() ? 200 : 400, result(r));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -950,6 +1038,8 @@ public final class WebUi {
             o.addProperty("denyKicks", cfg.modsDenyKicks);
             o.addProperty("requireClientMod", cfg.requireClientMod);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -987,6 +1077,8 @@ public final class WebUi {
                 case NOT_LOADED -> json(ex, 409, err("Mod offers aren't loaded yet."));
                 default -> json(ex, 500, err("Saved in memory but mods.json couldn't be written."));
             }
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1001,6 +1093,8 @@ public final class WebUi {
             if (!ModOffers.remove(id)) { json(ex, 404, err("Not advertised: " + id)); return; }
             AlminLog.info("[almin] web removed mod offer {}", id);
             json(ex, 200, "{\"ok\":true}");
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1018,6 +1112,8 @@ public final class WebUi {
             o.add("files", arr);
             o.addProperty("maxBytes", ModOffers.MAX_FILE_BYTES);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1079,6 +1175,8 @@ public final class WebUi {
             o.addProperty("name", name);
             o.addProperty("bytes", written);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             if (tmp != null) {
                 try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
@@ -1102,6 +1200,8 @@ public final class WebUi {
             json(ex, 200, "{\"ok\":true}");
         } catch (IOException e) {
             json(ex, 500, err("Delete failed: " + e.getMessage()));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1178,6 +1278,8 @@ public final class WebUi {
                 return;
             }
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1215,6 +1317,8 @@ public final class WebUi {
             boolean ok = AlminConfig.reload();
             AlminLog.info("[almin] web panel reloaded config from disk ({})", ok ? "ok" : "not loaded");
             json(ex, ok ? 200 : 409, ok ? "{\"ok\":true}" : err("Config isn't loaded yet."));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1241,6 +1345,8 @@ public final class WebUi {
             setSessionCookie(ex, id, behindTls(ex));
             AlminLog.info("[almin] web admin password changed from the panel by {}", clientKey(ex));
             json(ex, 200, "{\"ok\":true}");
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1252,6 +1358,8 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             boolean ok = AlminLog.clear();
             json(ex, ok ? 200 : 409, ok ? "{\"ok\":true}" : err("No log file open, or it could not be written."));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1289,6 +1397,8 @@ public final class WebUi {
             if (!requireAuthSecure(ex)) return;
             if (!requireServer(ex)) return;
             json(ex, 200, applyUpdateJson());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1403,6 +1513,8 @@ public final class WebUi {
             AlminLog.warn("[almin] web panel cleared the activity log ({})", ok ? "ok" : "file remained");
             json(ex, ok ? 200 : 500, ok ? "{\"ok\":true}"
                 : err("Cleared in memory, but activity.log could not be deleted."));
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1418,6 +1530,10 @@ public final class WebUi {
             o.addProperty("action", e.action());
             o.addProperty("detail", e.detail());
             o.addProperty("where", e.where());
+            o.addProperty("dim", e.dim());
+            o.addProperty("x", e.x());
+            o.addProperty("y", e.y());
+            o.addProperty("z", e.z());
             o.addProperty("count", e.count());
             arr.add(o);
         }
@@ -1430,6 +1546,72 @@ public final class WebUi {
         return root.toString();
     }
 
+    /**
+     * One player's movements, and the things they did along the way.
+     *
+     * <p>Two series over the same clock: sampled positions from
+     * {@link PlayerTracks}, and the rows from {@link ActivityLog} that carry a
+     * place. Drawn together they are a path with markers on it.
+     */
+    private void handleTrack(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            String who = queryParam(ex, "player");
+            JsonObject root = new JsonObject();
+
+            JsonObject who2 = new JsonObject();
+            for (Map.Entry<String, Integer> e : PlayerTracks.tracked().entrySet()) {
+                who2.addProperty(e.getKey(), e.getValue());
+            }
+            root.add("players", who2);
+            root.addProperty("trackSeconds", AlminConfig.get().activityTrackSeconds);
+
+            if (who == null || who.isBlank()) {
+                root.addProperty("player", "");
+                root.add("points", new JsonArray());
+                root.add("actions", new JsonArray());
+                json(ex, 200, root.toString());
+                return;
+            }
+
+            JsonArray points = new JsonArray();
+            for (PlayerTracks.Point p : PlayerTracks.of(who)) {
+                JsonObject o = new JsonObject();
+                o.addProperty("at", p.at());
+                o.addProperty("dim", p.dim());
+                o.addProperty("x", p.x());
+                o.addProperty("y", p.y());
+                o.addProperty("z", p.z());
+                points.add(o);
+            }
+
+            JsonArray actions = new JsonArray();
+            for (ActivityLog.Entry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+                if (!e.player().equalsIgnoreCase(who)) continue;
+                if (e.dim() == null || e.dim().isEmpty()) continue;
+                JsonObject o = new JsonObject();
+                o.addProperty("at", e.at());
+                o.addProperty("action", e.action());
+                o.addProperty("detail", e.detail());
+                o.addProperty("dim", e.dim());
+                o.addProperty("x", e.x());
+                o.addProperty("y", e.y());
+                o.addProperty("z", e.z());
+                o.addProperty("count", e.count());
+                actions.add(o);
+            }
+
+            root.addProperty("player", who);
+            root.add("points", points);
+            root.add("actions", actions);
+            json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
     // ---------- routes: players and masks ----------
 
     private void handlePlayers(HttpExchange ex) throws IOException {
@@ -1439,6 +1621,8 @@ public final class WebUi {
             String body = onServer(this::playersJson, null);
             if (body == null) { json(ex, 503, err("The server didn't answer in time.")); return; }
             json(ex, 200, body);
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1494,6 +1678,8 @@ public final class WebUi {
             String out = onServer(() -> applyMask(who, mask, clear), null);
             if (out == null) { json(ex, 503, err("The server didn't answer in time.")); return; }
             json(ex, out.startsWith("{\"ok\":true") ? 200 : 400, out);
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1536,8 +1722,10 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             String rel = queryParam(ex, "path");
             if (rel == null || rel.isBlank()) { json(ex, 400, err("No path given.")); return; }
-            WebFiles.Target t = onServer(() -> WebFiles.uploadTarget(server, rel), null);
-            if (t == null) { json(ex, 503, err("The server didn't answer in time.")); return; }
+            // Resolved here rather than on the server thread: it is path
+            // arithmetic and the config, so the hop only added a way to time
+            // out and blame the server for a rejected filename.
+            WebFiles.Target t = WebFiles.uploadTarget(server, rel);
             if (!t.ok()) { json(ex, 403, err(t.problem())); return; }
 
             Path target = t.path();
@@ -1566,6 +1754,8 @@ public final class WebUi {
             o.addProperty("path", rel);
             o.addProperty("bytes", written);
             json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             if (tmp != null) {
                 try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
@@ -1582,7 +1772,7 @@ public final class WebUi {
             if (!"GET".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             String rel = queryParam(ex, "path");
             if (rel == null || rel.isBlank()) { json(ex, 400, err("No path given.")); return; }
-            Path file = onServer(() -> WebFiles.downloadable(server, rel), null);
+            Path file = WebFiles.downloadable(server, rel);
             if (file == null) { json(ex, 404, err("No such file: " + rel)); return; }
             long size = Files.size(file);
             String name = file.getFileName().toString();
@@ -1598,6 +1788,8 @@ public final class WebUi {
                 Files.copy(file, out);
             }
             AlminLog.info("[almin] web panel downloaded {} ({} bytes)", rel, size);
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }
@@ -1621,8 +1813,7 @@ public final class WebUi {
             String rel = dest.endsWith("/")
                 ? dest + FileFetcher.basenameFromUrl(url)
                 : dest;
-            WebFiles.Target t = onServer(() -> WebFiles.uploadTarget(server, rel), null);
-            if (t == null) { json(ex, 503, err("The server didn't answer in time.")); return; }
+            WebFiles.Target t = WebFiles.uploadTarget(server, rel);
             if (!t.ok()) { json(ex, 403, err(t.problem())); return; }
 
             AlminLog.info("[almin] web panel fetching {} -> {}", url, rel);
@@ -1635,6 +1826,8 @@ public final class WebUi {
                 ? "Saved " + rel + " (" + r.bytes() + " bytes)."
                 : r.message());
             json(ex, r.ok() ? 200 : 400, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
         } finally {
             ex.close();
         }

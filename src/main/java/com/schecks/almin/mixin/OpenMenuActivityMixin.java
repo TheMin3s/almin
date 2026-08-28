@@ -1,6 +1,7 @@
 package com.schecks.almin.mixin;
 
 import com.schecks.almin.ActivityLog;
+import com.schecks.almin.AlminConfig;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.MenuProvider;
 import org.spongepowered.asm.mixin.Mixin;
@@ -24,6 +25,7 @@ public class OpenMenuActivityMixin {
     private void almin$recordOpen(MenuProvider provider, CallbackInfoReturnable<OptionalInt> cir) {
         try {
             if (provider == null) return;
+            if (!AlminConfig.get().activityItems) return;
             ActivityLog.record((ServerPlayer) (Object) this, "container",
                 provider.getDisplayName().getString());
         } catch (Throwable ignored) {

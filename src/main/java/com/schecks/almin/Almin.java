@@ -47,6 +47,10 @@ public class Almin implements ModInitializer {
         // enabled (the default) it downloads, installs and restarts into a newer
         // version on its own; otherwise it just logs a single "update available"
         // warning to the console.
+        // Position sampling for the activity map. Its own schedule lives in
+        // PlayerTracks; this only has to offer it the tick.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
+            .register(PlayerTracks::sample);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             Dashboard.markStarted();
             ConsoleTap.start(server);
