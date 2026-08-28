@@ -292,36 +292,26 @@ public final class WebPanelScreen extends Screen {
         // or why there is nowhere to point it.
         if (state.running()) {
             g.text(this.font, Component.literal("Address"), x, 32, LABEL, false);
-            g.text(this.font, Component.literal(trim(state.url(), cw - 78)), x + 78, 32, VALUE, false);
+            g.text(this.font, Component.literal(Text.fit(this.font, state.url(), cw - 78)), x + 78, 32, VALUE, false);
         } else if (!state.lastError().isEmpty()) {
-            g.text(this.font, Component.literal(trim(state.lastError(), cw - 4)), x, 32, BAD, false);
+            g.text(this.font, Component.literal(Text.fit(this.font, state.lastError(), cw - 4)), x, 32, BAD, false);
         } else if (!state.enabled()) {
             g.text(this.font, Component.literal("Turn Enabled on to serve the panel."), x, 32, DIM, false);
         } else {
-            g.text(this.font, Component.literal(trim("Would serve " + state.url(), cw - 4)), x, 32, DIM, false);
+            g.text(this.font, Component.literal(Text.fit(this.font, "Would serve " + state.url(), cw - 4)), x, 32, DIM, false);
         }
 
         int noteY = this.height - 66;
         if (!message.isEmpty()) {
             g.centeredText(this.font, Component.literal(message), this.width / 2, noteY, messageColor);
         } else if (this.height >= 250) {
-            g.text(this.font, Component.literal(
-                    "Changes save immediately; port and address restart the listener."),
+            g.text(this.font, Component.literal(Text.fit(this.font,
+                    "Changes save immediately; port and address restart the listener.", cw)),
                 x, noteY - 10, DIM, false);
-            g.text(this.font, Component.literal(
-                    "The password box shows what you type — mind who is watching."),
+            g.text(this.font, Component.literal(Text.fit(this.font,
+                    "The password box shows what you type — mind who is watching.", cw)),
                 x, noteY, DIM, false);
         }
-    }
-
-    /** Cuts a message to the width available rather than letting it run off. */
-    private String trim(String text, int maxWidth) {
-        if (this.font.width(text) <= maxWidth) return text;
-        String cut = text;
-        while (cut.length() > 1 && this.font.width(cut + "…") > maxWidth) {
-            cut = cut.substring(0, cut.length() - 1);
-        }
-        return cut + "…";
     }
 
     @Override

@@ -301,7 +301,7 @@ final class WebPage {
           $('srvstart').disabled=!canStart;
           $('srvstart').title=canStart?'':'Set web-supervisor and web-start-command to enable';
           const nav=$('nav'); nav.innerHTML='';
-          const tabs = authed ? [['dash','Overview'],['log','Console'],['term','Terminal'],
+          const tabs = authed ? [['dash','Overview'],['term','Console'],
                                  ['activity','Activity'],['files','Files'],['players','Players'],
                                  ['mods','Mods'],['settings','Settings']]
                               : [['dash','Overview']];
@@ -316,7 +316,6 @@ final class WebPage {
           const m=$('main'); m.innerHTML='';
           if(!authed && tab!=='dash') tab='dash';
           if(tab==='dash') m.appendChild(dashPanel());
-          else if(tab==='log') m.appendChild(consolePanel());
           else if(tab==='term') m.appendChild(termPanel());
           else if(tab==='files') m.appendChild(filesPanel());
           else if(tab==='mods') m.appendChild(modsPanel());
@@ -392,15 +391,8 @@ final class WebPage {
           else msg.textContent='Login failed.';
         }
 
-        function consolePanel(){
-          const wrap=document.createElement('div');
-          const pre=document.createElement('pre'); pre.id='log'; wrap.appendChild(pre);
-          pre.addEventListener('scroll',()=>{ stuck = pre.scrollTop+pre.clientHeight >= pre.scrollHeight-24; });
-          loadConsole();
-          return wrap;
-        }
         async function loadConsole(){
-          if(tab!=='log'&&tab!=='term') return;
+          if(tab!=='term') return;
           if(!serverRunning) return;
           const r=await jget('/api/console'); const pre=$('log'); if(!pre) return;
           pre.innerHTML=(r.body.lines||[]).map(l=>{
@@ -411,8 +403,8 @@ final class WebPage {
 
         function termPanel(){
           const wrap=document.createElement('div');
-          wrap.innerHTML='<p class="muted">Runs a server command as the console (same as '+
-            '<code>/almin op cmd</code>). Output appears below and in the Console tab.</p>';
+          wrap.innerHTML='<p class="muted">The server log, live. Type below to run a command as '+
+            'the console (the same as <code>/almin op cmd</code>) — no leading slash needed.</p>';
           const bar=document.createElement('div'); bar.className='term';
           const inp=document.createElement('input'); inp.placeholder='say hello   (no leading slash needed)';
           const btn=document.createElement('button'); btn.className='btn'; btn.textContent='Run';
@@ -424,6 +416,9 @@ final class WebPage {
             inp.value=''; setTimeout(loadConsole,300); };
           inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); run(); } }; btn.onclick=run;
           const pre=document.createElement('pre'); pre.id='log';
+          // Follows the tail unless you scroll up, same as the old Console tab.
+          pre.addEventListener('scroll',()=>{
+            stuck = pre.scrollTop+pre.clientHeight >= pre.scrollHeight-24; });
           bar.append(inp,btn); wrap.append(bar,msg,pre);
           loadConsole();
           return wrap;
@@ -1020,7 +1015,7 @@ final class WebPage {
           }
           setChrome();
           if(tab==='dash') updateMetrics();
-          else if(tab==='log'||tab==='term') loadConsole();
+          else if(tab==='term') loadConsole();
           else if(tab==='players') loadPlayers();
           else if(tab==='activity') loadActivity();
         }

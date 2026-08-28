@@ -108,13 +108,12 @@ in `config/almin/config.json` and `/almin config`.
 
 - **Without logging in:** basic metrics only — versions, uptime, a player count,
   TPS. No names, no console, no files, no settings.
-- **After logging in:** eight tabs, covering what the in-game admin UI does.
+- **After logging in:** seven tabs, covering what the in-game admin UI does.
 
 | Tab | What's on it |
 |---|---|
 | Overview | live metrics, TPS trend, the dashboard rows |
-| Console | the server log, tailing |
-| Terminal | run a server command as the console |
+| Console | the server log, tailing, with a command box under it |
 | Files | browse, edit, upload, download, rename, delete, and fetch a URL onto the server |
 | Activity | what ordinary players have been doing, with a filter |
 | Players | who's online, who's been on before, and display-name masks |
@@ -178,6 +177,36 @@ That makes the panel reachable *only* through the proxy, over HTTPS.
 **Security note:** an admin login is remote control of the server — a terminal
 and file writes. Use a strong password, and don't expose the panel to the
 internet without TLS in front of it.
+
+## The in-game UI
+
+Everything `/almin` does has a screen on a modded client. Vanilla clients and the
+server console get the same information as chat, so nothing is only reachable
+one way.
+
+| Screen | Command | What you can do there |
+|---|---|---|
+| Dashboard | `/almin` | metrics, and the way through to everything else |
+| Console | `/almin op console` | the live server log |
+| Files | `/almin op dir` | browse, edit, download, upload, rename, delete |
+| Web | `/almin op web` | run the web panel and set its password |
+| Activity | `/almin op activity` | what ordinary players have been doing |
+| Shared | `/almin files` | the shared folder, one click to download |
+| Mods | `/almin mods` | advertised mods, required toggle, remove |
+| Masks | `/almin mask` | set and clear display names, and op players |
+| Config | `/almin config` | every setting, typed |
+| Updates | `/almin update` | version, check, install |
+
+A tab strip along the bottom moves between them, so no screen is a dead end.
+The strip drops its lowest-priority tabs on a narrow window rather than running
+off the edge.
+
+The five list screens are all one screen underneath. The server sends rows and
+the command each button should run; the client renders them and re-issues the
+command, which is re-checked exactly as if it had been typed. That is why a
+whole set of admin surfaces needs no permission logic of its own — there is
+nothing to get wrong, because the buttons are only ever commands you could have
+typed yourself.
 
 ## The activity log
 

@@ -11,6 +11,7 @@ import com.schecks.almin.ModOfferPayload;
 import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.ServerVersionPayload;
 import com.schecks.almin.ActivityPayload;
+import com.schecks.almin.PanelPayload;
 import com.schecks.almin.WebAdminPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -69,6 +70,8 @@ public class AlminClient implements ClientModInitializer {
             context.client().execute(() -> WebPanelScreen.show(payload)));
         ClientPlayNetworking.registerGlobalReceiver(ActivityPayload.TYPE, (payload, context) ->
             context.client().execute(() -> ActivityScreen.show(payload)));
+        ClientPlayNetworking.registerGlobalReceiver(PanelPayload.TYPE, (payload, context) ->
+            context.client().execute(() -> PanelScreen.show(payload)));
 
         // Receive the server's Almin version; self-update if we're behind.
         ClientPlayNetworking.registerGlobalReceiver(ServerVersionPayload.TYPE, (payload, context) ->

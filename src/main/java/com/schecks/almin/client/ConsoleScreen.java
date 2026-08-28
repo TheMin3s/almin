@@ -159,7 +159,10 @@ public final class ConsoleScreen extends Screen {
             int color = 0xFFCCCCCC;
             if (line.contains("/ERROR]") || line.contains(" ERROR ")) color = 0xFFFF6655;
             else if (line.contains("/WARN]") || line.contains(" WARN ")) color = 0xFFFFCC55;
-            g.text(mc.font, Component.literal(line),
+            // Console lines are long by nature; clip to the row so they stop
+            // at the edge of the list instead of running across the screen.
+            g.text(mc.font,
+                Component.literal(Text.fit(mc.font, line, getContentWidth() - 4)),
                 getContentX() + 2, getContentY() + 1, color, false);
         }
 

@@ -67,6 +67,8 @@ public final class AlminPayloads {
             ModFilePayload.TYPE, ModFilePayload.CODEC, ModFilePayload.MAX_BYTES + 8192);
         PayloadTypeRegistry.clientboundPlay().registerLarge(
             ActivityPayload.TYPE, ActivityPayload.CODEC, ActivityPayload.MAX_BYTES);
+        PayloadTypeRegistry.clientboundPlay().registerLarge(
+            PanelPayload.TYPE, PanelPayload.CODEC, PanelPayload.MAX_BYTES);
 
         // ---- client -> server ----
         PayloadTypeRegistry.serverboundPlay().register(

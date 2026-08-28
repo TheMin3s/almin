@@ -17,6 +17,7 @@ import com.schecks.almin.DirNet;
 import com.schecks.almin.FileFetcher;
 import com.schecks.almin.FileShare;
 import com.schecks.almin.AlminConfig;
+import com.schecks.almin.AdminPanels;
 import com.schecks.almin.AlminExit;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
@@ -338,6 +339,11 @@ public final class AlminCommand {
 
     private static int maskList(CommandContext<CommandSourceStack> ctx) {
         MinecraftServer server = ctx.getSource().getServer();
+        ServerPlayer viewer = ctx.getSource().getPlayer();
+        if (AdminPanels.canShow(viewer)) {
+            AdminPanels.send(viewer, AdminPanels.masks(server, TrustedOps.isTrustedSource(ctx.getSource())));
+            return 1;
+        }
         Map<UUID, String> masks = MaskConfig.snapshot();
         if (masks.isEmpty()) {
             ctx.getSource().sendSuccess(() ->
@@ -466,6 +472,11 @@ public final class AlminCommand {
     // ---------- /almin mods ----------
 
     private static int modsList(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer viewer = ctx.getSource().getPlayer();
+        if (AdminPanels.canShow(viewer)) {
+            AdminPanels.send(viewer, AdminPanels.mods());
+            return 1;
+        }
         List<ModOffers.AdvertisedMod> mods = ModOffers.list();
         AlminConfig cfg = AlminConfig.get();
         if (mods.isEmpty()) {
@@ -667,6 +678,11 @@ public final class AlminCommand {
     // ---------- /almin config ----------
 
     private static int configList(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer viewer = ctx.getSource().getPlayer();
+        if (AdminPanels.canShow(viewer)) {
+            AdminPanels.send(viewer, AdminPanels.config());
+            return 1;
+        }
         AlminConfig cfg = AlminConfig.get();
         MutableComponent out = Component.literal("=== Almin Config ===\n")
             .setStyle(Style.EMPTY.withColor(ChatFormatting.GOLD));
@@ -774,6 +790,11 @@ public final class AlminCommand {
         MinecraftServer server = self.level().getServer();
         if (server == null) return 0;
         UUID id = self.getUUID();
+
+        // The panel opens straight away with what is known locally; the GitHub
+        // check is slow, so its answer follows in chat rather than holding the
+        // screen shut for several seconds.
+        if (AdminPanels.canShow(self)) AdminPanels.send(self, AdminPanels.update());
 
         self.sendSystemMessage(Component.literal("Checking " + AlminConfig.get().updateRepo + " for updates...")
             .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
@@ -1474,6 +1495,11 @@ public final class AlminCommand {
 
     /** /almin files — any player lists the server's shared/ folder. */
     private static int filesList(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer viewer = ctx.getSource().getPlayer();
+        if (AdminPanels.canShow(viewer)) {
+            AdminPanels.send(viewer, AdminPanels.shared());
+            return 1;
+        }
         List<Path> shared = FileShare.listShared();
         if (shared.isEmpty()) {
             ctx.getSource().sendSuccess(() ->

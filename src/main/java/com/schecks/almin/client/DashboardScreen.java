@@ -277,15 +277,22 @@ public final class DashboardScreen extends Screen {
 
             switch (row.kind()) {
                 case DashboardPayload.HEADER -> g.text(mc.font,
-                    Component.literal(row.label()), x, y, HEADER_COLOR, false);
+                    Component.literal(Text.fit(mc.font, row.label(), width)),
+                    x, y, HEADER_COLOR, false);
                 case DashboardPayload.NOTE -> g.text(mc.font,
-                    Component.literal(row.label()), x + 6, y, NOTE_COLOR, false);
+                    Component.literal(Text.fit(mc.font, row.label(), width - 6)),
+                    x + 6, y, NOTE_COLOR, false);
                 default -> {
-                    g.text(mc.font, Component.literal(row.label()), x + 6, y, LABEL_COLOR, false);
-                    // Values are right-aligned so the numbers form a column.
+                    // Values are right-aligned so the numbers form a column, and
+                    // the label takes what is left — a long one is now cut short
+                    // rather than drawn underneath its own value.
+                    int[] room = Text.split(mc.font, row.label(), row.value(), width - 6, 0.5f);
+                    String value = Text.fit(mc.font, row.value(), room[1]);
                     int color = row.accent() == 0 ? VALUE_COLOR : row.accent();
-                    int valueWidth = mc.font.width(row.value());
-                    g.text(mc.font, Component.literal(row.value()),
+                    int valueWidth = mc.font.width(value);
+                    g.text(mc.font, Component.literal(Text.fit(mc.font, row.label(), room[0])),
+                        x + 6, y, LABEL_COLOR, false);
+                    g.text(mc.font, Component.literal(value),
                         x + width - valueWidth, y, color, false);
                 }
             }

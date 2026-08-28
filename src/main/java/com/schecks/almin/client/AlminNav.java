@@ -29,7 +29,9 @@ public final class AlminNav {
         {"Activity","almin op activity", "trusted"},
         {"Shared",  "almin files",      ""},
         {"Mods",    "almin mods list",  ""},
+        {"Masks",   "almin mask list",  ""},
         {"Config",  "almin config",     ""},
+        {"Updates", "almin update version", ""},
     };
 
     /**

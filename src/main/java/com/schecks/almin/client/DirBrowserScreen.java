@@ -306,13 +306,15 @@ public final class DirBrowserScreen extends Screen {
             Minecraft mc = Minecraft.getInstance();
             String label = data.directory() ? data.name() + "/" : data.name();
             int color = data.directory() ? 0xFF55FFFF : 0xFFFFFFFF;
-            g.text(mc.font, Component.literal(label),
+            String size = data.directory() ? "" : humanBytes(data.size());
+            int sizeWidth = size.isEmpty() ? 0 : mc.font.width(size) + 8;
+            // A long filename is cut short rather than drawn through the size.
+            g.text(mc.font,
+                Component.literal(Text.fit(mc.font, label, getContentWidth() - sizeWidth - 4)),
                 getContentX() + 2, getContentY() + 2, color, false);
-            if (!data.directory()) {
-                String size = humanBytes(data.size());
-                int w = mc.font.width(size);
+            if (!size.isEmpty()) {
                 g.text(mc.font, Component.literal(size),
-                    getContentRight() - w - 2, getContentY() + 2, 0xFF777777, false);
+                    getContentRight() - mc.font.width(size) - 2, getContentY() + 2, 0xFF777777, false);
             }
         }
 

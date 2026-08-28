@@ -175,7 +175,8 @@ public final class ActivityScreen extends Screen {
                 + (state.entries().size() < state.total()
                     ? " · showing the newest " + state.entries().size() : "");
         }
-        g.centeredText(this.font, Component.literal(sub), this.width / 2, this.height - 42, color);
+        g.centeredText(this.font, Component.literal(Text.fit(this.font, sub, this.width - 20)),
+            this.width / 2, this.height - 42, color);
     }
 
     static String humanMinutes(int minutes) {
@@ -237,33 +238,29 @@ public final class ActivityScreen extends Screen {
 
             String when = ago(row.at());
             g.text(mc.font, Component.literal(when), x, y, TIME, false);
-            int nameX = x + 30;
-            g.text(mc.font, Component.literal(row.player()), nameX, y, NAME, false);
 
+            // The verb sits in a fixed column so the actions line up; the name
+            // gets the space before it and is cut short if it needs more.
             String verb = row.action() + (row.count() > 1 ? " ×" + row.count() : "");
-            int verbX = nameX + Math.max(76, mc.font.width(row.player()) + 8);
+            int verbWidth = mc.font.width(verb);
+            int nameX = x + 30;
+            int verbX = Math.max(nameX + 80, x + width - verbWidth);
+            g.text(mc.font,
+                Component.literal(Text.fit(mc.font, row.player(), verbX - nameX - 6)),
+                nameX, y, NAME, false);
             g.text(mc.font, Component.literal(verb), verbX, y, actionColor(row.action()), false);
 
-            // Second line carries the detail, clipped to the row rather than
-            // running off it; the place goes on the right where there is room.
+            // Second line carries the detail; the place goes on the right when
+            // there is room for it, and the detail takes what is left.
             int placeWidth = mc.font.width(row.where());
             boolean roomForPlace = width > placeWidth + 120;
             int detailRoom = width - (roomForPlace ? placeWidth + 10 : 0);
-            g.text(mc.font, Component.literal(clip(mc, row.detail(), detailRoom)),
+            g.text(mc.font, Component.literal(Text.fit(mc.font, row.detail(), detailRoom)),
                 x, y + 10, DETAIL, false);
             if (roomForPlace) {
                 g.text(mc.font, Component.literal(row.where()),
                     x + width - placeWidth, y + 10, TIME, false);
             }
-        }
-
-        private static String clip(Minecraft mc, String text, int maxWidth) {
-            if (text.isEmpty() || mc.font.width(text) <= maxWidth) return text;
-            String cut = text;
-            while (cut.length() > 1 && mc.font.width(cut + "…") > maxWidth) {
-                cut = cut.substring(0, cut.length() - 1);
-            }
-            return cut + "…";
         }
 
         @Override
