@@ -1,6 +1,5 @@
 package com.schecks.almin;
 
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -46,11 +45,6 @@ public final class Dashboard {
     private static volatile long startedAt = 0L;
 
     private Dashboard() {}
-
-    public static void registerPayload() {
-        PayloadTypeRegistry.clientboundPlay().register(
-            DashboardPayload.TYPE, DashboardPayload.CODEC);
-    }
 
     /** Starts the uptime clock. Called once, when the server finishes booting. */
     public static void markStarted() {

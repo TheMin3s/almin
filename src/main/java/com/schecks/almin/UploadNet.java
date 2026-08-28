@@ -1,6 +1,5 @@
 package com.schecks.almin;
 
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
@@ -26,9 +25,6 @@ public final class UploadNet {
 
     /** Registers the C2S upload payload and handler. Call once at init. */
     public static void register() {
-        PayloadTypeRegistry.serverboundPlay().registerLarge(
-            FileUploadPayload.TYPE, FileUploadPayload.CODEC, FileUploadPayload.MAX_BYTES + 8192);
-
         ServerPlayNetworking.registerGlobalReceiver(FileUploadPayload.TYPE, (payload, context) -> {
             MinecraftServer server = context.server();
             ServerPlayer player = context.player();

@@ -1,6 +1,5 @@
 package com.schecks.almin;
 
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
@@ -18,17 +17,10 @@ import net.minecraft.server.level.ServerPlayer;
  * confines writes to the server directory — see NanoSupport.saveFromEditor.
  */
 public final class NanoNet {
-    private static final int MAX_PACKET_BYTES = NanoOpenPayload.MAX_CHARS * 4 + 8192;
-
     private NanoNet() {}
 
     /** Registers both nano payloads and the C2S save handler. Call once at init. */
     public static void register() {
-        PayloadTypeRegistry.clientboundPlay().registerLarge(
-            NanoOpenPayload.TYPE, NanoOpenPayload.CODEC, MAX_PACKET_BYTES);
-        PayloadTypeRegistry.serverboundPlay().registerLarge(
-            NanoSavePayload.TYPE, NanoSavePayload.CODEC, MAX_PACKET_BYTES);
-
         ServerPlayNetworking.registerGlobalReceiver(NanoSavePayload.TYPE, (payload, context) -> {
             MinecraftServer server = context.server();
             ServerPlayer player = context.player();

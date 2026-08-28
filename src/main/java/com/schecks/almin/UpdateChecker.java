@@ -3,7 +3,6 @@ package com.schecks.almin;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
 import net.fabricmc.loader.api.metadata.ModOrigin;
@@ -47,15 +46,6 @@ public final class UpdateChecker {
     public record CheckFailed(String reason) implements CheckResult {}
 
     private UpdateChecker() {}
-
-    /**
-     * Registers the S2C version payload used by the client self-updater.
-     * Call once from the main entrypoint.
-     */
-    public static void registerPayload() {
-        PayloadTypeRegistry.clientboundPlay().register(
-            ServerVersionPayload.TYPE, ServerVersionPayload.CODEC);
-    }
 
     /** The running mod version (Loom-expanded mod_version), e.g. "1.0.0". */
     public static String currentVersion() {

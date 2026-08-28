@@ -1,6 +1,5 @@
 package com.schecks.almin;
 
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
@@ -27,13 +26,6 @@ public final class ModNet {
     private ModNet() {}
 
     public static void register() {
-        PayloadTypeRegistry.clientboundPlay().register(ModOfferPayload.TYPE, ModOfferPayload.CODEC);
-        PayloadTypeRegistry.serverboundPlay().register(ModResponsePayload.TYPE, ModResponsePayload.CODEC);
-        PayloadTypeRegistry.serverboundPlay().register(
-            ModFileRequestPayload.TYPE, ModFileRequestPayload.CODEC);
-        PayloadTypeRegistry.clientboundPlay().registerLarge(
-            ModFilePayload.TYPE, ModFilePayload.CODEC, ModFilePayload.MAX_BYTES + 8192);
-
         ServerPlayNetworking.registerGlobalReceiver(ModFileRequestPayload.TYPE, (payload, context) -> {
             MinecraftServer server = context.server();
             ServerPlayer player = context.player();

@@ -1,6 +1,5 @@
 package com.schecks.almin;
 
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 
@@ -13,22 +12,9 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
  *    initial history and the live tail.
  */
 public final class ConsoleNet {
-    /** Worst-case bytes for one ConsoleLinesPayload (lines * (chars * 4 utf-8 + len) + overhead). */
-    private static final int MAX_PACKET_BYTES =
-        ConsoleLinesPayload.MAX_LINES_PER_BATCH
-            * (ConsoleLinesPayload.MAX_LINE_CHARS * 4 + 8)
-            + 8192;
-
     private ConsoleNet() {}
 
     public static void register() {
-        PayloadTypeRegistry.clientboundPlay().register(
-            ConsoleOpenPayload.TYPE, ConsoleOpenPayload.CODEC);
-        PayloadTypeRegistry.serverboundPlay().register(
-            ConsoleSubscribePayload.TYPE, ConsoleSubscribePayload.CODEC);
-        PayloadTypeRegistry.clientboundPlay().registerLarge(
-            ConsoleLinesPayload.TYPE, ConsoleLinesPayload.CODEC, MAX_PACKET_BYTES);
-
         ServerPlayNetworking.registerGlobalReceiver(ConsoleSubscribePayload.TYPE, (payload, context) -> {
             var server = context.server();
             var player = context.player();

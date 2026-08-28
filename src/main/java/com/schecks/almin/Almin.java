@@ -15,10 +15,10 @@ public class Almin implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        UpdateChecker.registerPayload();
-        Dashboard.registerPayload();
+        // Packet types first: both entrypoints need them declared before any
+        // handler or receiver can be attached.
+        AlminPayloads.registerTypes();
         ModNet.register();
-        FileShare.registerPayload();
         NanoNet.register();
         DirNet.register();
         UploadNet.register();

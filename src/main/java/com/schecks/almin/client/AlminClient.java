@@ -1,5 +1,6 @@
 package com.schecks.almin.client;
 
+import com.schecks.almin.AlminPayloads;
 import com.schecks.almin.ConsoleLinesPayload;
 import com.schecks.almin.ConsoleOpenPayload;
 import com.schecks.almin.DashboardPayload;
@@ -28,6 +29,10 @@ public class AlminClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // The client jar has no main entrypoint, so it declares the packet
+        // types itself. Idempotent — a universal jar runs both entrypoints.
+        AlminPayloads.registerTypes();
+
         // Receive shared-file transfers; hop to the main thread to show the
         // confirmation screen.
         ClientPlayNetworking.registerGlobalReceiver(FileTransferPayload.TYPE, (payload, context) ->

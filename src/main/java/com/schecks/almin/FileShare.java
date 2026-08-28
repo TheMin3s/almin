@@ -1,6 +1,5 @@
 package com.schecks.almin;
 
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -33,13 +32,6 @@ public final class FileShare {
     private static volatile Path sharedDir;
 
     private FileShare() {}
-
-    /** Registers the large S2C transfer payload. Call once from the main entrypoint. */
-    public static void registerPayload() {
-        PayloadTypeRegistry.clientboundPlay().registerLarge(
-            FileTransferPayload.TYPE, FileTransferPayload.CODEC,
-            FileTransferPayload.MAX_BYTES + 4096);
-    }
 
     /** Resolves paths and ensures shared/ exists. Call at server start. */
     public static void init(MinecraftServer server) {
