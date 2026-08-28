@@ -130,6 +130,18 @@ final class WebPage {
           .banner{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
                   border-left:3px solid var(--crit);border-radius:10px;padding:13px 16px;margin-bottom:16px}
           .btn.on{border-color:var(--good);color:#a8e6a8}
+          .act{max-height:64vh;overflow:auto;background:var(--card);border:1px solid var(--line);
+               border-radius:12px;padding:6px 4px}
+          .arow{display:grid;grid-template-columns:52px 130px 110px 1fr auto;gap:10px;align-items:baseline;
+                padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.045);font-size:13px}
+          .arow:last-child{border-bottom:0}
+          .arow .ago{color:var(--mute);font-variant-numeric:tabular-nums}
+          .arow .who{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+          .arow .what{font-weight:600}
+          .arow .det{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .arow .at{color:var(--mute);font-size:12px;white-space:nowrap}
+          @media(max-width:760px){.arow{grid-template-columns:46px 1fr;row-gap:2px}
+                                  .arow .det,.arow .at{grid-column:1/-1}}
           .cfgrow{display:flex;gap:14px;align-items:center;padding:9px 0;
                   border-bottom:1px solid rgba(255,255,255,.045)}
           .cfgrow:last-child{border-bottom:0}
@@ -290,8 +302,8 @@ final class WebPage {
           $('srvstart').title=canStart?'':'Set web-supervisor and web-start-command to enable';
           const nav=$('nav'); nav.innerHTML='';
           const tabs = authed ? [['dash','Overview'],['log','Console'],['term','Terminal'],
-                                 ['files','Files'],['players','Players'],['mods','Mods'],
-                                 ['settings','Settings']]
+                                 ['activity','Activity'],['files','Files'],['players','Players'],
+                                 ['mods','Mods'],['settings','Settings']]
                               : [['dash','Overview']];
           for(const [id,label] of tabs){
             const b=document.createElement('button'); b.textContent=label; b.className=(id===tab?'on':'');
@@ -309,6 +321,7 @@ final class WebPage {
           else if(tab==='files') m.appendChild(filesPanel());
           else if(tab==='mods') m.appendChild(modsPanel());
           else if(tab==='players') m.appendChild(playersPanel());
+          else if(tab==='activity') m.appendChild(activityPanel());
           else if(tab==='settings') m.appendChild(settingsPanel());
         }
 
@@ -596,6 +609,87 @@ final class WebPage {
           const msg=$('p-msg'); msg.className='msg '+(r.status===200?'ok':'err');
           msg.textContent=r.status===200?(r.body.message||'done'):(r.body.error||'failed');
           loadPlayers();
+        }
+
+        // ---- player activity ----
+        const ACTION_COLOR = { chat:'#7fd1f0', command:'#ffab33', container:'#c792ea',
+                               death:'#e05a5a', attack:'#ff8a65', join:'#57c957',
+                               leave:'#8b9096' };
+        function activityPanel(){
+          const wrap=document.createElement('div');
+          wrap.innerHTML='<p class="muted">What ordinary players have been doing. '+
+            'Anyone who could read this — a trusted UUID, or any op — is never recorded, '+
+            'and rows are deleted once they pass the retention window.</p>'+
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+            '<input id="a-filter" placeholder="filter by player, action, detail or place" '+
+            'style="flex:1;min-width:200px">'+
+            '<button class="btn" id="a-refresh">Refresh</button>'+
+            '<button class="btn danger" id="a-clear">Clear log</button></div>'+
+            '<div id="a-meta" class="muted" style="margin-bottom:8px"></div>'+
+            '<div class="act" id="a-rows"><div class="note">loading…</div></div>'+
+            '<div class="msg" id="a-msg"></div>';
+          setTimeout(()=>{
+            loadActivity();
+            $('a-refresh').onclick=loadActivity;
+            $('a-clear').onclick=clearActivity;
+            // Filtering is client-side over the rows already fetched, so
+            // typing here asks the server for nothing.
+            $('a-filter').oninput=paintActivity;
+          },0);
+          return wrap;
+        }
+        let activityRows=[], activityMeta=null;
+        async function loadActivity(){
+          if(!$('a-rows')) return;
+          const r=await jget('/api/activity');
+          if(r.status!==200){ $('a-rows').innerHTML='<div class="note">'+
+            esc(r.body.error||'unavailable')+'</div>'; return; }
+          activityRows=r.body.rows||[]; activityMeta=r.body;
+          paintActivity();
+        }
+        function paintActivity(){
+          const box=$('a-rows'), meta=$('a-meta'); if(!box) return;
+          const f=$('a-filter'), q=(f?f.value:'').trim().toLowerCase();
+          const rows=q ? activityRows.filter(e=>
+                (e.player+' '+e.action+' '+e.detail+' '+e.where).toLowerCase().includes(q))
+              : activityRows;
+          if(meta && activityMeta){
+            meta.innerHTML = (activityMeta.enabled
+                ? activityMeta.total+' row'+(activityMeta.total===1?'':'s')
+                : '<span class="state warn">recording is off</span> · '+activityMeta.total+' kept')+
+              ' · deleted after '+esc(humanMinutes(activityMeta.retentionMinutes))+
+              (activityMeta.blocks?'':' · block edits excluded')+
+              (q?' · '+rows.length+' shown':'');
+          }
+          if(!rows.length){ box.innerHTML='<div class="note">'+
+            (q?'Nothing matches that filter.'
+              :'Nothing recorded. Ops and trusted UUIDs are never recorded.')+'</div>'; return; }
+          box.innerHTML='';
+          for(const e of rows){
+            const d=document.createElement('div'); d.className='arow';
+            const col=ACTION_COLOR[e.action]||'#9aa3ae';
+            d.innerHTML='<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
+              '<span class="who">'+esc(e.player)+'</span>'+
+              '<span class="what" style="color:'+col+'">'+esc(e.action)+
+                (e.count>1?' &times;'+e.count:'')+'</span>'+
+              '<span class="det" title="'+esc(e.detail)+'">'+esc(e.detail)+'</span>'+
+              '<span class="at">'+esc(e.where)+'</span>';
+            box.appendChild(d);
+          }
+        }
+        function humanMinutes(m){
+          if(!m) return 'never';
+          if(m%1440===0) return (m/1440)+(m/1440===1?' day':' days');
+          if(m%60===0) return (m/60)+(m/60===1?' hour':' hours');
+          return m+' minutes';
+        }
+        async function clearActivity(){
+          if(!confirm('Delete the whole activity log?\\n\\nIt goes from memory and from disk, '+
+                      'and cannot be recovered.')) return;
+          const r=await jpost('/api/activity',{action:'clear'});
+          const msg=$('a-msg'); msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent=r.status===200?'Cleared.':(r.body.error||'failed');
+          loadActivity();
         }
 
         // ---- settings ----
@@ -928,6 +1022,7 @@ final class WebPage {
           if(tab==='dash') updateMetrics();
           else if(tab==='log'||tab==='term') loadConsole();
           else if(tab==='players') loadPlayers();
+          else if(tab==='activity') loadActivity();
         }
         $('logout').onclick=async()=>{ await jpost('/api/logout',{}); authed=false; tab='dash'; last=null; render(); };
         (async()=>{ await refreshOnce(); render(); poll(); setInterval(poll,3000); })();

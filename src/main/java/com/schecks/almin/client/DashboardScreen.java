@@ -80,6 +80,7 @@ public final class DashboardScreen extends Screen {
             nav.add("Console", "almin op console");
             nav.add("Files", "almin op dir");
             nav.add("Web", "almin op web");
+            nav.add("Activity", "almin op activity");
         }
         nav.add("Shared", "almin files");
         nav.add("Mods", "almin mods list");

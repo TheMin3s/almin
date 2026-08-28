@@ -1,6 +1,7 @@
 package com.schecks.almin;
 
 import com.schecks.almin.commands.AlminCommand;
+import com.schecks.almin.events.ActivityHooks;
 import com.schecks.almin.events.JoinHandler;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -20,11 +21,13 @@ public class Almin implements ModInitializer {
         AlminPayloads.registerTypes();
         ModNet.register();
         WebAdminNet.register();
+        ActivityNet.register();
         NanoNet.register();
         DirNet.register();
         UploadNet.register();
         ConsoleNet.register();
         JoinHandler.register();
+        ActivityHooks.register();
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             AlminCommand.register(dispatcher));
         // Dedicated event log goes to config/almin/almin.log; opens at server
@@ -38,6 +41,7 @@ public class Almin implements ModInitializer {
             MaskConfig.init(server);
             ModOffers.init(server);
             FileShare.init(server);
+            ActivityLog.init(server);
         });
         // Boot-time update check — runs after config is loaded. With auto-update
         // enabled (the default) it downloads, installs and restarts into a newer
@@ -54,6 +58,7 @@ public class Almin implements ModInitializer {
             // it can start it again; otherwise this shuts it down with the rest.
             WebUi.onServerStopped();
             ConsoleTap.stop();
+            ActivityLog.close();
             if (!AlminConfig.get().webSupervisor) AlminLog.close();
         });
     }

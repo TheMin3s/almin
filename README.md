@@ -90,7 +90,7 @@ in `config/almin/config.json` and `/almin config`.
 
 - **Without logging in:** basic metrics only — versions, uptime, a player count,
   TPS. No names, no console, no files, no settings.
-- **After logging in:** seven tabs, covering what the in-game admin UI does.
+- **After logging in:** eight tabs, covering what the in-game admin UI does.
 
 | Tab | What's on it |
 |---|---|
@@ -98,6 +98,7 @@ in `config/almin/config.json` and `/almin config`.
 | Console | the server log, tailing |
 | Terminal | run a server command as the console |
 | Files | browse, edit, upload, download, rename, delete, and fetch a URL onto the server |
+| Activity | what ordinary players have been doing, with a filter |
 | Players | who's online, who's been on before, and display-name masks |
 | Mods | the mods advertised to joining players, and the jars behind them |
 | Settings | every Almin setting, the admin password, and the update check |
@@ -159,6 +160,39 @@ That makes the panel reachable *only* through the proxy, over HTTPS.
 **Security note:** an admin login is remote control of the server — a terminal
 and file writes. Use a strong password, and don't expose the panel to the
 internet without TLS in front of it.
+
+## The activity log
+
+Almin keeps three logs. Two are about the server — Minecraft's own console, and
+`config/almin/almin.log` for what admins do. The third is about players.
+
+`/almin op activity` in game, or the web panel's **Activity** tab, shows what
+ordinary players have been doing: joins and leaves, chat, commands, block breaks
+and uses, containers opened, PvP hits and deaths.
+
+**It never records anyone who can read it.** A player is skipped entirely if
+their UUID is on the trusted allowlist, or if they hold moderator permission or
+above — which is every vanilla op. So it is a record of the unprivileged, kept
+by the privileged, and never a record of the people keeping it.
+
+**Rows expire.** This is data about named people, so it has a deliberate shelf
+life rather than accumulating: a day by default, from memory and from
+`config/almin/activity.log` alike.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `activity-log` | `true` | record at all |
+| `activity-retention-minutes` | `1440` | how long a row survives — 5 minutes to 7 days |
+| `activity-max-entries` | `20000` | ceiling on the log; oldest rows drop first |
+| `activity-blocks` | `true` | include block breaks and uses |
+
+Block edits would otherwise drown everything else, so consecutive edits of the
+same block by the same player fold into one row with a count — `break ×47
+Stone`. Turn `activity-blocks` off if you only care about chat, commands,
+containers and deaths.
+
+`/almin op activity clear` (or **Clear log** in either UI) deletes the whole
+thing immediately, from memory and disk. There is no export.
 
 ## Advertising mods to players
 

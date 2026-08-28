@@ -255,6 +255,7 @@ public final class WebUi {
         http.createContext("/api/file/upload", ui::handleFileUpload);
         http.createContext("/api/file/download", ui::handleFileDownload);
         http.createContext("/api/fetch", ui::handleFetch);
+        http.createContext("/api/activity", ui::handleActivity);
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -1270,6 +1271,63 @@ public final class WebUi {
         o.addProperty("message", "Installed " + rel.version() + ". " + removal
             + " Restart the server to run it.");
         return o.toString();
+    }
+
+    // ---------- routes: player activity ----------
+
+    /** Rows sent to a browser in one response. The page scrolls; it doesn't need all of them. */
+    private static final int ACTIVITY_ROWS = 500;
+
+    /**
+     * The activity log: what ordinary players did.
+     *
+     * <p>Behind the admin login like everything else here, which is the point —
+     * the log deliberately excludes anyone who could read it, so it is never a
+     * record of the people holding the password.
+     */
+    private void handleActivity(HttpExchange ex) throws IOException {
+        try {
+            if ("GET".equals(ex.getRequestMethod())) {
+                if (!requireAuth(ex)) return;
+                json(ex, 200, activityJson());
+                return;
+            }
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            if (!requireAuthSecure(ex)) return;
+            JsonObject body = readBody(ex);
+            if (!"clear".equals(body.has("action") ? body.get("action").getAsString() : "")) {
+                json(ex, 400, err("Unknown action."));
+                return;
+            }
+            boolean ok = ActivityLog.clear();
+            AlminLog.warn("[almin] web panel cleared the activity log ({})", ok ? "ok" : "file remained");
+            json(ex, ok ? 200 : 500, ok ? "{\"ok\":true}"
+                : err("Cleared in memory, but activity.log could not be deleted."));
+        } finally {
+            ex.close();
+        }
+    }
+
+    private String activityJson() {
+        AlminConfig cfg = AlminConfig.get();
+        JsonArray arr = new JsonArray();
+        for (ActivityLog.Entry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+            JsonObject o = new JsonObject();
+            o.addProperty("at", e.at());
+            o.addProperty("player", e.player());
+            o.addProperty("action", e.action());
+            o.addProperty("detail", e.detail());
+            o.addProperty("where", e.where());
+            o.addProperty("count", e.count());
+            arr.add(o);
+        }
+        JsonObject root = new JsonObject();
+        root.add("rows", arr);
+        root.addProperty("total", ActivityLog.size());
+        root.addProperty("enabled", cfg.activityLog);
+        root.addProperty("blocks", cfg.activityBlocks);
+        root.addProperty("retentionMinutes", cfg.activityRetentionMinutes);
+        return root.toString();
     }
 
     // ---------- routes: players and masks ----------

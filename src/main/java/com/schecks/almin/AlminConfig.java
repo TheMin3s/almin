@@ -89,6 +89,20 @@ public final class AlminConfig {
      * shown the mod offer at all.
      */
     public boolean requireClientMod = false;
+    /** Record what ordinary players do. Never records ops or trusted UUIDs. */
+    public boolean activityLog = true;
+    /**
+     * How long an activity row is kept, in minutes. A day by default — this is
+     * data about named people, so it expires rather than accumulating.
+     */
+    public int activityRetentionMinutes = 1440;
+    /** Ceiling on the log, oldest dropped first, so a busy server can't grow it forever. */
+    public int activityMaxEntries = 20000;
+    /**
+     * Include block edits. On by default, folded into counted rows; turn it off
+     * if you only care about chat, commands, containers and deaths.
+     */
+    public boolean activityBlocks = true;
 
     public enum Type { INT, BOOL, TEXT }
 
@@ -187,7 +201,15 @@ public final class AlminConfig {
         boolKey("mods-deny-kicks", "Disconnect players who decline when a required mod is offered",
             c -> c.modsDenyKicks, (c, v) -> c.modsDenyKicks = (Boolean) v),
         boolKey("require-client-mod", "Require the Almin client mod to play (vanilla clients are disconnected)",
-            c -> c.requireClientMod, (c, v) -> c.requireClientMod = (Boolean) v)
+            c -> c.requireClientMod, (c, v) -> c.requireClientMod = (Boolean) v),
+        boolKey("activity-log", "Record what ordinary players do (never ops or trusted UUIDs)",
+            c -> c.activityLog, (c, v) -> c.activityLog = (Boolean) v),
+        intKey("activity-retention-minutes", "How long an activity row is kept before it is deleted", 5, 10080,
+            c -> c.activityRetentionMinutes, (c, v) -> c.activityRetentionMinutes = (Integer) v),
+        intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 50000,
+            c -> c.activityMaxEntries, (c, v) -> c.activityMaxEntries = (Integer) v),
+        boolKey("activity-blocks", "Include block breaks and uses in the activity log",
+            c -> c.activityBlocks, (c, v) -> c.activityBlocks = (Boolean) v)
     );
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */

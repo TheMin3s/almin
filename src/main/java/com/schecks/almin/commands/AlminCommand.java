@@ -6,6 +6,9 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.schecks.almin.ActivityLog;
+import com.schecks.almin.ActivityNet;
+import com.schecks.almin.ActivityPayload;
 import com.schecks.almin.ConsoleOpenPayload;
 import com.schecks.almin.Dashboard;
 import com.schecks.almin.DashboardPayload;
@@ -199,6 +202,10 @@ public final class AlminCommand {
                     .executes(AlminCommand::opClearLog))
                 .then(Commands.literal("console")
                     .executes(AlminCommand::opConsole))
+                .then(Commands.literal("activity")
+                    .executes(AlminCommand::opActivity)
+                    .then(Commands.literal("clear")
+                        .executes(AlminCommand::opActivityClear)))
                 .then(Commands.literal("web")
                     .executes(AlminCommand::opWeb)
                     .then(Commands.literal("start")
@@ -895,6 +902,8 @@ public final class AlminCommand {
             .append(cmd("/almin op web",                         "Show the web panel's address and login status")).append("\n")
             .append(cmd("/almin op web password <pw>",            "Set the web panel's admin login password")).append("\n")
             .append(cmd("/almin op web start|stop|restart",       "Run the web panel without restarting the server")).append("\n")
+            .append(cmd("/almin op activity",                    "What ordinary players have been doing")).append("\n")
+            .append(cmd("/almin op activity clear",               "Delete the activity log now")).append("\n")
             .append(cmd("/almin op help",                        "Show this message"));
         ctx.getSource().sendSuccess(() -> lines, false);
         return 1;
@@ -945,6 +954,61 @@ public final class AlminCommand {
                 ? "Admin login is set. Reach it over your HTTPS address (via the Caddy proxy — see config/almin/Caddyfile)."
                 : "No admin password yet — set one with /almin op web password <password> before you get full access.")
             .setStyle(Style.EMPTY.withColor(pwSet ? ChatFormatting.GREEN : ChatFormatting.YELLOW)));
+        return 1;
+    }
+
+    // ---------- /almin op activity ----------
+
+    /**
+     * The player activity log: a screen on a modded client, a short summary in
+     * chat otherwise.
+     *
+     * <p>The gate is the {@code op} subtree's, so only a trusted UUID or the
+     * console gets here — and {@link ActivityNet#send} re-checks before any row
+     * leaves the server.
+     */
+    private static int opActivity(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer self = ctx.getSource().getPlayer();
+        if (self != null && ServerPlayNetworking.canSend(self, ActivityPayload.TYPE)) {
+            ActivityNet.send(self);
+            return 1;
+        }
+        AlminConfig cfg = AlminConfig.get();
+        List<ActivityLog.Entry> rows = ActivityLog.recent(20);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Player activity: " + ActivityLog.size() + " row(s), kept "
+                    + cfg.activityRetentionMinutes + " min"
+                    + (cfg.activityLog ? "" : "  (recording is OFF)"))
+            .setStyle(Style.EMPTY.withColor(cfg.activityLog ? ChatFormatting.GRAY : ChatFormatting.YELLOW)),
+            false);
+        if (rows.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "Nothing recorded. Ops and trusted UUIDs are never recorded.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)), false);
+            return 1;
+        }
+        for (ActivityLog.Entry e : rows) {
+            String line = e.player() + " " + e.action()
+                + (e.count() > 1 ? " x" + e.count() : "")
+                + (e.detail().isEmpty() ? "" : ": " + e.detail());
+            ctx.getSource().sendSuccess(() -> Component.literal(line)
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)), false);
+        }
+        return 1;
+    }
+
+    private static int opActivityClear(CommandContext<CommandSourceStack> ctx) {
+        boolean ok = ActivityLog.clear();
+        String invoker = ctx.getSource().getEntity() == null
+            ? "console" : ctx.getSource().getEntity().getName().getString();
+        AlminLog.warn("[almin] {} cleared the activity log ({})", invoker, ok ? "ok" : "file remained");
+        if (!ok) {
+            ctx.getSource().sendFailure(Component.literal(
+                "Cleared in memory, but activity.log could not be deleted."));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal("Activity log cleared.")
+            .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)), false);
         return 1;
     }
 

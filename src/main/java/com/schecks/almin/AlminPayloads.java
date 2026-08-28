@@ -65,6 +65,8 @@ public final class AlminPayloads {
             ConsoleLinesPayload.TYPE, ConsoleLinesPayload.CODEC, CONSOLE_MAX_BYTES);
         PayloadTypeRegistry.clientboundPlay().registerLarge(
             ModFilePayload.TYPE, ModFilePayload.CODEC, ModFilePayload.MAX_BYTES + 8192);
+        PayloadTypeRegistry.clientboundPlay().registerLarge(
+            ActivityPayload.TYPE, ActivityPayload.CODEC, ActivityPayload.MAX_BYTES);
 
         // ---- client -> server ----
         PayloadTypeRegistry.serverboundPlay().register(
@@ -81,6 +83,8 @@ public final class AlminPayloads {
             WebPasswordPayload.TYPE, WebPasswordPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(
             WebControlPayload.TYPE, WebControlPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(
+            ActivityRequestPayload.TYPE, ActivityRequestPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().registerLarge(
             NanoSavePayload.TYPE, NanoSavePayload.CODEC, NANO_MAX_BYTES);
         PayloadTypeRegistry.serverboundPlay().registerLarge(
