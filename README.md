@@ -90,8 +90,32 @@ in `config/almin/config.json` and `/almin config`.
 
 - **Without logging in:** basic metrics only — versions, uptime, a player count,
   TPS. No names, no console, no files, no settings.
-- **After logging in:** the full dashboard, live console, a command terminal,
-  a file browser/editor, and mod management.
+- **After logging in:** seven tabs, covering what the in-game admin UI does.
+
+| Tab | What's on it |
+|---|---|
+| Overview | live metrics, TPS trend, the dashboard rows |
+| Console | the server log, tailing |
+| Terminal | run a server command as the console |
+| Files | browse, edit, upload, download, rename, delete, and fetch a URL onto the server |
+| Players | who's online, who's been on before, and display-name masks |
+| Mods | the mods advertised to joining players, and the jars behind them |
+| Settings | every Almin setting, the admin password, and the update check |
+
+The header carries **Stop**, **Restart** and **Start** for the Minecraft server
+itself. Stop and Restart always work; Restart hands straight over to
+`web-start-command` when supervisor mode is on, and otherwise stops the server
+and leaves it to whatever wrapper normally restarts it. **Start** only lights up
+in supervisor mode with a start command set — see below.
+
+Two settings are deliberately **not** editable from the web panel:
+`web-admin-password-hash`, which has its own field that hashes what you type,
+and `web-start-command`, which becomes a command on the host OS.
+
+**What an admin login is worth.** It can write to your `mods/` folder and
+restart the server, so it is equivalent to running code on the machine. That is
+inherent in what the panel is for, not a gap to be plugged — treat the password
+accordingly, and don't put the panel on the internet without TLS.
 
 ### About HTTPS
 

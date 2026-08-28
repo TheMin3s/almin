@@ -175,6 +175,49 @@ public final class WebFiles {
         }
     }
 
+    /**
+     * Where a streamed upload may land, or the reason it may not.
+     *
+     * <p>Split out from {@link #write} because a binary upload is streamed to
+     * disk rather than held in memory: the policy has to be settled before the
+     * first byte is read, not after.
+     */
+    public record Target(Path path, String problem) {
+        public boolean ok() { return path != null; }
+    }
+
+    /**
+     * Cap on a streamed upload. Larger than {@link #MAX_WRITE_BYTES}, which
+     * bounds a text field in a browser; this route exists for jars and packs.
+     */
+    public static final long MAX_UPLOAD_BYTES = 128L * 1024 * 1024;
+
+    /** Applies the write rules to {@code rel} without touching its contents. */
+    public static Target uploadTarget(MinecraftServer server, String rel) {
+        Path target = resolveSafe(server, rel);
+        if (target == null) return new Target(null, "Path escapes server directory");
+        if (isOwnJar(target)) return new Target(null, "Refusing to overwrite Almin's own jar");
+        if (!isWritable(server, target)) {
+            return new Target(null, "Uploads are limited to: " + AlminConfig.get().dirWritableRoots
+                + " (or a world's datapacks/)");
+        }
+        if (Files.isDirectory(target)) return new Target(null, "Path is a directory");
+        return new Target(target, "");
+    }
+
+    /**
+     * A file that may be streamed back to the browser, or null.
+     *
+     * <p>Reads are allowed anywhere under the server root — the same rule as
+     * {@link #read}, minus its text-sized cap, since a download does not have
+     * to fit in a textarea.
+     */
+    public static Path downloadable(MinecraftServer server, String rel) {
+        Path target = resolveSafe(server, rel);
+        if (target == null || !Files.isRegularFile(target)) return null;
+        return target;
+    }
+
     /** Renames a file within its directory, under a writable root. */
     public static Result rename(MinecraftServer server, String rel, String newName) {
         Path target = resolveSafe(server, rel);
