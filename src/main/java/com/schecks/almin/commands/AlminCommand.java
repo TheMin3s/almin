@@ -201,6 +201,12 @@ public final class AlminCommand {
                     .executes(AlminCommand::opConsole))
                 .then(Commands.literal("web")
                     .executes(AlminCommand::opWeb)
+                    .then(Commands.literal("start")
+                        .executes(ctx -> opWebControl(ctx, "start")))
+                    .then(Commands.literal("stop")
+                        .executes(ctx -> opWebControl(ctx, "stop")))
+                    .then(Commands.literal("restart")
+                        .executes(ctx -> opWebControl(ctx, "restart")))
                     .then(Commands.literal("password")
                         .then(Commands.argument("password", StringArgumentType.greedyString())
                             .executes(AlminCommand::opWebPassword))))
@@ -727,6 +733,13 @@ public final class AlminCommand {
                 .append(Component.literal(shown).setStyle(Style.EMPTY.withColor(ChatFormatting.WHITE))),
             false
         );
+        // Switching the panel on or off should do it, not schedule it for the
+        // next boot — nobody reads "true" in a config file and expects to wait.
+        if (key.name.equals("web-ui-enabled")) {
+            WebUi.Control r = Boolean.TRUE.equals(parsed) ? WebUi.startNow() : WebUi.stopNow();
+            ctx.getSource().sendSuccess(() -> Component.literal(r.message())
+                .setStyle(Style.EMPTY.withColor(r.ok() ? ChatFormatting.GREEN : ChatFormatting.GRAY)), false);
+        }
         return 1;
     }
 
@@ -881,6 +894,7 @@ public final class AlminCommand {
             .append(cmd("/almin op console",                     "Open a live server-console viewer")).append("\n")
             .append(cmd("/almin op web",                         "Show the web panel's address and login status")).append("\n")
             .append(cmd("/almin op web password <pw>",            "Set the web panel's admin login password")).append("\n")
+            .append(cmd("/almin op web start|stop|restart",       "Run the web panel without restarting the server")).append("\n")
             .append(cmd("/almin op help",                        "Show this message"));
         ctx.getSource().sendSuccess(() -> lines, false);
         return 1;
@@ -904,17 +918,20 @@ public final class AlminCommand {
             ctx.getSource().sendSuccess(() -> Component.literal(
                     (WebUi.running()
                         ? "Web panel on " + WebUi.browsableUrl() + "  (bound " + WebUi.bind() + ":" + WebUi.port() + ")"
-                        : "Web panel is not running.")
+                        : "Web panel is not running." + offReason(cfg))
                     + "  password " + (cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank()
                         ? "set" : "NOT set — /almin op web password <pw>"))
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)), false);
             return 1;
         }
         if (!WebUi.running()) {
-            self.sendSystemMessage(Component.literal(cfg.webUiEnabled
-                    ? "The web panel isn't running — check the Almin log (configured port " + cfg.webUiPort + ")."
-                    : "The web panel is off. Enable it with /almin config web-ui-enabled true, then restart.")
+            self.sendSystemMessage(Component.literal(
+                    "The web panel isn't running." + offReason(cfg))
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+            self.sendSystemMessage(Component.literal(cfg.webUiEnabled
+                    ? "Try /almin op web start."
+                    : "Turn it on with /almin config web-ui-enabled true, then /almin op web start.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.YELLOW)));
             return 0;
         }
         boolean pwSet = cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank();
@@ -929,6 +946,32 @@ public final class AlminCommand {
                 : "No admin password yet — set one with /almin op web password <password> before you get full access.")
             .setStyle(Style.EMPTY.withColor(pwSet ? ChatFormatting.GREEN : ChatFormatting.YELLOW)));
         return 1;
+    }
+
+    /**
+     * Why the panel isn't up, when Almin knows. Its own log never reaches the
+     * server console, so a bind failure is otherwise invisible.
+     */
+    private static String offReason(AlminConfig cfg) {
+        if (!cfg.webUiEnabled) return "  It is switched off (web-ui-enabled false).";
+        String err = WebUi.lastError();
+        return err.isEmpty() ? "" : "  " + err;
+    }
+
+    /** /almin op web start|stop|restart — runs the panel without a reboot. */
+    private static int opWebControl(CommandContext<CommandSourceStack> ctx, String action) {
+        WebUi.Control result = switch (action) {
+            case "start"   -> WebUi.startNow();
+            case "stop"    -> WebUi.stopNow();
+            default        -> WebUi.restartNow();
+        };
+        if (result.ok()) {
+            ctx.getSource().sendSuccess(() -> Component.literal(result.message())
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)), false);
+            return 1;
+        }
+        ctx.getSource().sendFailure(Component.literal(result.message()));
+        return 0;
     }
 
     /**

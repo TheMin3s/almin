@@ -7,6 +7,10 @@ build/
 run/
 .fabric/
 
+# Server byproducts, if anything is run from the repo root
+config/
+logs/
+
 # IDE files
 .idea/
 *.iml

@@ -45,6 +45,47 @@ to `config/almin/config.json` as `web-ui-port`. To see it:
 
 That's the whole setup. There is no step involving Caddy.
 
+### If it isn't running
+
+The panel is on by default, and it says so on the server console at startup —
+either the address it came up on, or why it didn't. Everything else Almin logs
+goes to `config/almin/almin.log` and never to the console; the panel is the
+exception, because a panel that quietly failed to start looks exactly like one
+nobody switched on.
+
+If the port it wants is already taken it moves to the next free one and saves
+that, so a second Minecraft instance on the same machine no longer knocks the
+first one's panel out.
+
+To check and fix from in game, `/almin op web` reports the reason, and:
+
+```
+/almin op web start
+```
+
+`stop` and `restart` work the same way, and none of them restarts Minecraft.
+
+### Running it from the Web tab
+
+`/almin` → **Web** has all of it on one screen: Start / Stop / Restart, the
+address, whether a password is set, and toggles for the settings worth changing
+from a game client.
+
+| Control | Setting | What it does |
+|---|---|---|
+| Enabled | `web-ui-enabled` | serves the panel, now and on every future start |
+| Public metrics | `web-public-metrics` | the small no-login view |
+| HTTPS only | `web-require-secure` | refuse admin login over plain HTTP |
+| Outlive server | `web-supervisor` | keep the panel up after the server stops |
+| port / bind / mins | `web-ui-port`, `web-ui-bind`, `web-session-minutes` | edit and press Apply |
+
+Changes take effect immediately — turning Enabled off stops the panel there and
+then, and a changed port or address restarts the listener on its own.
+
+`web-start-command` is deliberately **not** editable from the tab or the web
+panel. It is the one setting that becomes a command on the host OS, so it stays
+in `config/almin/config.json` and `/almin config`.
+
 ### What you get
 
 - **Without logging in:** basic metrics only — versions, uptime, a player count,

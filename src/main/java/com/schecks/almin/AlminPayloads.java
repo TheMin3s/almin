@@ -79,6 +79,8 @@ public final class AlminPayloads {
             WebAdminRequestPayload.TYPE, WebAdminRequestPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(
             WebPasswordPayload.TYPE, WebPasswordPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(
+            WebControlPayload.TYPE, WebControlPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().registerLarge(
             NanoSavePayload.TYPE, NanoSavePayload.CODEC, NANO_MAX_BYTES);
         PayloadTypeRegistry.serverboundPlay().registerLarge(

@@ -66,6 +66,40 @@ public final class WebUi {
 
     private static volatile WebUi instance;
 
+    /**
+     * Kept so the panel can be started again after being stopped from the Web
+     * tab, without waiting for a server restart.
+     */
+    private static volatile MinecraftServer boundServer;
+
+    /**
+     * Why the last start attempt failed, or "" if it didn't. Almin's own log
+     * deliberately never reaches the server console, which means a panel that
+     * failed to bind used to look exactly like a panel nobody turned on. This
+     * is what the Web tab and {@code /almin op web} show instead.
+     */
+    private static volatile String lastError = "";
+
+    /** The tick hook is registered once per JVM, not once per start. */
+    private static boolean tickHooked = false;
+
+    /**
+     * False once the Minecraft server has stopped. A panel started after that
+     * — supervisor mode allows it — must inherit the truth rather than assume
+     * a live server it would then try to read.
+     */
+    private static volatile boolean serverUp = true;
+
+    /**
+     * The one Almin logger that writes to the real server console. Everything
+     * else stays in config/almin/almin.log; a web panel that silently never
+     * came up is the one failure an owner has no other way to discover.
+     */
+    private static final org.slf4j.Logger CONSOLE = org.slf4j.LoggerFactory.getLogger("almin");
+
+    /** Ports tried before giving up, when the configured one is already taken. */
+    private static final int PORT_ATTEMPTS = 12;
+
     private final HttpServer http;
     private final MinecraftServer server;
     private final WebSessions sessions = new WebSessions();
@@ -92,55 +126,146 @@ public final class WebUi {
 
     // ---------- lifecycle ----------
 
+    /** Outcome of a start/stop/restart request, for whoever asked. */
+    public record Control(boolean ok, String message) {}
+
     /** Starts the panel if enabled. Never throws — a bind failure just logs. */
     public static synchronized void start(MinecraftServer server) {
+        boundServer = server;
+        serverUp = true;
+        hookTick();
         if (instance != null) return;
         AlminConfig cfg = AlminConfig.get();
         if (!cfg.webUiEnabled) {
+            lastError = "";
             AlminLog.info("[almin] web panel disabled by config");
+            CONSOLE.info("[almin] web panel is off (web-ui-enabled false)");
             return;
         }
-        String bind = (cfg.webUiBind == null || cfg.webUiBind.isBlank()) ? "127.0.0.1" : cfg.webUiBind.trim();
-        int port = cfg.webUiPort;
+        listen(server, cfg);
+    }
+
+    /**
+     * Binds and starts serving, trying nearby ports when the configured one is
+     * taken.
+     *
+     * <p>The panel picks its port at random on first run, so two Minecraft
+     * instances on one host can land on the same number; before this, the
+     * second one simply never came up and said so only in a log file nobody
+     * was looking at. A port that works is written back to the config, so
+     * bookmarks and the next boot agree with reality.
+     */
+    private static void listen(MinecraftServer server, AlminConfig cfg) {
+        String bind = (cfg.webUiBind == null || cfg.webUiBind.isBlank()) ? "0.0.0.0" : cfg.webUiBind.trim();
+        int wanted = cfg.webUiPort > 0 ? cfg.webUiPort : 8100;
+        IOException first = null;
+        for (int attempt = 0; attempt < PORT_ATTEMPTS; attempt++) {
+            int port = attempt == 0 ? wanted : nextPort(wanted, attempt);
+            try {
+                bindOn(server, cfg, bind, port);
+                if (port != cfg.webUiPort) {
+                    cfg.webUiPort = port;
+                    AlminConfig.save();
+                    // Only a real move deserves a warning; landing on the
+                    // first-run default is just the config catching up.
+                    if (attempt > 0) {
+                        CONSOLE.warn("[almin] web panel port {} was taken — using {} instead",
+                            wanted, port);
+                    }
+                }
+                return;
+            } catch (java.net.BindException e) {
+                // Taken, or an address this host can't bind. Either way the
+                // next port is worth a try; the first error is the honest one
+                // to report if none of them work.
+                if (first == null) first = e;
+            } catch (IOException e) {
+                fail("could not bind " + bind + ":" + port, e.getMessage());
+                return;
+            } catch (RuntimeException e) {
+                fail("failed to start", e.toString());
+                return;
+            }
+        }
+        fail("could not bind " + bind + ":" + wanted + " (or the " + (PORT_ATTEMPTS - 1)
+            + " ports after it)", first == null ? "" : first.getMessage());
+    }
+
+    private static int nextPort(int wanted, int step) {
+        int p = wanted + step;
+        return p > 65535 ? 8100 + step : p;
+    }
+
+    /** Records a start failure everywhere someone might look for it. */
+    private static void fail(String what, String detail) {
+        lastError = (detail == null || detail.isBlank()) ? what : what + " — " + detail;
+        AlminLog.warn("[almin] web panel {}", lastError);
+        CONSOLE.warn("[almin] web panel did not start: {}", lastError);
+    }
+
+    private static void bindOn(MinecraftServer server, AlminConfig cfg, String bind, int port)
+            throws IOException {
+        HttpServer http = HttpServer.create(new InetSocketAddress(bind, port), 32);
+        WebUi ui = new WebUi(http, server, bind, port);
+        http.createContext("/", ui::handleRoot);
+        http.createContext("/api/session", ui::handleSession);
+        http.createContext("/api/public", ui::handlePublic);
+        http.createContext("/api/login", ui::handleLogin);
+        http.createContext("/api/logout", ui::handleLogout);
+        http.createContext("/api/state", ui::handleState);
+        http.createContext("/api/console", ui::handleConsole);
+        http.createContext("/api/exec", ui::handleExec);
+        http.createContext("/api/files", ui::handleFiles);
+        http.createContext("/api/file", ui::handleFile);
+        http.createContext("/api/file/delete", ui::handleFileDelete);
+        http.createContext("/api/file/rename", ui::handleFileRename);
+        http.createContext("/api/server", ui::handleServerControl);
+        http.createContext("/api/mods", ui::handleMods);
+        http.createContext("/api/mods/save", ui::handleModSave);
+        http.createContext("/api/mods/delete", ui::handleModDelete);
+        http.createContext("/api/mods/files", ui::handleModFiles);
+        http.createContext("/api/mods/upload", ui::handleModUpload);
+        http.createContext("/api/mods/files/delete", ui::handleModFileDelete);
+        // In supervisor mode the web threads must be non-daemon, or the JVM
+        // exits the moment the server thread ends and takes the panel with it.
+        http.setExecutor(Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor)));
+        http.start();
+        ui.serverRunning = serverUp;
+        instance = ui;
+        lastError = "";
         try {
-            HttpServer http = HttpServer.create(new InetSocketAddress(bind, port), 32);
-            WebUi ui = new WebUi(http, server, bind, port);
-            http.createContext("/", ui::handleRoot);
-            http.createContext("/api/session", ui::handleSession);
-            http.createContext("/api/public", ui::handlePublic);
-            http.createContext("/api/login", ui::handleLogin);
-            http.createContext("/api/logout", ui::handleLogout);
-            http.createContext("/api/state", ui::handleState);
-            http.createContext("/api/console", ui::handleConsole);
-            http.createContext("/api/exec", ui::handleExec);
-            http.createContext("/api/files", ui::handleFiles);
-            http.createContext("/api/file", ui::handleFile);
-            http.createContext("/api/file/delete", ui::handleFileDelete);
-            http.createContext("/api/file/rename", ui::handleFileRename);
-            http.createContext("/api/server", ui::handleServerControl);
-            http.createContext("/api/mods", ui::handleMods);
-            http.createContext("/api/mods/save", ui::handleModSave);
-            http.createContext("/api/mods/delete", ui::handleModDelete);
-            http.createContext("/api/mods/files", ui::handleModFiles);
-            http.createContext("/api/mods/upload", ui::handleModUpload);
-            http.createContext("/api/mods/files/delete", ui::handleModFileDelete);
-            // In supervisor mode the web threads must be non-daemon, or the JVM
-            // exits the moment the server thread ends and takes the panel with it.
-            http.setExecutor(Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor)));
-            http.start();
-            instance = ui;
-            ServerTickEvents.END_SERVER_TICK.register(ui::onTick);
+            if (!serverUp) {
+                ui.publicJson = stoppedJson();
+                ui.fullJson = stoppedJson();
+            }
             ui.rebuild();
             ui.writeCaddyfile(cfg);
-            boolean pw = cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank();
-            AlminLog.info("[almin] web panel on http://{}:{} (public metrics {}, admin login {})",
-                bind, port, cfg.webPublicMetrics ? "on" : "off",
-                pw ? "ready" : "NO PASSWORD SET — run /almin op web password <pw>");
-        } catch (IOException e) {
-            AlminLog.warn("[almin] web panel could not bind {}:{} — {}", bind, port, e.getMessage());
         } catch (RuntimeException e) {
-            AlminLog.warn("[almin] web panel failed to start: {}", e.toString());
+            // The panel is already listening. A failed first snapshot or an
+            // unwritable Caddyfile is not a reason to tear it back down.
+            AlminLog.warn("[almin] web panel is up, but post-start setup failed: {}", e.toString());
         }
+        boolean pw = cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank();
+        AlminLog.info("[almin] web panel on http://{}:{} (public metrics {}, admin login {})",
+            bind, port, cfg.webPublicMetrics ? "on" : "off",
+            pw ? "ready" : "NO PASSWORD SET — run /almin op web password <pw>");
+        CONSOLE.info("[almin] web panel on {}  ({})", browsableUrl(),
+            pw ? "log in with your admin password"
+               : "no password set yet — /almin op web password <pw>");
+    }
+
+    /**
+     * Registers the snapshot tick once for the JVM and dispatches to whatever
+     * instance exists. Registering per start would pile up a dead listener
+     * behind every stop, and the panel can now be stopped and started at will.
+     */
+    private static synchronized void hookTick() {
+        if (tickHooked) return;
+        tickHooked = true;
+        ServerTickEvents.END_SERVER_TICK.register(s -> {
+            WebUi ui = instance;
+            if (ui != null) ui.onTick(s);
+        });
     }
 
     public static synchronized void stop() {
@@ -154,7 +279,38 @@ public final class WebUi {
         }
     }
 
+    /** Starts the panel on request, rather than at server start. */
+    public static synchronized Control startNow() {
+        if (instance != null) return new Control(false, "The web panel is already running.");
+        MinecraftServer s = boundServer;
+        if (s == null) return new Control(false, "The server isn't ready yet — try again in a moment.");
+        AlminConfig cfg = AlminConfig.get();
+        if (!cfg.webUiEnabled) return new Control(false, "Turn Enabled on first.");
+        lastError = "";
+        listen(s, cfg);
+        if (instance != null) return new Control(true, "Web panel started on " + browsableUrl());
+        return new Control(false, lastError.isBlank() ? "The panel could not start." : lastError);
+    }
+
+    /** Stops the panel on request, leaving the Minecraft server running. */
+    public static synchronized Control stopNow() {
+        if (instance == null) return new Control(false, "The web panel is not running.");
+        stop();
+        AlminLog.info("[almin] web panel stopped on request");
+        CONSOLE.info("[almin] web panel stopped");
+        return new Control(true, "Web panel stopped.");
+    }
+
+    /** Stops then starts, so a changed port or bind address takes effect. */
+    public static synchronized Control restartNow() {
+        stop();
+        return startNow();
+    }
+
     public static boolean running()  { return instance != null; }
+
+    /** Why the panel is not running, or "" if there is no recorded failure. */
+    public static String lastError() { return lastError; }
 
     /**
      * A URL a person can actually paste into a browser. 0.0.0.0 means "every
@@ -163,9 +319,17 @@ public final class WebUi {
      */
     public static String browsableUrl() {
         WebUi ui = instance;
-        if (ui == null) return "";
-        String host = (ui.bind.equals("0.0.0.0") || ui.bind.isBlank()) ? "<server-address>" : ui.bind;
-        return "http://" + host + ":" + ui.port + "/";
+        if (ui != null) return url(ui.bind, ui.port);
+        // Not running: show the address it would use, which is what someone
+        // reading the Web tab actually wants to know.
+        AlminConfig cfg = AlminConfig.get();
+        return url(cfg.webUiBind, cfg.webUiPort);
+    }
+
+    private static String url(String bind, int port) {
+        String host = (bind == null || bind.isBlank() || bind.equals("0.0.0.0"))
+            ? "<server-address>" : bind;
+        return "http://" + host + ":" + port + "/";
     }
     public static int port()         { WebUi u = instance; return u == null ? -1 : u.port; }
     public static String bind()      { WebUi u = instance; return u == null ? "" : u.bind; }
@@ -192,6 +356,9 @@ public final class WebUi {
      * shuts down with everything else.
      */
     public static void onServerStopped() {
+        // Recorded even with no panel up: one started later must not think it
+        // still has a live server behind it.
+        serverUp = false;
         WebUi ui = instance;
         if (ui == null) return;
         ui.serverRunning = false;
