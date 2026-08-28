@@ -84,7 +84,16 @@ SERVER_JAR="build/libs/almin-$VERSION-server.jar"
 CLIENT_JAR="build/libs/almin-$VERSION-client.jar"
 for j in "$SERVER_JAR" "$CLIENT_JAR"; do
   [ -f "$j" ] || { echo "Error: built jar not found at $j" >&2; exit 1; }
-  echo "Built $j"
+  # The filename is not proof of the contents. A jar whose fabric.mod.json
+  # disagrees with the tag makes the mod report the wrong version, which sends
+  # the auto-updater into a loop: update, restart, still look outdated, repeat.
+  DECLARED="$(unzip -p "$j" fabric.mod.json | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1)"
+  if [ "$DECLARED" != "$VERSION" ]; then
+    echo "Error: $j declares version '$DECLARED' but this release is $VERSION." >&2
+    echo "       Refusing to publish a jar that misreports its own version." >&2
+    exit 1
+  fi
+  echo "Built $j (declares $DECLARED)"
 done
 
 # --- commit + push ----------------------------------------------------------

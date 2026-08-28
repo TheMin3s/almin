@@ -89,6 +89,10 @@ def modJsonFor(String env, String entrypointsJson, String mixinsJson) {
 
 def serverModJson = tasks.register('serverModJson') {
     def out = layout.buildDirectory.file('dist/server/fabric.mod.json')
+    // Declare the version as an input, or Gradle sees only an existing output
+    // and skips the task after a version bump — publishing a jar whose
+    // fabric.mod.json still claims the previous version.
+    inputs.property('version', project.version)
     outputs.file(out)
     doLast {
         def f = out.get().asFile
@@ -101,6 +105,7 @@ def serverModJson = tasks.register('serverModJson') {
 
 def clientModJson = tasks.register('clientModJson') {
     def out = layout.buildDirectory.file('dist/client/fabric.mod.json')
+    inputs.property('version', project.version)
     outputs.file(out)
     doLast {
         def f = out.get().asFile
