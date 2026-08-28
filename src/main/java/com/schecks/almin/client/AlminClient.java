@@ -10,6 +10,7 @@ import com.schecks.almin.ModFilePayload;
 import com.schecks.almin.ModOfferPayload;
 import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.ServerVersionPayload;
+import com.schecks.almin.WebAdminPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -61,6 +62,10 @@ public class AlminClient implements ClientModInitializer {
         // to the waiting install thread — no main-thread hop, no screen change.
         ClientPlayNetworking.registerGlobalReceiver(ModFilePayload.TYPE, (payload, context) ->
             ClientModInstaller.deliver(payload));
+
+        // Web panel status for the in-game Web tab.
+        ClientPlayNetworking.registerGlobalReceiver(WebAdminPayload.TYPE, (payload, context) ->
+            context.client().execute(() -> WebPanelScreen.show(payload)));
 
         // Receive the server's Almin version; self-update if we're behind.
         ClientPlayNetworking.registerGlobalReceiver(ServerVersionPayload.TYPE, (payload, context) ->

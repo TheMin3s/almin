@@ -33,8 +33,26 @@ public final class TrustedOps {
         return TRUSTED.size();
     }
 
+    /**
+     * Whether {@code source} may use the {@code /almin op} tree.
+     *
+     * <p>The server console counts. It has no entity and so no UUID to match,
+     * but anyone typing at it already owns the machine the server runs on —
+     * refusing it only meant a server owner could not set the web password
+     * without hand-editing a hash into config.json.
+     */
     public static boolean isTrustedSource(CommandSourceStack source) {
+        if (isConsole(source)) return true;
         return source.getEntity() instanceof ServerPlayer p && isTrusted(p.getUUID());
+    }
+
+    /**
+     * True for the server console. Command blocks also have no entity, so the
+     * owner-level check is what separates them — they run lower than that.
+     */
+    public static boolean isConsole(CommandSourceStack source) {
+        return source.getEntity() == null
+            && source.permissions().hasPermission(Permissions.COMMANDS_OWNER);
     }
 
     /**

@@ -25,6 +25,7 @@ public final class AlminNav {
     private static final String[][] TABS = {
         {"Console", "almin op console", "trusted"},
         {"Files",   "almin op dir",     "trusted"},
+        {"Web",     "almin op web",     "trusted"},
         {"Shared",  "almin files",      ""},
         {"Mods",    "almin mods list",  ""},
         {"Config",  "almin config",     ""},

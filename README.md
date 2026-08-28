@@ -19,95 +19,81 @@ AUTHOR IS NOT RESPONSIBLE FOR ANY DAMAGES CAUSED AS A RESULT OF THE USAGE OF THI
 
 ## Web panel
 
-Almin also serves a web panel. It has two tiers:
+Almin serves a web panel. It works out of the box — **a reverse proxy is
+optional**, and only worth setting up when you want HTTPS.
 
-- **Public (no login):** a small set of basic metrics only — versions, uptime, a
-  player count and TPS. No names, no console, no files, no settings.
-- **Admin (password login):** the full dashboard, the live console, a command
-  terminal (runs server commands as the console, same as `/almin op cmd`), and a
-  filesystem browser/editor with the same write rules as `/almin op`.
+### Getting in
 
-The panel binds to `127.0.0.1` by default and speaks plain HTTP — it is meant to
-sit behind a TLS-terminating reverse proxy. Set an admin password in game before
-anyone can log in:
+**1. Set a password.** Nobody can log in until you do. In game or at the server
+console:
 
 ```
-/almin op web password <password>
+/almin op web password your-password-here
 ```
 
-The password is stored only as a PBKDF2 hash. Five wrong attempts lock a client
-out for 15 minutes. Config keys: `web-ui-enabled`, `web-ui-port` (chosen at first
-start), `web-ui-bind`, `web-public-metrics`, `web-session-minutes`.
+Or open `/almin` and use the **Web** tab, which has a password field — better
+than the command, since the command puts your password in chat and in the log.
 
-### HTTPS on a domain (Caddy)
+**2. Find the address.** The port is picked randomly on first start and written
+to `config/almin/config.json` as `web-ui-port`. To see it:
 
-A starter `config/almin/Caddyfile` is written on first start. It is deliberately
-scoped to this instance and **never binds port 80 or 443**, so it won't collide
-with anything else on the host: the panel is published on its own HTTPS port and
-the certificate is obtained with the DNS-01 challenge (which needs no inbound
-port). Fill in your domain, HTTPS port, and DNS provider credentials, then:
+```
+/almin op web
+```
+
+**3. Open it.** `http://your-server-address:<port>/`
+
+That's the whole setup. There is no step involving Caddy.
+
+### What you get
+
+- **Without logging in:** basic metrics only — versions, uptime, a player count,
+  TPS. No names, no console, no files, no settings.
+- **After logging in:** the full dashboard, live console, a command terminal,
+  a file browser/editor, and mod management.
+
+### About HTTPS
+
+The panel speaks plain HTTP. On a home or private network that is usually fine.
+Over the internet it is not: your password and everything you do crosses the
+network in the clear.
+
+Two settings control this, and neither gets in your way by default:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `web-ui-bind` | `0.0.0.0` | reachable from other machines. Set to `127.0.0.1` to restrict it to the server itself |
+| `web-require-secure` | `false` | when `true`, admin login is refused unless the connection is HTTPS (via a proxy) or from the server itself |
+
+Leave both alone and it just works. Once you have TLS in front, set
+`web-require-secure true` and the panel will stop accepting plaintext logins.
+
+### Optional: HTTPS with Caddy
+
+Only if you want encryption. A starter `config/almin/Caddyfile` is written on
+first start. Point it at your domain, then:
 
 ```
 caddy run --config config/almin/Caddyfile
 ```
 
-Because the admin tier is only served to loopback callers, the panel is reachable
-from the internet only through the proxy; a direct connection that bypassed it is
-refused the login. There is no TLS without the proxy — do not expose the panel's
-own port directly.
+It is deliberately scoped so it cannot collide with anything else on the
+machine: it never binds port 80 or 443 (it publishes on its own HTTPS port and
+gets certificates over DNS, which needs no inbound port), and it keeps all its
+state inside `config/almin/`.
 
-**Security note:** an admin login grants remote control of the server (terminal +
-file writes). Use a strong password, keep the panel behind the proxy, and treat
-the URL as sensitive.
-
-### Start / stop from the panel
-
-Once logged in the header has a **Stop server** button (a graceful stop, same as
-`/stop`). What happens next depends on `web-supervisor`:
-
-- **`web-supervisor false` (default)** — stopping lets the JVM exit, which is
-  what an external wrapper watches for in order to restart the server. This is
-  the behaviour `/almin op restart` has always relied on. The panel goes down
-  with the server, so there is no Start button.
-- **`web-supervisor true`** — the panel's threads keep the JVM alive after the
-  server stops, so the page stays up and shows a **Start server** button. Start
-  runs `web-start-command` in the server directory, then hands the port over by
-  shutting this JVM down; the new server's own panel takes over a few seconds
-  later.
+With the proxy running, tighten things up:
 
 ```
-/almin config web-supervisor true
-/almin config web-start-command ./start.sh
+/almin config web-ui-bind 127.0.0.1
+/almin config web-require-secure true
 ```
 
-**Do not enable supervisor mode if something else already restarts your server**
-(systemd, a `while true` wrapper, a panel host). Two supervisors means either a
-double start or no start at all. And if `web-start-command` is wrong, Start takes
-the panel down with it and nothing comes back — test the command by hand first.
+That makes the panel reachable *only* through the proxy, over HTTPS.
 
-The Minecraft server cannot be restarted *inside* the same JVM: its bootstrap
-runs once per process. That is why Start launches a fresh process rather than
-rebooting the world in place.
-
-## Which jar do I want?
-
-Each release ships two:
-
-| File | Put it in | Contains |
-|---|---|---|
-| `almin-<version>-server.jar` | your server's `mods/` | everything: commands, mixins, the web panel |
-| `almin-<version>-client.jar` | your client's `mods/` | only the screens the server opens (dashboard, console viewer, file browser, nano editor) |
-
-The client jar declares `environment: "client"` and registers no commands, no
-mixins and no web panel — it exists purely to render what the server sends, so
-a player running it gains nothing on their own machine. The server jar contains
-no client code at all.
-
-You don't need the client jar to use Almin: a vanilla client gets the same
-information as chat output. It only buys you the graphical screens.
-
-The self-updaters pick their jar out of a release by the `server` / `client` in
-the filename, so those names matter — see `UpdateChecker.SERVER_JAR`.
+**Security note:** an admin login is remote control of the server — a terminal
+and file writes. Use a strong password, and don't expose the panel to the
+internet without TLS in front of it.
 
 ## Advertising mods to players
 

@@ -24,6 +24,8 @@ import com.schecks.almin.PlayerHistory;
 import com.schecks.almin.TrustedOps;
 import com.schecks.almin.Passwords;
 import com.schecks.almin.UpdateChecker;
+import com.schecks.almin.WebAdminNet;
+import com.schecks.almin.WebAdminPayload;
 import com.schecks.almin.WebUi;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.ChatFormatting;
@@ -890,8 +892,24 @@ public final class AlminCommand {
      * and never to the shared console log.
      */
     private static int opWeb(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        ServerPlayer self = ctx.getSource().getPlayerOrException();
+        ServerPlayer self = ctx.getSource().getPlayer();
         AlminConfig cfg = AlminConfig.get();
+        // A modded client gets the Web tab; console and vanilla clients get the
+        // same information as chat.
+        if (self != null && ServerPlayNetworking.canSend(self, WebAdminPayload.TYPE)) {
+            WebAdminNet.sendStatus(self);
+            return 1;
+        }
+        if (self == null) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    (WebUi.running()
+                        ? "Web panel on " + WebUi.browsableUrl() + "  (bound " + WebUi.bind() + ":" + WebUi.port() + ")"
+                        : "Web panel is not running.")
+                    + "  password " + (cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank()
+                        ? "set" : "NOT set — /almin op web password <pw>"))
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)), false);
+            return 1;
+        }
         if (!WebUi.running()) {
             self.sendSystemMessage(Component.literal(cfg.webUiEnabled
                     ? "The web panel isn't running — check the Almin log (configured port " + cfg.webUiPort + ")."
@@ -918,23 +936,31 @@ public final class AlminCommand {
      * (PBKDF2) and only the hash is stored; it never touches the log. Any live
      * web sessions are dropped, so an old login can't outlive a password change.
      */
-    private static int opWebPassword(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        ServerPlayer self = ctx.getSource().getPlayerOrException();
+    private static int opWebPassword(CommandContext<CommandSourceStack> ctx) {
         String password = StringArgumentType.getString(ctx, "password");
         if (password.length() < 8) {
-            self.sendSystemMessage(Component.literal("Pick a password of at least 8 characters.")
-                .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+            ctx.getSource().sendFailure(Component.literal("Pick a password of at least 8 characters."));
             return 0;
         }
         AlminConfig.get().webAdminPasswordHash = Passwords.hash(password);
         AlminConfig.save();
         WebUi.invalidateSessions();
-        AlminLog.info("[almin] {} set the web admin password", self.getGameProfile().name());
-        self.sendSystemMessage(Component.literal("Web admin password updated. Existing web logins were signed out.")
-            .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)));
-        self.sendSystemMessage(Component.literal(
-                "Tip: delete your chat line — the password was typed in clear text here.")
-            .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)));
+
+        // Works from the console as well as in game, so report through the
+        // source rather than assuming there is a player to message.
+        ServerPlayer self = ctx.getSource().getPlayer();
+        AlminLog.info("[almin] {} set the web admin password",
+            self == null ? "console" : self.getGameProfile().name());
+        ctx.getSource().sendSuccess(() ->
+            Component.literal("Web admin password updated. Existing web logins were signed out.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)),
+            false);
+        if (self != null) {
+            self.sendSystemMessage(Component.literal(
+                    "Tip: clear your chat — the password was typed in the open. "
+                        + "The Web tab in /almin sets it without going through chat.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)));
+        }
         return 1;
     }
 

@@ -54,6 +54,8 @@ public final class AlminPayloads {
             ConsoleOpenPayload.TYPE, ConsoleOpenPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(
             ModOfferPayload.TYPE, ModOfferPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(
+            WebAdminPayload.TYPE, WebAdminPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().registerLarge(
             FileTransferPayload.TYPE, FileTransferPayload.CODEC,
             FileTransferPayload.MAX_BYTES + 4096);
@@ -73,6 +75,10 @@ public final class AlminPayloads {
             ModResponsePayload.TYPE, ModResponsePayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(
             ModFileRequestPayload.TYPE, ModFileRequestPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(
+            WebAdminRequestPayload.TYPE, WebAdminRequestPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(
+            WebPasswordPayload.TYPE, WebPasswordPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().registerLarge(
             NanoSavePayload.TYPE, NanoSavePayload.CODEC, NANO_MAX_BYTES);
         PayloadTypeRegistry.serverboundPlay().registerLarge(

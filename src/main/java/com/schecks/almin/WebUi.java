@@ -155,6 +155,18 @@ public final class WebUi {
     }
 
     public static boolean running()  { return instance != null; }
+
+    /**
+     * A URL a person can actually paste into a browser. 0.0.0.0 means "every
+     * interface", which is not an address you can visit, so it becomes a
+     * placeholder for the server's own hostname.
+     */
+    public static String browsableUrl() {
+        WebUi ui = instance;
+        if (ui == null) return "";
+        String host = (ui.bind.equals("0.0.0.0") || ui.bind.isBlank()) ? "<server-address>" : ui.bind;
+        return "http://" + host + ":" + ui.port + "/";
+    }
     public static int port()         { WebUi u = instance; return u == null ? -1 : u.port; }
     public static String bind()      { WebUi u = instance; return u == null ? "" : u.bind; }
 
@@ -278,6 +290,7 @@ public final class WebUi {
             JsonObject o = new JsonObject();
             o.addProperty("authed", authed(ex));
             o.addProperty("secure", secure(ex));
+            o.addProperty("encrypted", isProtected(ex));
             o.addProperty("passwordSet", pwSet);
             o.addProperty("publicMetrics", cfg.webPublicMetrics);
             o.addProperty("serverRunning", serverRunning);
@@ -331,7 +344,16 @@ public final class WebUi {
             if (cfg.webAdminPasswordHash == null || cfg.webAdminPasswordHash.isBlank()) {
                 json(ex, 403, "{\"error\":\"no-password\"}"); return;
             }
-            if (!secure(ex)) { json(ex, 403, "{\"error\":\"insecure\"}"); return; }
+            if (!secure(ex)) {
+                json(ex, 403, err("This server only accepts admin logins over HTTPS or from the "
+                    + "machine itself (web-require-secure is on). Put a TLS proxy in front, or set "
+                    + "web-require-secure false."));
+                return;
+            }
+            if (!isProtected(ex)) {
+                AlminLog.warn("[almin] web admin login over plain HTTP from {} — "
+                    + "set web-require-secure true once TLS is in front", clientKey(ex));
+            }
             String key = clientKey(ex);
             if (sessions.lockedOut(key)) {
                 AlminLog.warn("[almin] web login locked out for {}", key);
@@ -782,19 +804,35 @@ public final class WebUi {
     }
 
     /**
-     * Trusted iff the TCP peer is loopback: the request came through the local
-     * proxy or from the local machine. A direct connection from a remote address
-     * (proxy bypassed) is never trusted, so no forged header can promote it.
+     * Whether this request may use the admin tier.
+     *
+     * <p>A connection is <em>demonstrably</em> protected when the peer is
+     * loopback (local, or a proxy on this machine) or a local proxy reports
+     * HTTPS. Anything else is a plain HTTP connection from elsewhere, and
+     * whether that is acceptable is the operator's call:
+     * {@code web-require-secure} decides. It is off by default — switching it
+     * on without a TLS proxy in front makes the panel impossible to log into
+     * from another machine, which is not a useful way to fail.
      */
     private static boolean secure(HttpExchange ex) {
+        if (isProtected(ex)) return true;
+        return !AlminConfig.get().webRequireSecure;
+    }
+
+    /** True when the transport really is protected, rather than merely permitted. */
+    private static boolean isProtected(HttpExchange ex) {
+        return loopback(ex) || behindTls(ex);
+    }
+
+    private static boolean loopback(HttpExchange ex) {
         InetSocketAddress remote = ex.getRemoteAddress();
         InetAddress a = remote == null ? null : remote.getAddress();
         return a != null && a.isLoopbackAddress();
     }
 
-    /** Whether the external leg is HTTPS, per the proxy — only trusted from loopback. */
+    /** Whether the external leg is HTTPS, per the proxy — only believed from loopback. */
     private static boolean behindTls(HttpExchange ex) {
-        return secure(ex) && "https".equalsIgnoreCase(firstHeader(ex, "X-Forwarded-Proto"));
+        return loopback(ex) && "https".equalsIgnoreCase(firstHeader(ex, "X-Forwarded-Proto"));
     }
 
     /**
@@ -810,7 +848,7 @@ public final class WebUi {
      */
     private static String clientKey(HttpExchange ex) {
         String xff = firstHeader(ex, "X-Forwarded-For");
-        if (secure(ex) && xff != null && !xff.isBlank()) {
+        if (loopback(ex) && xff != null && !xff.isBlank()) {
             String[] hops = xff.split(",");
             String lastHop = hops[hops.length - 1].trim();
             if (!lastHop.isEmpty()) return lastHop;
@@ -1117,7 +1155,7 @@ public final class WebUi {
         <main id="main"></main>
         <script>
         const $ = id => document.getElementById(id);
-        let authed=false, secure=false, pwSet=false, publicMetrics=true;
+        let authed=false, secure=false, encrypted=false, pwSet=false, publicMetrics=true;
         let serverRunning=true, canStart=false, supervisor=false;
         let tab='dash', last=null, stuck=true, tpsHistory=[];
 
@@ -1262,6 +1300,14 @@ public final class WebUi {
 
         function dashPanel(){
           const wrap=document.createElement('div');
+          if(authed && !encrypted){
+            const w=document.createElement('div'); w.className='banner';
+            w.style.borderLeftColor='#fab219';
+            w.innerHTML='<span class="state warn">HTTP</span><span class="muted">'+
+              'This session is unencrypted. Anyone on the network path can read it. '+
+              'Put a TLS proxy in front before using this over the internet.</span>';
+            wrap.appendChild(w);
+          }
           if(!serverRunning){
             const b=document.createElement('div'); b.className='banner';
             b.innerHTML='<span class="state crit">Stopped</span><span class="muted">'+
@@ -1293,8 +1339,14 @@ public final class WebUi {
             '<p class="muted">No admin password is set yet. In game, run '+
             '<code>/almin op web password &lt;password&gt;</code>.</p>'); return box; }
           if(!secure){ box.insertAdjacentHTML('beforeend',
-            '<p class="muted">Log in over the HTTPS address. This connection isn\\'t recognised as secure.</p>');
+            '<p class="muted">This server only accepts admin logins over HTTPS, or from the machine '+
+            'it runs on. Either reach it through your TLS proxy, or run '+
+            '<code>/almin config web-require-secure false</code> to allow plain HTTP.</p>');
             return box; }
+          if(!encrypted){ box.insertAdjacentHTML('beforeend',
+            '<p class="muted" style="color:#ffcc55">This connection is plain HTTP &mdash; your password '+
+            'will cross the network unencrypted. Fine on a trusted LAN; put TLS in front before '+
+            'exposing this to the internet.</p>'); }
           const pw=document.createElement('input'); pw.type='password'; pw.placeholder='Admin password';
           pw.autocomplete='current-password';
           const btn=document.createElement('button'); btn.className='btn'; btn.textContent='Log in';
@@ -1564,6 +1616,7 @@ public final class WebUi {
           const s=await jget('/api/session');
           if(s.status!==200) return;
           authed=!!s.body.authed; secure=!!s.body.secure; pwSet=!!s.body.passwordSet;
+          encrypted=!!s.body.encrypted;
           publicMetrics=!!s.body.publicMetrics; canStart=!!s.body.canStart;
           supervisor=!!s.body.supervisor;
           if(s.body.serverRunning!=null) serverRunning=!!s.body.serverRunning;

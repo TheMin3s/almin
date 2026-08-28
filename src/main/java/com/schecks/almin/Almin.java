@@ -19,6 +19,7 @@ public class Almin implements ModInitializer {
         // handler or receiver can be attached.
         AlminPayloads.registerTypes();
         ModNet.register();
+        WebAdminNet.register();
         NanoNet.register();
         DirNet.register();
         UploadNet.register();

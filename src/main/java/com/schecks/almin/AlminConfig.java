@@ -44,14 +44,24 @@ public final class AlminConfig {
     public boolean webUiEnabled = true;
     /** 0 until the first startup picks one; see {@link #ensureFirstRunDefaults}. */
     public int webUiPort = 0;
-    /** Loopback by default — the panel is meant to sit behind the Caddy proxy. */
-    public String webUiBind = "127.0.0.1";
+    /**
+     * Address the panel listens on. All interfaces by default so it simply
+     * works; set it to 127.0.0.1 if you are putting a TLS proxy in front.
+     */
+    public String webUiBind = "0.0.0.0";
     /** Serve the unauthenticated basic-metrics view to anyone who can reach it. */
     public boolean webPublicMetrics = true;
     /** PBKDF2 hash of the admin password. Empty = login disabled (no full access). */
     public String webAdminPasswordHash = "";
     /** How long a web login stays valid. */
     public int webSessionMinutes = 120;
+    /**
+     * Only allow admin login over a connection Almin can tell is protected —
+     * loopback, or a proxy reporting HTTPS. Off by default, because switching
+     * it on without a proxy in front makes the panel impossible to log into
+     * from another machine. Turn it on once TLS is actually in place.
+     */
+    public boolean webRequireSecure = false;
     /**
      * Keep the web panel (and this JVM) alive after the Minecraft server stops,
      * so the panel can start it again.
@@ -156,8 +166,10 @@ public final class AlminConfig {
             c -> c.webUiEnabled, (c, v) -> c.webUiEnabled = (Boolean) v),
         intKey("web-ui-port", "Port the web dashboard listens on (picked at first startup; 0 = pick a new one next start)", 0, 65535,
             c -> c.webUiPort, (c, v) -> c.webUiPort = (Integer) v),
-        textKey("web-ui-bind", "Address the web dashboard binds to (127.0.0.1 = this machine only; keep it here behind the proxy)",
+        textKey("web-ui-bind", "Address the panel binds to (0.0.0.0 = reachable; 127.0.0.1 = this machine only)",
             c -> c.webUiBind, (c, v) -> c.webUiBind = (String) v),
+        boolKey("web-require-secure", "Refuse admin login unless the connection is loopback or HTTPS via a proxy (needs TLS set up first)",
+            c -> c.webRequireSecure, (c, v) -> c.webRequireSecure = (Boolean) v),
         boolKey("web-public-metrics", "Serve the unauthenticated basic-metrics view (login is always required for the rest)",
             c -> c.webPublicMetrics, (c, v) -> c.webPublicMetrics = (Boolean) v),
         // Not settable to a raw value here — /almin op web password hashes it.
