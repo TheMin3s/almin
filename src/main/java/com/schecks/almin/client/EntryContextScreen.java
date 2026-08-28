@@ -63,18 +63,18 @@ public final class EntryContextScreen extends Screen {
             case "open" -> ClientPlayNetworking.send(new DirRequestPayload(full));
             case "download" -> {
                 mc.getConnection().sendCommand("almin op get " + full);
-                mc.setScreen(null);
+                mc.setScreenAndShow(null);
             }
             case "nano" -> {
                 mc.getConnection().sendCommand("almin op nano " + full);
-                mc.setScreen(null);
+                mc.setScreenAndShow(null);
             }
-            case "rename" -> mc.setScreen(new RenameFileScreen(parentPath, entry.name()));
+            case "rename" -> mc.setScreenAndShow(new RenameFileScreen(parentPath, entry.name()));
             case "delete" -> {
                 String confirmText = entry.directory()
                     ? "Delete folder \"" + full + "\"? (must be empty)"
                     : "Delete file \"" + full + "\"?";
-                mc.setScreen(new ConfirmScreen(
+                mc.setScreenAndShow(new ConfirmScreen(
                     accepted -> {
                         Minecraft m = Minecraft.getInstance();
                         if (accepted && m.getConnection() != null) {

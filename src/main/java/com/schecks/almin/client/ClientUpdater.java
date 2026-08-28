@@ -55,7 +55,7 @@ public final class ClientUpdater {
             LOG.info("[Almin] server {} is older than client {} — showing warning",
                 serverVersion, clientVersion);
             Minecraft.getInstance().execute(() ->
-                Minecraft.getInstance().setScreen(
+                Minecraft.getInstance().setScreenAndShow(
                     new ServerOutdatedScreen(serverVersion, clientVersion)));
         }
     }
@@ -101,7 +101,7 @@ public final class ClientUpdater {
     private static void announce(String from, String to) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        mc.setScreen(new UpdateAppliedScreen(from, to));
+        mc.setScreenAndShow(new UpdateAppliedScreen(from, to));
     }
 
     private static void download(String url, Path dest) throws IOException, InterruptedException {

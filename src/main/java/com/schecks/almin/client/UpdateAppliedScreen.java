@@ -41,7 +41,7 @@ public final class UpdateAppliedScreen extends Screen {
     @Override
     public void onClose() {
         if (this.minecraft != null) {
-            this.minecraft.setScreen(null);
+            this.minecraft.setScreenAndShow(null);
         }
     }
 
@@ -51,7 +51,7 @@ public final class UpdateAppliedScreen extends Screen {
 
     private void openSkipConfirm() {
         if (this.minecraft != null) {
-            this.minecraft.setScreen(new UpdateRefuseConfirmScreen());
+            this.minecraft.setScreenAndShow(new UpdateRefuseConfirmScreen());
         }
     }
 

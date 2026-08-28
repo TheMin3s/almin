@@ -57,7 +57,7 @@ public final class DashboardScreen extends Screen {
     /** Replaces the open dashboard, or opens one if the screen isn't up. */
     public static void show(List<DashboardPayload.Row> rows, DashboardPayload.Tiles tiles, boolean trusted) {
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(new DashboardScreen(rows, tiles, trusted));
+        mc.setScreenAndShow(new DashboardScreen(rows, tiles, trusted));
     }
 
     @Override
@@ -124,13 +124,13 @@ public final class DashboardScreen extends Screen {
     private void confirmStop() {
         Minecraft mc = this.minecraft;
         if (mc == null) return;
-        mc.setScreen(new ConfirmScreen(
+        mc.setScreenAndShow(new ConfirmScreen(
             yes -> {
                 if (yes) {
                     send("almin op restart");
                     onClose();
                 } else {
-                    mc.setScreen(this);
+                    mc.setScreenAndShow(this);
                 }
             },
             Component.literal("Stop the server?"),

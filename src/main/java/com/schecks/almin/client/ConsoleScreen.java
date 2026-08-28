@@ -65,7 +65,7 @@ public final class ConsoleScreen extends Screen {
     /** Receives a batch of lines from the network. Called from AlminClient. */
     public static void appendLines(List<String> lines) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.screen instanceof ConsoleScreen cs) {
+        if (mc.gui.screen() instanceof ConsoleScreen cs) {
             cs.addLines(lines);
         }
     }

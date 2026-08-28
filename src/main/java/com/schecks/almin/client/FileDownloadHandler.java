@@ -40,7 +40,7 @@ public final class FileDownloadHandler {
                 if (accepted) {
                     save(mc, name, data);
                 } else {
-                    mc.setScreen(null);
+                    mc.setScreenAndShow(null);
                 }
             },
             Component.literal("Almin — Download file?"),
@@ -48,7 +48,7 @@ public final class FileDownloadHandler {
                 + "). If you accept, it will be saved to " + downloadDir()
                 + " — nothing is run automatically.")
         );
-        mc.setScreen(screen);
+        mc.setScreenAndShow(screen);
     }
 
     /** Absolute path of the downloads folder: &lt;.minecraft&gt;/almin-downloads/ */
@@ -65,11 +65,11 @@ public final class FileDownloadHandler {
             Path tmp = Files.createTempFile(dir, ".almin-dl-", ".part");
             Files.write(tmp, data);
             Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            mc.setScreen(null);
+            mc.setScreenAndShow(null);
             chat(mc, Component.literal("Saved to " + dest)
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)));
         } catch (IOException e) {
-            mc.setScreen(null);
+            mc.setScreenAndShow(null);
             chat(mc, Component.literal("Failed to save file: " + e.getMessage())
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
         }

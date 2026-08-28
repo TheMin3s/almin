@@ -139,7 +139,7 @@ public final class DirBrowserScreen extends Screen {
         String confirm = e.directory()
             ? "Delete folder \"" + full + "\"? (must be empty)"
             : "Delete file \"" + full + "\"?";
-        this.minecraft.setScreen(new ConfirmScreen(
+        this.minecraft.setScreenAndShow(new ConfirmScreen(
             accepted -> {
                 Minecraft mc = Minecraft.getInstance();
                 if (accepted && mc.getConnection() != null) {
@@ -224,7 +224,7 @@ public final class DirBrowserScreen extends Screen {
             DirEntry hovered = list.entryAt(event.x(), event.y());
             if (hovered != null && this.minecraft != null) {
                 list.setSelected(hovered);
-                this.minecraft.setScreen(new EntryContextScreen(path, hovered.data));
+                this.minecraft.setScreenAndShow(new EntryContextScreen(path, hovered.data));
                 return true;
             }
         }

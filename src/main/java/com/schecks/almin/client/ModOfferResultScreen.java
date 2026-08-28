@@ -29,10 +29,6 @@ public final class ModOfferResultScreen extends Screen {
             .bounds(this.width / 2 - 75, this.height - 32, 150, 20).build());
     }
 
-    @Override
-    public void onClose() {
-        if (this.minecraft != null) this.minecraft.setScreen(null);
-    }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {

@@ -39,12 +39,12 @@ public class AlminClient implements ClientModInitializer {
 
         // Receive a nano editing session; open the editor on the main thread.
         ClientPlayNetworking.registerGlobalReceiver(NanoOpenPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> context.client().setScreen(
+            context.client().execute(() -> context.client().setScreenAndShow(
                 new NanoEditorScreen(payload.path(), payload.content()))));
 
         // Receive a directory listing; open/refresh the file browser.
         ClientPlayNetworking.registerGlobalReceiver(DirListingPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> context.client().setScreen(
+            context.client().execute(() -> context.client().setScreenAndShow(
                 new DirBrowserScreen(payload.path(), payload.entries()))));
 
         // Receive the server's suggested mods and ask the player about them.
@@ -63,7 +63,7 @@ public class AlminClient implements ClientModInitializer {
 
         // Console viewer: server says "open it", and streams batches of lines.
         ClientPlayNetworking.registerGlobalReceiver(ConsoleOpenPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> context.client().setScreen(new ConsoleScreen())));
+            context.client().execute(() -> context.client().setScreenAndShow(new ConsoleScreen())));
         ClientPlayNetworking.registerGlobalReceiver(ConsoleLinesPayload.TYPE, (payload, context) ->
             context.client().execute(() -> ConsoleScreen.appendLines(payload.lines())));
 

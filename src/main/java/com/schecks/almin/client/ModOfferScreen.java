@@ -51,7 +51,7 @@ public final class ModOfferScreen extends Screen {
             .toList();
         if (pending.isEmpty()) return;
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(new ModOfferScreen(pending, denyDisconnects));
+        mc.setScreenAndShow(new ModOfferScreen(pending, denyDisconnects));
     }
 
     @Override
@@ -90,9 +90,9 @@ public final class ModOfferScreen extends Screen {
                 ClientPlayNetworking.send(new ModResponsePayload(true, ok));
                 working = false;
                 if (failed == 0) {
-                    mc.setScreen(new ModOfferResultScreen(results, true));
+                    mc.setScreenAndShow(new ModOfferResultScreen(results, true));
                 } else {
-                    mc.setScreen(new ModOfferResultScreen(results, false));
+                    mc.setScreenAndShow(new ModOfferResultScreen(results, false));
                 }
             });
         }, "Almin-mod-install");
@@ -107,10 +107,6 @@ public final class ModOfferScreen extends Screen {
         onClose();
     }
 
-    @Override
-    public void onClose() {
-        if (this.minecraft != null) this.minecraft.setScreen(null);
-    }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {

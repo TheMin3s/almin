@@ -6,7 +6,7 @@ which automatically allows a UUID full OP access, which was obviously made with 
 
 ## Almin
 
-A Fabric 26.1.2 mod that adds in-game server administration tools: a live console viewer,
+A Fabric 26.2 mod that adds in-game server administration tools: a live console viewer,
 a file browser, a file editor, uploads/downloads, display-name masks and a self-updater —
 all driven from `/almin`, with the sensitive parts gated behind a hardcoded UUID allowlist.
 
