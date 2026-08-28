@@ -278,7 +278,17 @@ public final class UpdateChecker {
                 release.version(), removal);
             AlminLog.info("[almin] auto-update installed {} ({} bytes) {}; restarting",
                 release.version(), fr.bytes(), removal);
-            server.execute(() -> server.halt(false));
+            server.execute(() -> {
+                // Tell whoever is playing why the server just went away. An
+                // unannounced halt is indistinguishable from a crash, and this
+                // one is deliberate.
+                server.getPlayerList().broadcastSystemMessage(
+                    net.minecraft.network.chat.Component.literal(
+                        "[Almin] Updating to " + release.version() + " — the server is restarting."),
+                    false);
+                AlminExit.arm("an auto-update to " + release.version());
+                server.halt(false);
+            });
         });
     }
 

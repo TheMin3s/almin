@@ -53,9 +53,27 @@ goes to `config/almin/almin.log` and never to the console; the panel is the
 exception, because a panel that quietly failed to start looks exactly like one
 nobody switched on.
 
-If the port it wants is already taken it moves to the next free one and saves
-that, so a second Minecraft instance on the same machine no longer knocks the
-first one's panel out.
+If the port it wants is already taken it waits a couple of seconds and tries
+again, then falls back to a nearby one **for that run only** — the configured
+port is never overwritten, so the address you bookmarked comes back as soon as
+whatever was holding it lets go.
+
+### If the port stays held after the server stops
+
+Fixed in 2.8.0, and worth knowing what it was. `HttpServer.start()` spawns its
+own dispatcher thread, outside the pool Almin configures, and that thread takes
+its daemon flag from whoever called `start()` — the Minecraft server thread,
+which is not a daemon. So when the game stopped without running its shutdown
+hooks, that one thread kept the whole JVM alive: the port stayed bound in front
+of a panel with a dead server behind it, and nothing watching for the process to
+exit ever saw it. The next start then found its own corpse on the port.
+
+Almin now binds from a thread whose daemon flag matches `web-supervisor`, so the
+JVM ends when Minecraft does unless you have explicitly asked it not to. On top
+of that, a stop Almin itself asked for — auto-update, `/almin op restart`, the
+panel's Stop and Restart — arms a watchdog that forces the process to exit if it
+is still running a minute later, because every one of those features is a
+restart only if the process actually ends.
 
 To check and fix from in game, `/almin op web` reports the reason, and:
 

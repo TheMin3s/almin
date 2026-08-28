@@ -26,8 +26,9 @@ public class OpenMenuActivityMixin {
             if (provider == null) return;
             ActivityLog.record((ServerPlayer) (Object) this, "container",
                 provider.getDisplayName().getString());
-        } catch (RuntimeException ignored) {
-            // Never let logging break a container.
+        } catch (Throwable ignored) {
+            // Throwable, not RuntimeException: a pure observer must never be
+            // the reason a container refuses to open.
         }
     }
 }

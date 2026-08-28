@@ -17,6 +17,7 @@ import com.schecks.almin.DirNet;
 import com.schecks.almin.FileFetcher;
 import com.schecks.almin.FileShare;
 import com.schecks.almin.AlminConfig;
+import com.schecks.almin.AlminExit;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
 import com.schecks.almin.MaskConfig;
@@ -1182,6 +1183,9 @@ public final class AlminCommand {
         if (server == null) return 0;
         self.sendSystemMessage(Component.literal("Stopping server.")
             .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+        // This command is only a restart because the JVM exits afterwards and
+        // something outside starts it again; make sure it does.
+        AlminExit.arm("/almin op restart");
         server.halt(false);
         return 1;
     }

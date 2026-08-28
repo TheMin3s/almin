@@ -74,11 +74,18 @@ public final class ActivityLog {
     public record Entry(long at, String player, String uuid, String action,
                         String detail, String where, int count) {}
 
+    /** Rows allowed to wait for the writer before the oldest are dropped. */
+    private static final int MAX_PENDING = 50_000;
+
     private static final Deque<Entry> entries = new ArrayDeque<>();
     private static final ConcurrentLinkedQueue<Entry> pending = new ConcurrentLinkedQueue<>();
+    /** ConcurrentLinkedQueue.size() walks the list; this does not. */
+    private static final java.util.concurrent.atomic.AtomicInteger pendingCount =
+        new java.util.concurrent.atomic.AtomicInteger();
 
     private static volatile Path file;
     private static ScheduledExecutorService scheduler;
+    private static boolean shutdownHooked = false;
 
     private ActivityLog() {}
 
@@ -94,8 +101,50 @@ public final class ActivityLog {
             t.setDaemon(true);
             return t;
         });
-        scheduler.scheduleWithFixedDelay(ActivityLog::flush, FLUSH_SECONDS, FLUSH_SECONDS, TimeUnit.SECONDS);
-        scheduler.scheduleWithFixedDelay(ActivityLog::prune, PRUNE_SECONDS, PRUNE_SECONDS, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(guarded(ActivityLog::flush, "flush"),
+            FLUSH_SECONDS, FLUSH_SECONDS, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(guarded(ActivityLog::prune, "prune"),
+            PRUNE_SECONDS, PRUNE_SECONDS, TimeUnit.SECONDS);
+        hookShutdown();
+    }
+
+    /**
+     * Wraps a repeating task so one failure cannot end it.
+     *
+     * <p>{@code scheduleWithFixedDelay} cancels a task for good the first time
+     * it throws, and says nothing. If the flush died that way, rows would queue
+     * up in {@link #pending} for the rest of the run with nothing draining
+     * them — a slow leak ending in an out-of-memory crash, from a task that had
+     * silently stopped hours earlier.
+     */
+    private static Runnable guarded(Runnable job, String what) {
+        return () -> {
+            try {
+                job.run();
+            } catch (Throwable t) {
+                AlminLog.warn("[almin] activity {} failed: {}", what, t.toString());
+            }
+        };
+    }
+
+    /**
+     * Writes out whatever is queued when the JVM goes down. A crash is exactly
+     * when the last few seconds of the log are worth having.
+     */
+    private static void hookShutdown() {
+        if (shutdownHooked) return;
+        shutdownHooked = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    flush();
+                } catch (Throwable ignored) {
+                    // Going down anyway.
+                }
+            }, "Almin-activity-shutdown"));
+        } catch (IllegalStateException ignored) {
+            // Already shutting down.
+        }
     }
 
     public static synchronized void close() {
@@ -179,7 +228,16 @@ public final class ActivityLog {
             int max = AlminConfig.get().activityMaxEntries;
             while (entries.size() > max) entries.pollFirst();
         }
+        // Bounded on purpose. The queue is only a hand-off to the writer, and
+        // the deque above is the real log — if the disk is wedged or the
+        // writer has stopped, dropping the oldest queued rows is better than
+        // growing until the server runs out of memory. The next prune rewrites
+        // the file from memory and puts back whatever was skipped.
+        if (pendingCount.get() >= MAX_PENDING) {
+            if (pending.poll() != null) pendingCount.decrementAndGet();
+        }
         pending.add(e);
+        pendingCount.incrementAndGet();
     }
 
     private static String where(ServerPlayer p) {
@@ -219,6 +277,7 @@ public final class ActivityLog {
             entries.clear();
         }
         pending.clear();
+        pendingCount.set(0);
         Path f = file;
         if (f == null) return true;
         try {
@@ -252,6 +311,7 @@ public final class ActivityLog {
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
                 Entry e;
                 while ((e = pending.poll()) != null) {
+                    pendingCount.decrementAndGet();
                     w.write(toJson(e).toString());
                     w.newLine();
                 }

@@ -32,8 +32,10 @@ public class CommandActivityMixin {
             if (source.getEntity() instanceof ServerPlayer p) {
                 ActivityLog.record(p, "command", command);
             }
-        } catch (RuntimeException ignored) {
-            // Never let logging break a command.
+        } catch (Throwable ignored) {
+            // Throwable, not RuntimeException: this is a pure observer bolted
+            // onto someone else's method, and nothing it does is worth taking
+            // the server down for.
         }
     }
 }

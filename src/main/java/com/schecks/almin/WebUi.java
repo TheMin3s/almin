@@ -84,6 +84,9 @@ public final class WebUi {
     /** The tick hook is registered once per JVM, not once per start. */
     private static boolean tickHooked = false;
 
+    /** The JVM shutdown hook is registered once per JVM too. */
+    private static boolean shutdownHooked = false;
+
     /**
      * False once the Minecraft server has stopped. A panel started after that
      * — supervisor mode allows it — must inherit the truth rather than assume
@@ -100,6 +103,10 @@ public final class WebUi {
 
     /** Ports tried before giving up, when the configured one is already taken. */
     private static final int PORT_ATTEMPTS = 12;
+
+    /** Attempts on the configured port before looking elsewhere, and the wait between. */
+    private static final int PREFERRED_RETRIES = 4;
+    private static final long PREFERRED_RETRY_MS = 750;
 
     /** Stdin for a handed-off server. See {@link #handOffTo}. */
     private static final ProcessBuilder.Redirect NULL_INPUT =
@@ -174,29 +181,50 @@ public final class WebUi {
      * bookmarks and the next boot agree with reality.
      */
     private static void listen(MinecraftServer server, AlminConfig cfg) {
+        hookShutdown();
         String bind = (cfg.webUiBind == null || cfg.webUiBind.isBlank()) ? "0.0.0.0" : cfg.webUiBind.trim();
-        int wanted = cfg.webUiPort > 0 ? cfg.webUiPort : 8100;
+        boolean firstRun = cfg.webUiPort <= 0;
+        int wanted = firstRun ? 8100 + new java.security.SecureRandom().nextInt(900) : cfg.webUiPort;
+
+        // A predecessor that has only just died can still hold the socket for a
+        // moment. Waiting beats moving: the configured port is the address
+        // people have bookmarked.
         IOException first = null;
-        for (int attempt = 0; attempt < PORT_ATTEMPTS; attempt++) {
-            int port = attempt == 0 ? wanted : nextPort(wanted, attempt);
+        for (int attempt = 0; attempt < PREFERRED_RETRIES; attempt++) {
             try {
-                bindOn(server, cfg, bind, port);
-                if (port != cfg.webUiPort) {
-                    cfg.webUiPort = port;
+                bindOnOwnThread(server, cfg, bind, wanted);
+                if (firstRun) {
+                    cfg.webUiPort = wanted;      // remember the first-run pick
                     AlminConfig.save();
-                    // Only a real move deserves a warning; landing on the
-                    // first-run default is just the config catching up.
-                    if (attempt > 0) {
-                        CONSOLE.warn("[almin] web panel port {} was taken — using {} instead",
-                            wanted, port);
-                    }
                 }
                 return;
             } catch (java.net.BindException e) {
-                // Taken, or an address this host can't bind. Either way the
-                // next port is worth a try; the first error is the honest one
-                // to report if none of them work.
                 if (first == null) first = e;
+                if (attempt < PREFERRED_RETRIES - 1) sleep(PREFERRED_RETRY_MS);
+            } catch (IOException e) {
+                fail("could not bind " + bind + ":" + wanted, e.getMessage());
+                return;
+            } catch (RuntimeException e) {
+                fail("failed to start", e.toString());
+                return;
+            }
+        }
+
+        // Still taken. Fall back so the panel is at least reachable, but do NOT
+        // write the fallback to the config: the configured port is the operator's
+        // intent, and persisting each fallback is what made the address crawl
+        // upwards every restart.
+        for (int step = 1; step < PORT_ATTEMPTS; step++) {
+            int port = nextPort(wanted, step);
+            try {
+                bindOnOwnThread(server, cfg, bind, port);
+                CONSOLE.warn("[almin] web panel port {} is still held by something "
+                    + "(a previous instance?) — running on {} for now, "
+                    + "config keeps {}", wanted, port, wanted);
+                AlminLog.warn("[almin] port {} taken, using {} for this run only", wanted, port);
+                return;
+            } catch (java.net.BindException ignored) {
+                // try the next one
             } catch (IOException e) {
                 fail("could not bind " + bind + ":" + port, e.getMessage());
                 return;
@@ -207,6 +235,14 @@ public final class WebUi {
         }
         fail("could not bind " + bind + ":" + wanted + " (or the " + (PORT_ATTEMPTS - 1)
             + " ports after it)", first == null ? "" : first.getMessage());
+    }
+
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static int nextPort(int wanted, int step) {
@@ -381,6 +417,64 @@ public final class WebUi {
             t.setDaemon(!supervisor);
             return t;
         };
+    }
+
+    /**
+     * Binds and starts on a thread with the daemon flag we want the listener to
+     * inherit.
+     *
+     * <p>{@code HttpServer.start()} spawns its own HTTP-Dispatcher thread, and
+     * that thread is <em>not</em> covered by the executor set with
+     * {@code setExecutor} — it inherits its daemon flag from whichever thread
+     * called {@code start()}. Called from the Minecraft server thread, which is
+     * not a daemon, the dispatcher was not either: when the game crashed
+     * without running its shutdown hooks, that one thread kept the whole JVM
+     * alive, holding the port open in front of a panel with a dead server
+     * behind it. The next start then found its port taken by its own corpse.
+     *
+     * <p>So the bind happens on a short-lived thread whose daemon flag matches
+     * {@code web-supervisor}: off (the default) means the JVM ends when
+     * Minecraft does and the port goes with it; on means the panel is
+     * deliberately outliving the server and must hold the JVM open.
+     */
+    private static void bindOnOwnThread(MinecraftServer server, AlminConfig cfg,
+                                        String bind, int port) throws IOException {
+        IOException[] failure = new IOException[1];
+        RuntimeException[] crashed = new RuntimeException[1];
+        Thread t = new Thread(() -> {
+            try {
+                bindOn(server, cfg, bind, port);
+            } catch (IOException e) {
+                failure[0] = e;
+            } catch (RuntimeException e) {
+                crashed[0] = e;
+            }
+        }, "Almin-web-bind");
+        t.setDaemon(!cfg.webSupervisor);
+        t.start();
+        try {
+            t.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while starting the web panel");
+        }
+        if (failure[0] != null) throw failure[0];
+        if (crashed[0] != null) throw crashed[0];
+    }
+
+    /**
+     * Closes the listener when the JVM goes down, whatever route it took there.
+     * Registered once; with a daemon dispatcher the exit already frees the
+     * port, but this makes it prompt and closes the pool with it.
+     */
+    private static synchronized void hookShutdown() {
+        if (shutdownHooked) return;
+        shutdownHooked = true;
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(WebUi::stop, "Almin-web-shutdown"));
+        } catch (IllegalStateException ignored) {
+            // Already shutting down; nothing left to arrange.
+        }
     }
 
     /**
@@ -644,7 +738,10 @@ public final class WebUi {
                 AlminLog.warn("[almin] web panel requested server STOP");
                 json(ex, 200, "{\"ok\":true,\"action\":\"stop\"}");
                 // Halt on the server thread, after the response is on its way.
-                server.execute(() -> server.halt(false));
+                server.execute(() -> {
+                    AlminExit.arm("a stop from the web panel");
+                    server.halt(false);
+                });
                 return;
             }
 
@@ -664,7 +761,10 @@ public final class WebUi {
                     ? "Stopping, then running the start command."
                     : "Stopping. Whatever wrapper runs this server should start it again.");
                 json(ex, 200, o.toString());
-                server.execute(() -> server.halt(false));
+                server.execute(() -> {
+                    if (!relaunch) AlminExit.arm("a restart from the web panel");
+                    server.halt(false);
+                });
                 return;
             }
 

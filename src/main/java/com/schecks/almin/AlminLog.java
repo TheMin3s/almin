@@ -139,8 +139,16 @@ public final class AlminLog {
             t.setDaemon(true);
             return t;
         });
+        // Wrapped: a repeating task that throws is cancelled for good, so a
+        // single bad rotation would stop the log rotating for the whole run.
         scheduler.scheduleAtFixedRate(
-            () -> clearInternal("--- log auto-cleared (every " + AUTO_CLEAR_HOURS + "h) ---"),
+            () -> {
+                try {
+                    clearInternal("--- log auto-cleared (every " + AUTO_CLEAR_HOURS + "h) ---");
+                } catch (Throwable ignored) {
+                    // Nowhere to report it: this class is the reporting channel.
+                }
+            },
             AUTO_CLEAR_HOURS, AUTO_CLEAR_HOURS, TimeUnit.HOURS
         );
     }
