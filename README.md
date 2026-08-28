@@ -17,6 +17,29 @@ COMES WITH ABSOLUTELY NO WARRANTY
 AUTHOR IS NOT RESPONSIBLE FOR ANY DAMAGES CAUSED AS A RESULT OF THE USAGE OF THIS PROGRAM
 
 
+## Keeping itself current
+
+Both sides update themselves, and both apply the update at the next start —
+a jar cannot be swapped underneath a running game.
+
+**The server** checks GitHub on boot (`update-check-on-boot`) and, with
+`auto-update` on, downloads the new version and restarts to apply it. It says
+so in chat and on the console first, so an unattended restart is not mistaken
+for a crash.
+
+**The client** checks GitHub shortly after launch and every few hours after
+that, downloads a newer release into its own `mods` folder, and uses it from
+the next launch. It also matches the version of any Almin server it joins.
+Downloads only ever come from this project's own releases — a server supplies
+a version number and nothing else, never a URL.
+
+It writes to your `mods` folder without asking, which not everyone wants. Turn
+it off in `config/almin-client.json`:
+
+```json
+{ "auto-update": false, "check-hours": 3 }
+```
+
 ## Web panel
 
 Almin serves a web panel. It works out of the box — **a reverse proxy is

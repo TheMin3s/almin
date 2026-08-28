@@ -86,8 +86,20 @@ public final class UpdateChecker {
     public static final String CLIENT_JAR = "client";
 
     private static Release fetchLatestRelease(String repo) throws IOException, InterruptedException {
+        return fetchLatestRelease(repo, SERVER_JAR);
+    }
+
+    /**
+     * The newest release of {@code repo}, taking the jar {@code want} names.
+     *
+     * <p>Public because the client needs the same call for its own jar: it
+     * checks GitHub directly rather than only learning about versions from a
+     * server it happens to join.
+     */
+    public static Release fetchLatestRelease(String repo, String want)
+            throws IOException, InterruptedException {
         return fetchReleaseFrom(URI.create(
-            "https://api.github.com/repos/" + repo + "/releases/latest"), SERVER_JAR);
+            "https://api.github.com/repos/" + repo + "/releases/latest"), want);
     }
 
     /**

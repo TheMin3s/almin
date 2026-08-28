@@ -35,6 +35,10 @@ public class AlminClient implements ClientModInitializer {
         // The client jar has no main entrypoint, so it declares the packet
         // types itself. Idempotent — a universal jar runs both entrypoints.
         AlminPayloads.registerTypes();
+        // Keeps itself current without needing to join a server first; the
+        // download applies at the next launch, since a jar cannot be swapped
+        // under a running game.
+        ClientUpdater.startBackgroundChecks();
 
         // Receive shared-file transfers; hop to the main thread to show the
         // confirmation screen.
