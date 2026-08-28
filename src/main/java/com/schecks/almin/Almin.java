@@ -63,7 +63,16 @@ public class Almin implements ModInitializer {
             WebUi.onServerStopped();
             ConsoleTap.stop();
             ActivityLog.close();
-            if (!AlminConfig.get().webSupervisor) AlminLog.close();
+            // Last, and deliberately so: when the stop was a restart, this
+            // starts the server again and then ends this process. Anything
+            // that still has a file to close has to come above it, because
+            // halt() does not run shutdown hooks. It closes the Almin log
+            // itself on the way out, so this can still write to it.
+            WebUi.handOver();
+            // A panel still up here is one deliberately outliving the server —
+            // supervisor mode, or a restart that failed and is saying so. It
+            // has more to write.
+            if (!AlminConfig.get().webSupervisor && !WebUi.running()) AlminLog.close();
         });
     }
 

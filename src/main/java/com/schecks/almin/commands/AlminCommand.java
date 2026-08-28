@@ -28,6 +28,7 @@ import com.schecks.almin.NanoSupport;
 import com.schecks.almin.PlayerHistory;
 import com.schecks.almin.TrustedOps;
 import com.schecks.almin.Passwords;
+import com.schecks.almin.ServerRelaunch;
 import com.schecks.almin.UpdateChecker;
 import com.schecks.almin.WebAdminNet;
 import com.schecks.almin.WebAdminPayload;
@@ -1202,11 +1203,14 @@ public final class AlminCommand {
         ServerPlayer self = ctx.getSource().getPlayerOrException();
         MinecraftServer server = self.level().getServer();
         if (server == null) return 0;
-        self.sendSystemMessage(Component.literal("Stopping server.")
+        // Almin starts the server again itself when it can. Only when it
+        // cannot does this fall back to what it always did — exit, and hope
+        // something outside is watching for it.
+        boolean relaunch = ServerRelaunch.arm("/almin op restart");
+        self.sendSystemMessage(Component.literal(
+            relaunch ? "Restarting server." : "Stopping server (nothing here can start it again).")
             .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
-        // This command is only a restart because the JVM exits afterwards and
-        // something outside starts it again; make sure it does.
-        AlminExit.arm("/almin op restart");
+        if (!relaunch) AlminExit.arm("/almin op restart");
         server.halt(false);
         return 1;
     }

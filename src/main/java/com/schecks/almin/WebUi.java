@@ -104,13 +104,19 @@ public final class WebUi {
     /** Ports tried before giving up, when the configured one is already taken. */
     private static final int PORT_ATTEMPTS = 12;
 
+    /**
+     * Returned by {@link #tryPreferred} for a failure that has already been
+     * reported and that no other port would fix. Identity-compared, never
+     * thrown.
+     */
+    private static final IOException REPORTED = new IOException("already reported");
+
+    /** How long a panel with a failed restart on it waits to be read. */
+    private static final long REPORT_WINDOW_MS = 60 * 60 * 1000L;
+
     /** Attempts on the configured port before looking elsewhere, and the wait between. */
     private static final int PREFERRED_RETRIES = 4;
     private static final long PREFERRED_RETRY_MS = 750;
-
-    /** Stdin for a handed-off server. See {@link #handOffTo}. */
-    private static final ProcessBuilder.Redirect NULL_INPUT =
-        ProcessBuilder.Redirect.from(new java.io.File("/dev/null"));
 
     private final HttpServer http;
     /**
@@ -136,10 +142,12 @@ public final class WebUi {
     private volatile boolean serverRunning = true;
 
     /**
-     * Set by the panel's Restart when it can relaunch: run the start command as
-     * soon as the stop completes, instead of leaving the server down.
+     * Why the last attempt to start the server again failed, or "" if none
+     * has. Shown in the panel: a restart that could not restart is exactly the
+     * failure an owner needs told about, and it is the one that used to be
+     * silent.
      */
-    private volatile boolean restartAfterStop = false;
+    private static volatile String relaunchError = "";
 
     private WebUi(HttpServer http, ExecutorService pool, MinecraftServer server, String bind, int port) {
         this.http = http;
@@ -189,25 +197,17 @@ public final class WebUi {
         // A predecessor that has only just died can still hold the socket for a
         // moment. Waiting beats moving: the configured port is the address
         // people have bookmarked.
-        IOException first = null;
-        for (int attempt = 0; attempt < PREFERRED_RETRIES; attempt++) {
-            try {
-                bindOnOwnThread(server, cfg, bind, wanted);
-                if (firstRun) {
-                    cfg.webUiPort = wanted;      // remember the first-run pick
-                    AlminConfig.save();
-                }
-                return;
-            } catch (java.net.BindException e) {
-                if (first == null) first = e;
-                if (attempt < PREFERRED_RETRIES - 1) sleep(PREFERRED_RETRY_MS);
-            } catch (IOException e) {
-                fail("could not bind " + bind + ":" + wanted, e.getMessage());
-                return;
-            } catch (RuntimeException e) {
-                fail("failed to start", e.toString());
-                return;
-            }
+        IOException first = tryPreferred(server, cfg, bind, wanted, firstRun);
+        if (first == null || first == REPORTED) return;
+
+        // Still taken, and waiting did not help. That is the signature of a
+        // leftover Almin JVM squatting the port with nothing behind it — it is
+        // never going to let go on its own. If this is provably ours, end it
+        // and take the address back rather than drifting to a new one.
+        if (WebLock.clearStale(dirOf(server), wanted)) {
+            IOException again = tryPreferred(server, cfg, bind, wanted, firstRun);
+            if (again == null || again == REPORTED) return;
+            first = again;
         }
 
         // Still taken. Fall back so the panel is at least reachable, but do NOT
@@ -235,6 +235,48 @@ public final class WebUi {
         }
         fail("could not bind " + bind + ":" + wanted + " (or the " + (PORT_ATTEMPTS - 1)
             + " ports after it)", first == null ? "" : first.getMessage());
+    }
+
+    /**
+     * Tries the port everybody has bookmarked, a few times.
+     *
+     * <p>Returns null once it is listening, or the {@link java.net.BindException}
+     * that says the port is held by someone else. Any other failure is terminal
+     * and is reported here rather than returned — there is nothing a different
+     * port would fix.
+     */
+    private static IOException tryPreferred(MinecraftServer server, AlminConfig cfg,
+                                            String bind, int wanted, boolean firstRun) {
+        IOException first = null;
+        for (int attempt = 0; attempt < PREFERRED_RETRIES; attempt++) {
+            try {
+                bindOnOwnThread(server, cfg, bind, wanted);
+                if (firstRun) {
+                    cfg.webUiPort = wanted;      // remember the first-run pick
+                    AlminConfig.save();
+                }
+                return null;
+            } catch (java.net.BindException e) {
+                if (first == null) first = e;
+                if (attempt < PREFERRED_RETRIES - 1) sleep(PREFERRED_RETRY_MS);
+            } catch (IOException e) {
+                fail("could not bind " + bind + ":" + wanted, e.getMessage());
+                return REPORTED;
+            } catch (RuntimeException e) {
+                fail("failed to start", e.toString());
+                return REPORTED;
+            }
+        }
+        return first;
+    }
+
+    /**
+     * Where the server lives, or null if there isn't one. The panel outlives
+     * the server on purpose in places, and the port bookkeeping has to keep
+     * working across that rather than reaching through a dead reference.
+     */
+    private static Path dirOf(MinecraftServer server) {
+        return server == null ? null : server.getServerDirectory();
     }
 
     private static void sleep(long ms) {
@@ -308,6 +350,9 @@ public final class WebUi {
             }
             ui.rebuild();
             ui.writeCaddyfile(cfg);
+            // Leave a note saying this process holds the port, so the next
+            // start can tell a leftover of ours from someone else's server.
+            WebLock.write(dirOf(server), bind, port);
         } catch (RuntimeException e) {
             // The panel is already listening. A failed first snapshot or an
             // unwritable Caddyfile is not a reason to tear it back down.
@@ -409,6 +454,12 @@ public final class WebUi {
         // Not shutdownNow(): the thread calling this may itself be a pool
         // thread serving the request that asked for the restart.
         ui.pool.shutdown();
+        // The port is ours again to give up; the note about holding it goes too.
+        try {
+            WebLock.clear(dirOf(ui.server));
+        } catch (RuntimeException ignored) {
+            // Shutting down; a leftover note is only a tidy-up next start.
+        }
     }
 
     /** Starts the panel on request, rather than at server start. */
@@ -541,9 +592,12 @@ public final class WebUi {
     }
 
     /**
-     * Called when the Minecraft server has stopped. In supervisor mode the panel
-     * stays up (showing the server as stopped, offering Start); otherwise it
-     * shuts down with everything else.
+     * Called when the Minecraft server has stopped.
+     *
+     * <p>This only records what happened and decides whether the panel stays
+     * up. Starting the server again is {@link #handOver()}, which runs last of
+     * everything at shutdown — it ends the process, so nothing that still has
+     * something to write may come after it.
      */
     public static void onServerStopped() {
         // Recorded even with no panel up: one started later must not think it
@@ -552,18 +606,100 @@ public final class WebUi {
         WebUi ui = instance;
         if (ui == null) return;
         ui.serverRunning = false;
+        ui.publicJson = stoppedJson();
+        ui.fullJson = stoppedJson();
+        // A restart needs the panel for the handover, and needs it afterwards
+        // too if the handover fails — that is the only way anyone would find
+        // out that it did.
+        if (ServerRelaunch.armed()) return;
         if (!AlminConfig.get().webSupervisor) {
             stop();
             return;
         }
-        ui.publicJson = stoppedJson();
-        ui.fullJson = stoppedJson();
         AlminLog.info("[almin] server stopped — web panel still up (supervisor mode)");
-        if (ui.restartAfterStop) {
-            ui.restartAfterStop = false;
-            String cmd = AlminConfig.get().webStartCommand;
-            if (cmd != null && !cmd.isBlank()) ui.handOffTo(cmd.trim());
+    }
+
+    /**
+     * The second half of a restart: starts the server again and gets out of
+     * its way.
+     *
+     * <p>Runs at the very end of shutdown, because it ends this process. The
+     * order is the one that survives a mistake: the new server is started
+     * <em>first</em>, and only once it is genuinely on its way does this one
+     * give up its port and exit. If the launch fails there is no handover at
+     * all — the panel stays up saying why, which beats exiting into a server
+     * that is simply down with nothing left to bring it back.
+     */
+    public static void handOver() {
+        if (!ServerRelaunch.armed()) return;
+        try {
+            handOverOrStayUp();
+        } catch (Throwable t) {
+            // Whatever went wrong, this process must not be left half-restarted
+            // and immortal. Fall back to what a restart used to be.
+            AlminLog.warn("[almin] handover failed: {}", t.toString());
+            CONSOLE.warn("[almin] Handing the server over failed", t);
+            AlminExit.arm("a failed restart");
         }
+    }
+
+    private static void handOverOrStayUp() {
+        String why = ServerRelaunch.why();
+        ServerRelaunch.Result r = ServerRelaunch.launch(dirOf(boundServer));
+        if (!r.ok()) {
+            relaunchError = r.message();
+            lastError = r.message();
+            ServerRelaunch.disarm();
+            if (instance != null) {
+                CONSOLE.warn("[almin] {} could not start the server again: {} — leaving the panel "
+                    + "up so you can start it from there.", why, r.message());
+                AlminLog.warn("[almin] relaunch after {} failed; panel stays up", why);
+                holdOpenToReport();
+                return;
+            }
+            // Nothing to fall back on. Behave as before: exit, and let whatever
+            // is outside make of it what it will.
+            AlminExit.arm(why);
+            return;
+        }
+
+        AlminLog.info("[almin] {} — new server launched; handing over the port and exiting", why);
+        AlminLog.close();
+        stop();                               // release the port for the new process
+        Runtime.getRuntime().halt(0);
+    }
+
+    /**
+     * Keeps the process alive long enough for someone to be told a restart
+     * failed, then lets it go.
+     *
+     * <p>Without supervisor mode every web thread is a daemon, so once the
+     * server thread ends the JVM exits and takes the panel — and the only
+     * account of what went wrong — with it. This is the one case where that is
+     * the wrong outcome: the server is down and nothing else is going to bring
+     * it back.
+     *
+     * <p>It is deliberately not forever. A process squatting a port with
+     * nothing behind it is the bug this whole area exists to fix, so the wait
+     * has an end.
+     */
+    private static void holdOpenToReport() {
+        Thread t = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + REPORT_WINDOW_MS;
+            while (System.currentTimeMillis() < deadline && instance != null) {
+                sleep(5000);
+            }
+            if (instance == null) return;      // someone pressed Start, or stopped the panel
+            CONSOLE.warn("[almin] Nobody started the server in the last {} minutes. Closing the "
+                + "panel and exiting so this process stops holding its port.",
+                REPORT_WINDOW_MS / 60_000);
+            AlminLog.close();
+            stop();
+            Runtime.getRuntime().halt(0);
+        }, "Almin-web-report");
+        // Not a daemon: holding the JVM open is the entire job.
+        t.setDaemon(false);
+        t.start();
     }
 
     private static String stoppedJson() {
@@ -639,6 +775,10 @@ public final class WebUi {
             String path = ex.getRequestURI().getPath();
             if (path.equals("/favicon.ico")) { ex.sendResponseHeaders(204, -1); return; }
             if (!path.equals("/")) { send(ex, 404, "text/plain", "Not found"); return; }
+            // The page ships inside the mod jar, so an update changes it. A
+            // browser holding a cached copy would keep showing the old panel
+            // against a new server for as long as it felt like it.
+            ex.getResponseHeaders().set("Cache-Control", "no-store, must-revalidate");
             send(ex, 200, "text/html; charset=utf-8", WebPage.HTML);
         } catch (Throwable t) {
             fault(ex, t);
@@ -659,8 +799,22 @@ public final class WebUi {
             o.addProperty("publicMetrics", cfg.webPublicMetrics);
             o.addProperty("serverRunning", serverRunning);
             o.addProperty("supervisor", cfg.webSupervisor);
-            o.addProperty("canStart", cfg.webSupervisor
-                && cfg.webStartCommand != null && !cfg.webStartCommand.isBlank());
+            // The version this page was served by. A tab left open across an
+            // update is looking at the old panel; when this changes under it,
+            // it reloads itself onto the new one.
+            o.addProperty("version", UpdateChecker.currentVersion());
+            ServerRelaunch.Plan plan = ServerRelaunch.plan();
+            o.addProperty("canStart", plan.ok());
+            o.addProperty("restarting", ServerRelaunch.armed());
+            // The start command is this server's own java invocation: install
+            // paths, heap size, jar names. That is a description of the host,
+            // and this route answers before anyone has logged in.
+            if (authed(ex)) {
+                o.addProperty("canRelaunch", ServerRelaunch.enabled() && plan.ok());
+                o.addProperty("startCommand", plan.ok() ? plan.display() : "");
+                if (!plan.ok()) o.addProperty("startProblem", plan.problem());
+                if (!relaunchError.isEmpty()) o.addProperty("relaunchError", relaunchError);
+            }
             json(ex, 200, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -793,16 +947,21 @@ public final class WebUi {
     // ---------- routes: server control ----------
 
     /**
-     * Stops or starts the Minecraft server.
+     * Stops, restarts or starts the Minecraft server.
      *
-     * <p>Stop always works: it is the same graceful halt as {@code /stop}.
-     * What happens next depends on {@code web-supervisor} — with it off the JVM
-     * exits (and whatever wrapper you run restarts it, as today); with it on the
-     * panel stays up and offers Start.
+     * <p><b>Stop</b> is the same graceful halt as {@code /stop}, and it means
+     * stop: nothing starts it again.
      *
-     * <p>Start cannot boot a server inside this JVM — Minecraft's bootstrap is
-     * one-shot — so it launches the configured command as a fresh process and
-     * hands the port over by shutting this one down.
+     * <p><b>Restart</b> genuinely restarts. Almin stops the server and then
+     * starts it again itself, from this process, so it does not depend on a
+     * wrapper script or a host panel noticing the exit. On a server where
+     * nothing was watching for that exit, Restart used to be a Stop with a
+     * different label.
+     *
+     * <p><b>Start</b> exists for a server that is down while the panel is
+     * still up. It cannot boot a server inside this JVM — Minecraft's bootstrap
+     * is one-shot — so it launches a fresh process and hands the port over by
+     * ending this one.
      */
     private void handleServerControl(HttpExchange ex) throws IOException {
         try {
@@ -815,6 +974,9 @@ public final class WebUi {
             if ("stop".equals(action)) {
                 if (!serverRunning) { json(ex, 409, err("The server is already stopped.")); return; }
                 AlminLog.warn("[almin] web panel requested server STOP");
+                // Stop means stop. Anything left armed from an earlier request
+                // would turn this into a restart.
+                ServerRelaunch.disarm();
                 json(ex, 200, "{\"ok\":true,\"action\":\"stop\"}");
                 // Halt on the server thread, after the response is on its way.
                 server.execute(() -> {
@@ -826,18 +988,16 @@ public final class WebUi {
 
             if ("restart".equals(action)) {
                 if (!serverRunning) { json(ex, 409, err("The server is already stopped.")); return; }
-                String cmd = cfg.webStartCommand == null ? "" : cfg.webStartCommand.trim();
-                // Only this panel can bring it back; without supervisor mode the
-                // JVM exits and whatever wrapper runs the server does it instead.
-                boolean relaunch = cfg.webSupervisor && !cmd.isEmpty();
-                restartAfterStop = relaunch;
-                AlminLog.warn("[almin] web panel requested server RESTART (relaunch here: {})", relaunch);
+                boolean relaunch = ServerRelaunch.arm("a restart from the web panel");
+                AlminLog.warn("[almin] web panel requested server RESTART (started again from here: {})",
+                    relaunch);
                 JsonObject o = new JsonObject();
                 o.addProperty("ok", true);
                 o.addProperty("action", "restart");
                 o.addProperty("relaunch", relaunch);
+                o.addProperty("restarting", true);
                 o.addProperty("message", relaunch
-                    ? "Stopping, then running the start command."
+                    ? "Stopping, then starting it again from here. This page reconnects on its own."
                     : "Stopping. Whatever wrapper runs this server should start it again.");
                 json(ex, 200, o.toString());
                 server.execute(() -> {
@@ -848,17 +1008,18 @@ public final class WebUi {
             }
 
             if ("start".equals(action)) {
-                if (!cfg.webSupervisor) {
-                    json(ex, 409, err("Start needs supervisor mode — set web-supervisor true.")); return;
-                }
                 if (serverRunning) { json(ex, 409, err("The server is already running.")); return; }
-                String cmd = cfg.webStartCommand == null ? "" : cfg.webStartCommand.trim();
-                if (cmd.isEmpty()) {
-                    json(ex, 409, err("No start command configured — set web-start-command.")); return;
-                }
-                AlminLog.warn("[almin] web panel requested server START via: {}", cmd);
-                json(ex, 200, "{\"ok\":true,\"action\":\"start\"}");
-                handOffTo(cmd);
+                ServerRelaunch.Plan plan = ServerRelaunch.plan();
+                if (!plan.ok()) { json(ex, 409, err(plan.problem() + ".")); return; }
+                AlminLog.warn("[almin] web panel requested server START via {}: {}",
+                    plan.source(), plan.display());
+                JsonObject o = new JsonObject();
+                o.addProperty("ok", true);
+                o.addProperty("action", "start");
+                o.addProperty("restarting", true);
+                o.addProperty("message", "Starting the server. This page reconnects on its own.");
+                json(ex, 200, o.toString());
+                handOffNow();
                 return;
             }
 
@@ -871,41 +1032,30 @@ public final class WebUi {
     }
 
     /**
-     * Launches {@code cmd} as a detached process and then shuts this JVM down,
-     * so the new server can take over the web port. Runs off the HTTP thread so
-     * the response is already flushed.
+     * Starts the server and then gets out of the way, so the new process can
+     * take the web port over.
+     *
+     * <p>Runs off the HTTP thread, after a beat, so the answer is already in
+     * the browser before this process stops being able to send one. If the
+     * launch fails nothing is handed over and the panel stays exactly as it
+     * was, with the reason on it.
      */
-    private void handOffTo(String cmd) {
+    private void handOffNow() {
         Thread t = new Thread(() -> {
-            try {
-                Thread.sleep(400);                     // let the response reach the browser
-                Path dir = server.getServerDirectory().toAbsolutePath().normalize();
-                ProcessBuilder pb = new ProcessBuilder("/bin/sh", "-c", cmd);
-                pb.directory(dir.toFile());
-                // Output is inherited so the new server's log still lands
-                // wherever this one's did. Input deliberately is not: this JVM
-                // is about to halt, and a console reader left holding a
-                // terminal nobody owns any more gets EIO on its first read —
-                // which Minecraft logs as "Exception handling console input".
-                // From /dev/null it reads EOF instead and the reader thread
-                // ends quietly. Console typing is gone either way once this
-                // process is; the panel's terminal is how you drive it now.
-                pb.redirectInput(NULL_INPUT);
-                pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
-                pb.redirectError(ProcessBuilder.Redirect.INHERIT);
-                pb.start();
-                AlminLog.info("[almin] start command launched; handing over and exiting");
-                AlminLog.close();
-                try {
-                    http.stop(0);                      // release the port for the new process
-                } catch (RuntimeException ignored) {
-                    // exiting anyway
-                }
-                Runtime.getRuntime().halt(0);
-            } catch (Exception e) {
-                AlminLog.warn("[almin] start command failed: {}", e.toString());
+            sleep(400);                                // let the response reach the browser
+            ServerRelaunch.Result r = ServerRelaunch.launch(dirOf(server));
+            if (!r.ok()) {
+                relaunchError = r.message();
+                lastError = r.message();
+                CONSOLE.warn("[almin] Start failed: {}", r.message());
+                return;                                // panel stays up, and says so
             }
+            AlminLog.info("[almin] server launched from the panel; handing over and exiting");
+            AlminLog.close();
+            stop();                                    // release the port for the new process
+            Runtime.getRuntime().halt(0);
         }, "Almin-web-handoff");
+        // Not a daemon: this thread is the only thing left that has to finish.
         t.setDaemon(false);
         t.start();
     }
@@ -1399,7 +1549,12 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             if (!requireAuthSecure(ex)) return;
             if (!requireServer(ex)) return;
-            json(ex, 200, applyUpdateJson());
+            JsonObject body = readBody(ex);
+            // A new jar on disk changes nothing until the server runs it, so
+            // restarting is the default rather than an afterthought. Pass
+            // {"restart": false} to install now and apply it later.
+            boolean restart = !body.has("restart") || body.get("restart").getAsBoolean();
+            json(ex, 200, applyUpdateJson(restart));
         } catch (Throwable t) {
             fault(ex, t);
         } finally {
@@ -1441,7 +1596,7 @@ public final class WebUi {
      * does. Runs inline rather than in the background so the browser gets a real
      * answer; the download is small and one web thread of four can wait.
      */
-    private String applyUpdateJson() {
+    private String applyUpdateJson(boolean restart) {
         JsonObject o = new JsonObject();
         UpdateChecker.CheckResult r;
         try {
@@ -1481,8 +1636,32 @@ public final class WebUi {
             rel.version(), fetched.bytes(), removal);
         updateJson = "";
         o.addProperty("ok", true);
+        o.addProperty("version", rel.version());
+
+        if (!restart) {
+            o.addProperty("message", "Installed " + rel.version() + ". " + removal
+                + " Restart the server to run it.");
+            return o.toString();
+        }
+        // The panel is part of what just changed — it is served out of the jar
+        // this replaced. Restarting is how both halves become the new version
+        // at once; the page notices the version change and reloads itself onto
+        // the new panel when the server comes back.
+        boolean relaunch = ServerRelaunch.arm("an update to " + rel.version());
+        o.addProperty("restarting", true);
+        o.addProperty("relaunch", relaunch);
         o.addProperty("message", "Installed " + rel.version() + ". " + removal
-            + " Restart the server to run it.");
+            + (relaunch
+                ? " Restarting now — this page reconnects on its own."
+                : " Stopping now; whatever wrapper runs this server should start it again."));
+        server.execute(() -> {
+            server.getPlayerList().broadcastSystemMessage(
+                net.minecraft.network.chat.Component.literal(
+                    "[Almin] Updating to " + rel.version() + " — the server is restarting."),
+                false);
+            if (!relaunch) AlminExit.arm("an update from the web panel");
+            server.halt(false);
+        });
         return o.toString();
     }
 

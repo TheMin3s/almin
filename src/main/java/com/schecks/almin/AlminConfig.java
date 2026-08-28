@@ -75,6 +75,21 @@ public final class AlminConfig {
     public boolean webSupervisor = false;
     /** Command the panel's Start button runs. Required for supervisor mode. */
     public String webStartCommand = "";
+    /**
+     * Start the server again from here when Almin stops it for a restart.
+     *
+     * <p>On by default, because the alternative is a restart that only stops.
+     * Every Almin feature that restarts — {@code /almin op restart}, the
+     * panel's Restart, an auto-update — used to depend on something outside
+     * noticing the exit and starting the server again, and on a host where
+     * nothing is watching they all left the server down.
+     *
+     * <p>Turn it off if a wrapper script or a systemd unit already restarts
+     * this server, so it doesn't get started twice.
+     *
+     * @see ServerRelaunch
+     */
+    public boolean webRestartRelaunch = true;
     /** Offer the mods in mods.json to joining players. */
     public boolean modsAdvertise = true;
     /**
@@ -201,10 +216,12 @@ public final class AlminConfig {
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
             c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
-        boolKey("web-supervisor", "Keep the panel alive after the server stops so it can start it again (read the README first)",
+        boolKey("web-supervisor", "Keep the panel up while the server is stopped, so it can be started from the browser",
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
-        textKey("web-start-command", "Command the Start button runs in supervisor mode, e.g. ./start.sh",
+        textKey("web-start-command", "Command used to start the server again (blank = re-run this server's own command line)",
             c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v),
+        boolKey("web-restart-relaunch", "Start the server again from here after an Almin restart or update (turn off if a wrapper script already does)",
+            c -> c.webRestartRelaunch, (c, v) -> c.webRestartRelaunch = (Boolean) v),
         boolKey("mods-advertise", "Offer the mods listed in mods.json to joining players",
             c -> c.modsAdvertise, (c, v) -> c.modsAdvertise = (Boolean) v),
         boolKey("mods-deny-kicks", "Disconnect players who decline when a required mod is offered",

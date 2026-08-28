@@ -25,7 +25,16 @@ a jar cannot be swapped underneath a running game.
 **The server** checks GitHub on boot (`update-check-on-boot`) and, with
 `auto-update` on, downloads the new version and restarts to apply it. It says
 so in chat and on the console first, so an unattended restart is not mistaken
-for a crash.
+for a crash. Almin starts the server again itself afterwards — see
+[Restarting](#restarting) — so the update completes without anything else
+having to notice.
+
+**The web panel is part of that.** It is served out of the mod jar, so an
+update replaces it too. A browser tab left open notices that the address is
+answering with a different version and reloads itself onto the new panel; the
+page is sent with `no-store` so it gets the new one rather than a cached old
+one. Pressing **Download & install** in Settings does the whole thing: install,
+restart, and the page comes back on the new version by itself.
 
 **The client** checks GitHub shortly after launch and every few hours after
 that, downloads a newer release into its own `mods` folder, and uses it from
@@ -98,6 +107,19 @@ panel's Stop and Restart — arms a watchdog that forces the process to exit if 
 is still running a minute later, because every one of those features is a
 restart only if the process actually ends.
 
+And if one is left behind anyway, the next start takes the port back rather than
+moving aside. Almin leaves a note in `config/almin/web.lock` saying which process
+holds the port; when a start finds the port busy and waiting has not helped, it
+reads that note and ends the process it names — but only when every one of these
+holds: Almin wrote the note, it names this exact port, the pid is alive and is
+not us, that live process started at the instant recorded in the note (so a
+recycled pid cannot match), it is a java process, and it was running from this
+same server directory. A port taken by *someone else's* server is never killed
+for it; the panel moves aside there, which is the right answer. Within one
+directory there is no ambiguity to begin with — Minecraft's own world lock means
+a second live server here is impossible, so anything still holding the port is a
+leftover by definition.
+
 To check and fix from in game, `/almin op web` reports the reason, and:
 
 ```
@@ -117,15 +139,14 @@ from a game client.
 | Enabled | `web-ui-enabled` | serves the panel, now and on every future start |
 | Public metrics | `web-public-metrics` | the small no-login view |
 | HTTPS only | `web-require-secure` | refuse admin login over plain HTTP |
-| Outlive server | `web-supervisor` | keep the panel up after the server stops |
+| Outlive server | `web-supervisor` | keep the panel up while the server is stopped |
 | port / bind / mins | `web-ui-port`, `web-ui-bind`, `web-session-minutes` | edit and press Apply |
 
 Changes take effect immediately — turning Enabled off stops the panel there and
 then, and a changed port or address restarts the listener on its own.
 
 `web-start-command` is deliberately **not** editable from the tab or the web
-panel. It is the one setting that becomes a command on the host OS, so it stays
-in `config/almin/config.json` and `/almin config`.
+panel — see [Restarting](#restarting). You should not need to set it at all.
 
 ### What you get
 
@@ -144,10 +165,11 @@ in `config/almin/config.json` and `/almin config`.
 | Settings | every Almin setting, the admin password, and the update check |
 
 The header carries **Stop**, **Restart** and **Start** for the Minecraft server
-itself. Stop and Restart always work; Restart hands straight over to
-`web-start-command` when supervisor mode is on, and otherwise stops the server
-and leaves it to whatever wrapper normally restarts it. **Start** only lights up
-in supervisor mode with a start command set — see below.
+itself. Stop means stop. **Restart** genuinely restarts: Almin stops the server
+and then starts it again from this machine, without needing a wrapper script to
+notice the exit. The page goes quiet while the server boots and comes back on
+its own. **Start** is for a server that is down while the panel is still up.
+Both are covered in [Restarting](#restarting).
 
 Two settings are deliberately **not** editable from the web panel:
 `web-admin-password-hash`, which has its own field that hashes what you type,
@@ -157,6 +179,47 @@ and `web-start-command`, which becomes a command on the host OS.
 restart the server, so it is equivalent to running code on the machine. That is
 inherent in what the panel is for, not a gap to be plugged — treat the password
 accordingly, and don't put the panel on the internet without TLS.
+
+### Restarting
+
+A restart is two things: stopping the server, and starting it again. Almin used
+to do only the first, and trust that something outside — a wrapper script, a
+systemd unit, a host panel's auto-restart — was watching for the exit and would
+do the second. On a server where nothing is watching, every feature that
+"restarts" simply stopped the server and left it stopped, and nothing anywhere
+said that was what had happened.
+
+Almin now does the second half itself, and **you do not have to configure how**.
+This JVM already knows the command line it was launched with, so running that
+again is a faithful restart: same java binary, same heap flags, same jar, same
+arguments, same environment, same working directory. The panel's Settings tab
+shows the exact command it would run.
+
+This is what **Restart** and **Start** in the panel do, what `/almin op restart`
+does, and how an auto-update applies itself. The order matters and is deliberate:
+the new server is started **first**, and only once it is genuinely on its way
+does the old process give up its port and exit. If the launch fails there is no
+handover at all — the panel stays up saying why, which beats exiting into a
+server that is down with nothing left to bring it back.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `web-restart-relaunch` | `true` | start the server again from here after an Almin restart |
+| `web-start-command` | *(blank)* | run this instead of re-running this server's own command line |
+
+**Turn `web-restart-relaunch` off if a wrapper script or a systemd unit already
+restarts this server.** Otherwise both will start one, and the second to reach
+the world loses to Minecraft's own `session.lock` — noisy, and avoidable.
+
+Only a stop Almin was *asked* for becomes a restart. An ordinary `/stop`, a
+crash, or the machine shutting down are not restarts and are never turned into
+one.
+
+`web-start-command` is deliberately **not** editable from the web panel or the
+in-game Web tab: it is the one setting that becomes a command on the host OS, so
+it stays in `config/almin/config.json` and `/almin config`. You should not need
+it — it exists for a server whose real start procedure is more than its own
+command line, and for platforms that will not report a process's arguments.
 
 ### About HTTPS
 

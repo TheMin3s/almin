@@ -290,6 +290,11 @@ public final class UpdateChecker {
                 release.version(), removal);
             AlminLog.info("[almin] auto-update installed {} ({} bytes) {}; restarting",
                 release.version(), fr.bytes(), removal);
+            // Restarting is the whole point of the download, so Almin starts
+            // the server again itself rather than trusting that something
+            // outside is watching for the exit. The web panel comes back with
+            // it, on the new version, because it is served out of this jar.
+            boolean relaunch = ServerRelaunch.arm("an auto-update to " + release.version());
             server.execute(() -> {
                 // Tell whoever is playing why the server just went away. An
                 // unannounced halt is indistinguishable from a crash, and this
@@ -298,7 +303,7 @@ public final class UpdateChecker {
                     net.minecraft.network.chat.Component.literal(
                         "[Almin] Updating to " + release.version() + " — the server is restarting."),
                     false);
-                AlminExit.arm("an auto-update to " + release.version());
+                if (!relaunch) AlminExit.arm("an auto-update to " + release.version());
                 server.halt(false);
             });
         });

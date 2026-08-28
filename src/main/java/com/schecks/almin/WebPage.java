@@ -19,7 +19,7 @@ final class WebPage {
      * pressure) always ship with a word next to them — "Healthy", "Strained",
      * "Critical" — so state is never carried by colour alone.
      */
-    static final String HTML = """
+    private static final String PART1 = """
         <!doctype html><meta charset="utf-8"><title>Almin</title>
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <style>
@@ -187,6 +187,16 @@ final class WebPage {
         let authed=false, secure=false, encrypted=false, pwSet=false, publicMetrics=true;
         let serverRunning=true, canStart=false, supervisor=false;
         let tab='dash', last=null, stuck=true, tpsHistory=[];
+        // The panel is served out of the mod jar, so an update replaces it.
+        // These track the version this page came from and whether we are
+        // waiting for a restarted server to answer again, which is what lets
+        // an open tab put itself onto the new panel instead of sitting there
+        // showing an old one.
+        let version=null, restarting=false, awaitingReturn=false, wasReachable=true;
+        let startCommand='', startProblem='', relaunchError='', waitingSince=0;
+        // Long enough for a big world to boot; short enough that a restart
+        // which is never coming back stops pretending it is.
+        const WAIT_LIMIT=5*60*1000;
 
         const esc = s => (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
         async function jget(u){ const r=await fetch(u,{credentials:'same-origin'});
@@ -297,6 +307,18 @@ final class WebPage {
           return grid;
         }
 
+        // Replaces the page while the server is away, so a restart looks like a
+        // restart rather than like a panel that broke.
+        function showWaiting(){
+          if($('waiting')) return;
+          const m=$('main'); m.innerHTML='';
+          const b=document.createElement('div'); b.className='banner'; b.id='waiting';
+          b.innerHTML='<span class="state warn">Restarting</span><span class="muted">'+
+            'The server is starting again. This page reconnects on its own — '+
+            'no need to reload it.</span>';
+          m.appendChild(b);
+        }
+
         function setChrome(){
           const st=$('status'), txt=$('statustext');
           st.className='pill '+(serverRunning?'up':'down');
@@ -305,11 +327,12 @@ final class WebPage {
           $('logout').style.display=authed?'':'none';
           $('srvstop').style.display=(authed&&serverRunning)?'':'none';
           $('srvrestart').style.display=(authed&&serverRunning)?'':'none';
-          $('srvrestart').title=canStart?'Stop, then run the start command'
+          $('srvrestart').title=canStart?('Stop, then start it again here: '+startCommand)
                                         :'Stops the server; your wrapper starts it again';
           $('srvstart').style.display=(authed&&!serverRunning)?'':'none';
           $('srvstart').disabled=!canStart;
-          $('srvstart').title=canStart?'':'Set web-supervisor and web-start-command to enable';
+          $('srvstart').title=canStart?('Runs: '+startCommand)
+                                      :(startProblem||'No way to start the server from here');
           const nav=$('nav'); nav.innerHTML='';
           const tabs = authed ? [['dash','Overview'],['term','Console'],
                                  ['activity','Activity'],['files','Files'],['players','Players'],
@@ -348,8 +371,16 @@ final class WebPage {
             const b=document.createElement('div'); b.className='banner';
             b.innerHTML='<span class="state crit">Stopped</span><span class="muted">'+
               'The Minecraft server is not running. '+
-              (authed?(canStart?'Use <b>Start server</b> above.':'No start command is configured.')
+              (authed?(canStart?'Use <b>Start server</b> above.':esc(startProblem||'Nothing here can start it.'))
                      :'Live metrics resume when it starts.')+'</span>';
+            wrap.appendChild(b);
+          }
+          if(authed && relaunchError){
+            const b=document.createElement('div'); b.className='banner';
+            b.style.borderLeftColor='#e0503f';
+            b.innerHTML='<span class="state crit">Restart failed</span><span class="muted">'+
+              'The server was stopped for a restart, but starting it again failed: '+
+              esc(relaunchError)+'</span>';
             wrap.appendChild(b);
           }
           const metrics=document.createElement('div'); metrics.id='metrics';
@@ -592,6 +623,9 @@ final class WebPage {
           if(s<90) return 'just now';
           return fmtDur(s*1000)+' ago';
         }
+        """;
+
+    private static final String PART2 = """
         function playersPanel(){
           const wrap=document.createElement('div');
           wrap.innerHTML='<p class="muted">A mask changes how a player appears in chat and the tab list. '+
@@ -871,6 +905,11 @@ final class WebPage {
             '<button class="btn go" id="s-apply" disabled>Download &amp; install</button>'+
             '<button class="btn" id="s-clearlog">Clear Almin log</button></div>'+
             '<div class="msg" id="s-upmsg"></div></section>'+
+            '<section><h2>Restarting</h2>'+
+            '<p class="muted">Restart and Start run this, from this machine. Almin reads it off '+
+            'the running server, so it matches however this server was actually launched — '+
+            'set <code>web-start-command</code> only if you want something else.</p>'+
+            '<div id="s-relaunch" class="note">…</div></section>'+
             '<section><h2>Settings</h2>'+
             '<p class="muted">Written to <code>config/almin/config.json</code> as you change them, '+
             'and live immediately.</p>'+
@@ -878,7 +917,7 @@ final class WebPage {
             '<button class="btn" id="s-reload" style="margin-top:12px">Reload from disk</button>'+
             '<div class="msg" id="s-msg"></div></section>';
           setTimeout(()=>{
-            loadConfig(); loadUpdate();
+            loadConfig(); loadUpdate(); showRelaunch();
             $('s-pwgo').onclick=setPassword;
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
@@ -887,6 +926,19 @@ final class WebPage {
             $('s-reload').onclick=reloadConfig;
           },0);
           return wrap;
+        }
+        // What will actually happen when someone presses Restart. A restart
+        // that quietly cannot restart is the failure worth naming here.
+        function showRelaunch(){
+          const box=$('s-relaunch'); if(!box) return;
+          if(!canStart){
+            box.innerHTML='<span class="state crit">Unavailable</span> '+
+              esc(startProblem||'Almin cannot work out how to start this server.');
+            return;
+          }
+          box.innerHTML='<code>'+esc(startCommand)+'</code>'+
+            (relaunchError?'<br><span class="state crit">Last attempt failed</span> '+
+              esc(relaunchError):'');
         }
         async function setPassword(){
           const msg=$('s-pwmsg'), v=$('s-pw').value;
@@ -915,11 +967,18 @@ final class WebPage {
         }
         async function applyUpdate(){
           const msg=$('s-upmsg');
-          if(!confirm('Download and install the new version?\\n\\nIt takes effect when the server restarts.')) return;
+          if(!confirm('Download and install the new version, then restart?\\n\\n'+
+                      'Players are disconnected. This panel is part of what gets '+
+                      'updated, so the page reloads itself onto the new one when '+
+                      'the server is back.')) return;
           msg.className='msg'; msg.textContent='Downloading…'; $('s-apply').disabled=true;
-          const r=await jpost('/api/update',{});
+          const r=await jpost('/api/update',{restart:true});
           msg.className='msg '+(r.body.ok?'ok':'err');
           msg.textContent=r.body.message||r.body.error||'failed';
+          if(r.body.restarting && r.body.relaunch){
+            awaitingReturn=true; waitingSince=Date.now(); showWaiting(); return;
+          }
+          if(r.body.restarting) return;    // stopping, with nothing here to bring it back
           loadUpdate(true);
         }
         async function clearLog(){
@@ -1002,11 +1061,16 @@ final class WebPage {
           if(r.status!==200){ alert(r.body.error||'Stop failed'); $('srvstop').disabled=false; }
         };
         $('srvrestart').onclick=async()=>{
-          if(!confirm('Restart the Minecraft server?\\n\\nPlayers will be disconnected.')) return;
+          if(!confirm('Restart the Minecraft server?\\n\\nPlayers will be disconnected. '+
+                      'This page goes quiet for a minute and comes back on its own.')) return;
           $('srvrestart').disabled=true;
           const r=await jpost('/api/server',{action:'restart'});
           if(r.status!==200){ alert(r.body.error||'Restart failed'); $('srvrestart').disabled=false; }
-          else $('age').textContent=r.body.message||'restarting…';
+          else if(r.body.relaunch){ awaitingReturn=true; waitingSince=Date.now();
+                 $('age').textContent=r.body.message||'restarting…'; showWaiting(); }
+          // Nothing here is going to start it again — a wrapper might, or
+          // nothing will. Do not sit on a screen promising it comes back.
+          else $('age').textContent=r.body.message||'stopping…';
         };
         $('srvstart').onclick=async()=>{
           if(!canStart) return;
@@ -1015,7 +1079,8 @@ final class WebPage {
           $('srvstart').disabled=true;
           const r=await jpost('/api/server',{action:'start'});
           if(r.status!==200){ alert(r.body.error||'Start failed'); $('srvstart').disabled=false; }
-          else $('age').textContent='starting server…';
+          else { awaitingReturn=true; waitingSince=Date.now();
+                 $('age').textContent='starting server…'; showWaiting(); }
         };
 
         // ---- advertised mods ----
@@ -1222,11 +1287,42 @@ final class WebPage {
           publicMetrics=!!s.body.publicMetrics; canStart=!!s.body.canStart;
           supervisor=!!s.body.supervisor;
           if(s.body.serverRunning!=null) serverRunning=!!s.body.serverRunning;
+          restarting=!!s.body.restarting;
+          startCommand=s.body.startCommand||''; startProblem=s.body.startProblem||'';
+          relaunchError=s.body.relaunchError||'';
+          if(restarting && !awaitingReturn){ awaitingReturn=true; waitingSince=Date.now(); }
+          // A different version answering on this address means the jar was
+          // replaced under us and this page is the old panel. Reload onto the
+          // new one rather than talking to it with yesterday's script.
+          if(version===null) version=s.body.version||'';
+          else if(s.body.version && s.body.version!==version){ location.reload(); }
         }
         async function poll(){
           const wasAuthed=authed, wasRunning=serverRunning;
           try { await refreshOnce(); }
-          catch(e){ $('age').textContent='panel unreachable'; return; }
+          catch(e){
+            // Mid-restart this is expected, not an error: the old process has
+            // gone and the new one is still booting. Say which of the two it
+            // is, and keep asking either way.
+            wasReachable=false;
+            $('age').textContent = awaitingReturn
+              ? 'restarting — waiting for the server…' : 'panel unreachable — retrying';
+            if(awaitingReturn) showWaiting();
+            return;
+          }
+          // It answered again after a restart. The panel behind this address
+          // may be a different build now, so start clean rather than guess.
+          if(awaitingReturn && !wasReachable){ location.reload(); return; }
+          wasReachable=true;
+          if(awaitingReturn){
+            // Still waiting, but the panel is answering. Three ways out: the
+            // restart failed and said so, the server is back, or it has been
+            // long enough that sitting on a hopeful screen is a lie.
+            if(relaunchError || serverRunning || Date.now()-waitingSince>WAIT_LIMIT){
+              awaitingReturn=false; render(); return;
+            }
+            setChrome(); showWaiting(); return;
+          }
           let d=null;
           if(authed){ const r=await jget('/api/state'); if(r.status===200) d=r.body; }
           else if(publicMetrics){ const r=await jget('/api/public'); if(r.status===200) d=r.body; }
@@ -1256,4 +1352,14 @@ final class WebPage {
         (async()=>{ await refreshOnce(); render(); poll(); setInterval(poll,3000); })();
         </script>
         """;
+
+    /**
+     * The page, in two halves.
+     *
+     * <p>Not a style choice: a single string constant cannot exceed 64KB in a
+     * class file, and this page passed that. Joining at runtime keeps each
+     * half under the constant-pool limit — {@code PART1 + PART2} would not,
+     * since the compiler folds that straight back into one constant.
+     */
+    static final String HTML = String.join("", PART1, PART2);
 }
