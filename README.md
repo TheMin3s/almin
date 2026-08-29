@@ -159,7 +159,7 @@ panel — see [Restarting](#restarting). You should not need to set it at all.
 | Overview | live metrics, TPS trend, the dashboard rows |
 | Console | the server log, tailing, with a command box under it |
 | Files | browse, upload, download, rename, delete, fetch a URL, and an editor that opens when you pick a file |
-| Activity | what ordinary players have been doing, with a filter |
+| Activity | a timeline map of everyone, and what players have been doing |
 | Players | who's online, who's been on before, and display-name masks |
 | Mods | the mods advertised to joining players, and the jars behind them |
 | Settings | every Almin setting, the admin password, and the update check |
@@ -276,7 +276,7 @@ one way.
 | Console | `/almin op console` | the live server log |
 | Files | `/almin op dir` | browse, edit, download, upload, rename, delete |
 | Web | `/almin op web` | run the web panel and set its password |
-| Activity | `/almin op activity` | what ordinary players have been doing |
+| Activity | `/almin op activity` | a timeline map, and what players have been doing |
 | Shared | `/almin files` | the shared folder, one click to download |
 | Mods | `/almin mods` | advertised mods, required toggle, remove |
 | Masks | `/almin mask` | set and clear display names, and op players |
@@ -300,18 +300,37 @@ Almin keeps three logs. Two are about the server — Minecraft's own console, an
 `config/almin/almin.log` for what admins do. The third is about players.
 
 `/almin op activity` in game, or the web panel's **Activity** tab, shows what
-ordinary players have been doing: joins and leaves, chat, commands, block breaks
-and uses, containers opened, PvP hits and deaths.
+ordinary players have been doing: joins and leaves, chat, commands, blocks
+placed and broken, containers opened, PvP hits and deaths.
 
 A masked player joining is announced where only admins see it: the server
 console, `almin.log`, and the activity log. Never in chat — a mask exists so
 other players see the other name, and "X is really Y" in chat would undo it.
 Every admin surface shows the real name first with the mask beside it.
 
-**It never records anyone who can read it.** A player is skipped entirely if
-their UUID is on the trusted allowlist, or if they hold moderator permission or
-above — which is every vanilla op. So it is a record of the unprivileged, kept
-by the privileged, and never a record of the people keeping it.
+**By default it records nobody who can read it.** A player is skipped entirely
+if their UUID is on the trusted allowlist, or if they hold moderator permission
+or above — which is every vanilla op. So out of the box it is a record of the
+unprivileged, kept by the privileged, and never a record of the people keeping
+it.
+
+That default is the point rather than a limitation, but it is not a rule. Turn
+`activity-include-admins` on and everyone is recorded, ops included — for an
+audit, or a server whose staff have agreed to it.
+
+More often what you actually want is *this afternoon*, not forever, so there is
+a second form that forgets by itself:
+
+```
+/almin op activity admins temp on
+```
+
+That overrides the setting until the next restart and is never written to
+`config.json` — a switch you have to remember to turn back off is a switch that
+stays on. `admins temp off` excludes admins on a server that has the setting on;
+`admins temp clear` hands control back to the setting; `/almin op activity
+admins` on its own reports which of the two is deciding. The Activity tab in
+both UIs has the same two controls, and says which one is in force.
 
 **Rows expire.** This is data about named people, so it has a deliberate shelf
 life rather than accumulating: a day by default, from memory and from
@@ -320,23 +339,46 @@ life rather than accumulating: a day by default, from memory and from
 | Setting | Default | Meaning |
 |---|---|---|
 | `activity-log` | `true` | record at all |
+| `activity-include-admins` | `false` | record ops and trusted UUIDs too |
 | `activity-retention-minutes` | `1440` | how long a row survives — 5 minutes to 7 days |
 | `activity-max-entries` | `20000` | ceiling on the log; oldest rows drop first |
-| `activity-blocks` | `true` | block breaks and block use |
+| `activity-blocks` | `true` | blocks placed, blocks broken, blocks used |
 | `activity-combat` | `true` | damage taken, hits landed, deaths |
 | `activity-items` | `true` | item use, entity interaction, containers |
 | `activity-track-seconds` | `5` | position sampling for the map; 0 turns it off |
 
-Recorded: joins and leaves, chat, commands, block breaks and use, containers
-opened, item use, entity interaction, hits landed, damage taken and by what,
-deaths, and respawns.
+Recorded: joins and leaves, chat, commands, blocks placed, blocks broken,
+blocks used, containers opened, item use, entity interaction, hits landed,
+damage taken and by what, deaths, and respawns.
 
-### The movement map
+**Placing is its own action.** It used to be filed as a use — dirt placed on
+dirt read as "used Dirt on Dirt" — because Fabric has no placement event and
+the one that does exist fires *before* the interaction resolves, when putting a
+block down and opening a chest still look identical. The row now waits until
+the end of the tick: if a block actually went down it becomes a placement, and
+otherwise it is written out as the use it always was. One right-click is still
+one row.
 
-The web panel's Activity tab draws one player's path from above — X across, Z
-down, the way Minecraft's own maps read — with their actions marked on it.
-Hover a marker for what happened and when. Dimensions are drawn separately,
-because overworld and nether coordinates share numbers without sharing places.
+### The map
+
+Both Activity tabs open on a map of **everyone, on one clock**: each tracked
+player's path from above — X across, Z down, the way Minecraft's own maps read
+— with the things they did marked along it. Drag the timeline to move through
+the period, or press Play to watch it: paths draw up to the cursor, and markers
+fade in and out as their moment passes. It answers the question you usually
+start with, which is not "where has this person been" but "what happened here,
+and who was around".
+
+Underneath it, the web panel still has the single-player view: pick a name for
+that player's path on its own, and hover any marker for what happened and when.
+
+Dimensions are drawn separately, because overworld and nether coordinates share
+numbers without sharing places. The web panel gives each one a button; in game,
+click the map to cycle.
+
+The in-game map receives a thinned copy of the paths — every nth point rather
+than the most recent ones, so a shorter path over the whole period beats a
+complete path over the last five minutes.
 
 Movement is sampled, not followed: a position every `activity-track-seconds`,
 and only when the player has actually gone somewhere, so standing still adds

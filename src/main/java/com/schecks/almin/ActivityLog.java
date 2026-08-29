@@ -170,13 +170,61 @@ public final class ActivityLog {
     // ---------- recording ----------
 
     /**
+     * Set for this run only, overriding {@code activity-include-admins}.
+     *
+     * <p>Null means "follow the setting". A deliberately un-persisted field:
+     * the reason to record admins is usually a single afternoon — a grief
+     * investigation, a new moderator being shown the ropes — and a switch you
+     * have to remember to turn back off is one that stays on. This one
+     * forgets by itself at the next restart.
+     */
+    private static volatile Boolean temporaryIncludeAdmins = null;
+
+    /**
+     * Whether admins are being recorded, and why.
+     *
+     * <p>{@code temporary} is true when the answer comes from the run-only
+     * override rather than the saved setting.
+     */
+    public record AdminPolicy(boolean includeAdmins, boolean temporary, boolean configured) {}
+
+    public static AdminPolicy adminPolicy() {
+        Boolean t = temporaryIncludeAdmins;
+        boolean configured = AlminConfig.get().activityIncludeAdmins;
+        return t == null
+            ? new AdminPolicy(configured, false, configured)
+            : new AdminPolicy(t, true, configured);
+    }
+
+    /** Whether admins are recorded right now, however that was decided. */
+    public static boolean includeAdmins() {
+        return adminPolicy().includeAdmins();
+    }
+
+    /**
+     * Overrides the setting until the server restarts. {@code null} hands
+     * control back to {@code activity-include-admins}.
+     */
+    public static void setTemporaryIncludeAdmins(Boolean value) {
+        temporaryIncludeAdmins = value;
+        AlminLog.info("[almin] activity admin tracking set to {} for this run",
+            value == null ? "follow the setting" : value);
+    }
+
+    /**
      * Whether this player's actions are recorded.
      *
-     * <p>False for anyone with the standing to read the log: a trusted UUID, or
-     * moderator permission and above, which is every vanilla op.
+     * <p>By default, false for anyone with the standing to read the log: a
+     * trusted UUID, or moderator permission and above, which is every vanilla
+     * op. That keeps the log a record of the unprivileged kept by the
+     * privileged, rather than a way for staff to watch each other.
+     *
+     * <p>{@code activity-include-admins} — or the run-only override — drops
+     * that exemption, for a server that wants a complete record.
      */
     public static boolean watched(ServerPlayer player) {
         if (player == null) return false;
+        if (includeAdmins()) return true;
         if (TrustedOps.isTrusted(player.getUUID())) return false;
         return !player.permissions().hasPermission(Permissions.COMMANDS_MODERATOR);
     }

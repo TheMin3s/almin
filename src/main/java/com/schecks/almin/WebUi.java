@@ -1814,7 +1814,31 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             if (!requireAuthSecure(ex)) return;
             JsonObject body = readBody(ex);
-            if (!"clear".equals(body.has("action") ? body.get("action").getAsString() : "")) {
+            String action = body.has("action") ? body.get("action").getAsString() : "";
+
+            if ("admins".equals(action)) {
+                // "until the server restarts" is a real option rather than a
+                // convenience: the reason to record admins is usually one
+                // afternoon, and a switch you have to remember to turn back
+                // off is one that stays on.
+                boolean temporary = body.has("temporary") && body.get("temporary").getAsBoolean();
+                Boolean value = body.has("value") && !body.get("value").isJsonNull()
+                    ? body.get("value").getAsBoolean() : null;
+                if (temporary) {
+                    ActivityLog.setTemporaryIncludeAdmins(value);
+                    AlminLog.warn("[almin] web panel set activity admin tracking to {} for this run",
+                        value == null ? "follow the setting" : value);
+                } else {
+                    if (value == null) { json(ex, 400, err("No value given.")); return; }
+                    AlminConfig.get().activityIncludeAdmins = value;
+                    AlminConfig.save();
+                    AlminLog.warn("[almin] web panel set activity-include-admins to {}", value);
+                }
+                json(ex, 200, adminPolicyJson().toString());
+                return;
+            }
+
+            if (!"clear".equals(action)) {
                 json(ex, 400, err("Unknown action."));
                 return;
             }
@@ -1856,7 +1880,19 @@ public final class WebUi {
         root.addProperty("enabled", cfg.activityLog);
         root.addProperty("blocks", cfg.activityBlocks);
         root.addProperty("retentionMinutes", cfg.activityRetentionMinutes);
+        root.add("admins", adminPolicyJson());
         return root.toString();
+    }
+
+    /** Whether admins are recorded, and whether that came from the setting. */
+    private static JsonObject adminPolicyJson() {
+        ActivityLog.AdminPolicy p = ActivityLog.adminPolicy();
+        JsonObject o = new JsonObject();
+        o.addProperty("ok", true);
+        o.addProperty("includeAdmins", p.includeAdmins());
+        o.addProperty("temporary", p.temporary());
+        o.addProperty("configured", p.configured());
+        return o;
     }
 
     /**
@@ -1878,6 +1914,12 @@ public final class WebUi {
             }
             root.add("players", who2);
             root.addProperty("trackSeconds", AlminConfig.get().activityTrackSeconds);
+
+            // Everyone at once, for the timeline map at the top of the tab.
+            if ("1".equals(queryParam(ex, "all"))) {
+                json(ex, 200, allTracksJson(root).toString());
+                return;
+            }
 
             if (who == null || who.isBlank()) {
                 root.addProperty("player", "");
@@ -1923,6 +1965,62 @@ public final class WebUi {
         } finally {
             ex.close();
         }
+    }
+
+    /**
+     * Every tracked player's path, and every placed action, on one clock.
+     *
+     * <p>The per-player map answers "where has this person been". This answers
+     * the question you actually start with — "what happened here, and who was
+     * around" — which needs everyone on the same timeline or it answers
+     * nothing.
+     */
+    private JsonObject allTracksJson(JsonObject root) {
+        long from = Long.MAX_VALUE, to = 0;
+
+        JsonObject tracks = new JsonObject();
+        for (String name : PlayerTracks.tracked().keySet()) {
+            JsonArray points = new JsonArray();
+            for (PlayerTracks.Point p : PlayerTracks.of(name)) {
+                JsonObject o = new JsonObject();
+                o.addProperty("at", p.at());
+                o.addProperty("dim", p.dim());
+                o.addProperty("x", p.x());
+                o.addProperty("y", p.y());
+                o.addProperty("z", p.z());
+                points.add(o);
+                from = Math.min(from, p.at());
+                to = Math.max(to, p.at());
+            }
+            if (!points.isEmpty()) tracks.add(name, points);
+        }
+
+        JsonArray actions = new JsonArray();
+        for (ActivityLog.Entry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+            if (e.dim() == null || e.dim().isEmpty()) continue;
+            JsonObject o = new JsonObject();
+            o.addProperty("at", e.at());
+            o.addProperty("player", e.player());
+            o.addProperty("mask", maskOf(e.uuid()));
+            o.addProperty("action", e.action());
+            o.addProperty("detail", e.detail());
+            o.addProperty("dim", e.dim());
+            o.addProperty("x", e.x());
+            o.addProperty("y", e.y());
+            o.addProperty("z", e.z());
+            o.addProperty("count", e.count());
+            actions.add(o);
+            from = Math.min(from, e.at());
+            to = Math.max(to, e.at());
+        }
+
+        root.addProperty("all", true);
+        root.add("tracks", tracks);
+        root.add("actions", actions);
+        root.addProperty("from", from == Long.MAX_VALUE ? 0 : from);
+        root.addProperty("to", to);
+        root.add("admins", adminPolicyJson());
+        return root;
     }
 
     // ---------- routes: players and masks ----------

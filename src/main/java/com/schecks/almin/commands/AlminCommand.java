@@ -208,7 +208,23 @@ public final class AlminCommand {
                 .then(Commands.literal("activity")
                     .executes(AlminCommand::opActivity)
                     .then(Commands.literal("clear")
-                        .executes(AlminCommand::opActivityClear)))
+                        .executes(AlminCommand::opActivityClear))
+                    // Recording admins is off by default and stays a decision
+                    // someone makes on purpose: as a setting, or — more often
+                    // what is actually wanted — only until the next restart.
+                    .then(Commands.literal("admins")
+                        .executes(ctx -> opActivityAdmins(ctx, null, false))
+                        .then(Commands.literal("on")
+                            .executes(ctx -> opActivityAdmins(ctx, Boolean.TRUE, false)))
+                        .then(Commands.literal("off")
+                            .executes(ctx -> opActivityAdmins(ctx, Boolean.FALSE, false)))
+                        .then(Commands.literal("temp")
+                            .then(Commands.literal("on")
+                                .executes(ctx -> opActivityAdmins(ctx, Boolean.TRUE, true)))
+                            .then(Commands.literal("off")
+                                .executes(ctx -> opActivityAdmins(ctx, Boolean.FALSE, true)))
+                            .then(Commands.literal("clear")
+                                .executes(ctx -> opActivityAdmins(ctx, null, true))))))
                 .then(Commands.literal("web")
                     .executes(AlminCommand::opWeb)
                     .then(Commands.literal("start")
@@ -1018,6 +1034,50 @@ public final class AlminCommand {
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)), false);
         }
         return 1;
+    }
+
+    /**
+     * Reads or changes whether admins are in the activity log.
+     *
+     * @param value     what to set it to; null reports (or, with
+     *                  {@code temporary}, hands control back to the setting)
+     * @param temporary set it for this run only, so it forgets at the next
+     *                  restart — which is what the reason for turning it on
+     *                  usually deserves
+     */
+    private static int opActivityAdmins(CommandContext<CommandSourceStack> ctx,
+                                        Boolean value, boolean temporary) {
+        if (value == null && !temporary) {
+            report(ctx);
+            return 1;
+        }
+        String invoker = ctx.getSource().getEntity() == null
+            ? "console" : ctx.getSource().getEntity().getName().getString();
+        if (temporary) {
+            ActivityLog.setTemporaryIncludeAdmins(value);
+            AlminLog.info("[almin] {} set activity admin tracking to {} for this run",
+                invoker, value == null ? "follow the setting" : value);
+        } else {
+            AlminConfig.get().activityIncludeAdmins = value;
+            AlminConfig.save();
+            AlminLog.info("[almin] {} set activity-include-admins to {}", invoker, value);
+        }
+        report(ctx);
+        return 1;
+    }
+
+    private static void report(CommandContext<CommandSourceStack> ctx) {
+        ActivityLog.AdminPolicy p = ActivityLog.adminPolicy();
+        String line = p.includeAdmins()
+            ? "Admins ARE being recorded in the activity log."
+            : "Admins are not recorded — only ordinary players.";
+        String how = p.temporary()
+            ? "  (set for this run only; the saved setting is "
+                + (p.configured() ? "on" : "off") + ")"
+            : "  (from activity-include-admins)";
+        ctx.getSource().sendSuccess(() -> Component.literal(line + how)
+            .setStyle(Style.EMPTY.withColor(p.includeAdmins()
+                ? ChatFormatting.YELLOW : ChatFormatting.GRAY)), false);
     }
 
     private static int opActivityClear(CommandContext<CommandSourceStack> ctx) {

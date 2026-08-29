@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -77,21 +78,26 @@ public final class ActivityHooks {
             }
         });
 
-        // Right-clicking a block is as close as the API gets to "placed":
-        // placement itself is resolved deep inside item use. The item in hand
-        // is what makes the row worth reading either way.
+        // Right-clicking a block. Held back rather than recorded, because at
+        // this point in the interaction nobody knows yet what it was — see
+        // the note on PendingUse.
         UseBlockCallback.EVENT.register((player, level, hand, hit) -> {
             if (!level.isClientSide() && player instanceof ServerPlayer p) {
                 safely("use", () -> {
                     ItemStack held = p.getItemInHand(hand);
                     BlockPos pos = hit.getBlockPos();
-                    String what = held.isEmpty()
-                        ? blockName(level.getBlockState(pos))
-                        : itemName(held) + " on " + blockName(level.getBlockState(pos));
-                    ActivityLog.recordBlock(p, "use", what, pos);
+                    String what = blockName(level.getBlockState(pos));
+                    if (!held.isEmpty()) what = what + " with " + itemName(held);
+                    pending.put(p.getUUID(), new PendingUse(p, what, pos));
                 });
             }
             return InteractionResult.PASS;
+        });
+
+        // Anything still held back once the tick is over was a use after all.
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (pending.isEmpty()) return;
+            safely("use-flush", ActivityHooks::flushPending);
         });
 
         // Every swing at anything, not only at people: hitting a mob is the
@@ -151,6 +157,53 @@ public final class ActivityHooks {
             }
             return InteractionResult.PASS;
         });
+    }
+
+    // ---------- placing a block ----------
+
+    /**
+     * A right-click on a block, waiting to find out what it turned into.
+     *
+     * <p>Placing a block and interacting with one arrive at the same event:
+     * {@code UseBlockCallback} fires before the interaction resolves, so at
+     * that moment putting dirt down and opening a chest are indistinguishable.
+     * Recording there made every placement read as "used Dirt on Dirt", which
+     * is both wrong and the opposite of what someone reading a grief report
+     * needs — placements are the rows that matter most.
+     *
+     * <p>So the row waits. If the placement goes through, {@code BlockItem}
+     * reaches {@link #placed} in the same tick and the row becomes a placement
+     * instead. If nothing places, the end of the tick writes it out as the use
+     * it always was.
+     */
+    private record PendingUse(ServerPlayer player, String detail, BlockPos pos) {}
+
+    private static final java.util.Map<java.util.UUID, PendingUse> pending =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Called from {@code BlockPlaceActivityMixin} when a block actually goes
+     * down. Replaces the held-back use, so one right-click is one row.
+     */
+    public static void placed(ServerPlayer player, BlockState state, BlockPos pos) {
+        safely("place", () -> {
+            pending.remove(player.getUUID());
+            ActivityLog.recordBlock(player, "place", blockName(state), pos);
+        });
+    }
+
+    /**
+     * Writes out every right-click that did not turn into a placement.
+     *
+     * <p>Drains rather than iterates: a use recorded during the drain would
+     * belong to the next tick anyway.
+     */
+    private static void flushPending() {
+        for (java.util.UUID id : java.util.List.copyOf(pending.keySet())) {
+            PendingUse u = pending.remove(id);
+            if (u == null) continue;
+            ActivityLog.recordBlock(u.player(), "use", u.detail(), u.pos());
+        }
     }
 
     private static boolean combat() {

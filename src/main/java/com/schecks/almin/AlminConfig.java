@@ -107,6 +107,19 @@ public final class AlminConfig {
     /** Record what ordinary players do. Never records ops or trusted UUIDs. */
     public boolean activityLog = true;
     /**
+     * Record admins too — trusted UUIDs and anyone with moderator permission.
+     *
+     * <p>Off by default, and that default is the point rather than an
+     * oversight: the log is read by the people it would otherwise be about, so
+     * leaving them out is what stops it becoming a tool for watching
+     * colleagues. Turn it on when you want a complete record — an audit, or a
+     * server where the staff have agreed to it.
+     *
+     * <p>{@code /almin op activity admins temp on} does the same thing until
+     * the next restart, for when the reason is a single afternoon.
+     */
+    public boolean activityIncludeAdmins = false;
+    /**
      * How long an activity row is kept, in minutes. A day by default — this is
      * data about named people, so it expires rather than accumulating.
      */
@@ -230,6 +243,8 @@ public final class AlminConfig {
             c -> c.requireClientMod, (c, v) -> c.requireClientMod = (Boolean) v),
         boolKey("activity-log", "Record what ordinary players do (never ops or trusted UUIDs)",
             c -> c.activityLog, (c, v) -> c.activityLog = (Boolean) v),
+        boolKey("activity-include-admins", "Record admins and trusted UUIDs as well as ordinary players",
+            c -> c.activityIncludeAdmins, (c, v) -> c.activityIncludeAdmins = (Boolean) v),
         intKey("activity-retention-minutes", "How long an activity row is kept before it is deleted", 5, 10080,
             c -> c.activityRetentionMinutes, (c, v) -> c.activityRetentionMinutes = (Integer) v),
         intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 50000,

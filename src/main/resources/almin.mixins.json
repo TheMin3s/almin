@@ -4,6 +4,7 @@
   "package": "com.schecks.almin.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "BlockPlaceActivityMixin",
     "CommandActivityMixin",
     "EditBookMixin",
     "OpenMenuActivityMixin",

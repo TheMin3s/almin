@@ -689,12 +689,23 @@ final class WebPage {
                                death:'#e05a5a', attack:'#ff8a65', hurt:'#d98b6a',
                                join:'#57c957', leave:'#8b9096', respawn:'#8fd98f',
                                item:'#d3c26a', interact:'#9c8ce0', use:'#7f8a99',
-                               'break':'#9aa3ae' };
+                               place:'#66c2a5', 'break':'#e8a33d' };
         function activityPanel(){
           const wrap=document.createElement('div');
-          wrap.innerHTML='<p class="muted">What ordinary players have been doing. '+
-            'Anyone who could read this — a trusted UUID, or any op — is never recorded, '+
-            'and rows are deleted once they pass the retention window.</p>'+
+          wrap.innerHTML='<p class="muted">What players have been doing. '+
+            'Rows are deleted once they pass the retention window.</p>'+
+            '<section><h2>Everyone, over time</h2>'+
+            '<p class="muted">Every tracked player on one clock. Drag the timeline to move '+
+            'through the period, or press Play to watch it. Paths draw up to the cursor; '+
+            'markers are what happened around it.</p>'+
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
+            '<button class="btn" id="t-play">Play</button>'+
+            '<input type="range" id="t-time" min="0" max="1000" value="1000" '+
+            'style="flex:1;min-width:200px">'+
+            '<span class="muted" id="t-at" style="min-width:140px"></span>'+
+            '<span class="muted" id="t-dims"></span></div>'+
+            '<div id="t-map"><div class="note">loading…</div></div></section>'+
+            '<div id="a-admins" class="note" style="margin:12px 0"></div>'+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
             '<input id="a-filter" placeholder="filter by player, action, detail or place" '+
             'style="flex:1;min-width:200px">'+
@@ -710,8 +721,10 @@ final class WebPage {
             '<div class="act" id="a-rows" style="margin-top:12px"><div class="note">loading…</div></div>'+
             '<div class="msg" id="a-msg"></div>';
           setTimeout(()=>{
-            loadActivity(); loadTrackList();
-            $('a-refresh').onclick=()=>{ loadActivity(); loadTrack($('a-who').value); };
+            loadActivity(); loadTrackList(); loadAll();
+            $('a-refresh').onclick=()=>{ loadActivity(); loadAll(); loadTrack($('a-who').value); };
+            $('t-time').oninput=()=>{ stopPlay(); paintAll(); };
+            $('t-play').onclick=togglePlay;
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
@@ -719,6 +732,194 @@ final class WebPage {
             $('a-who').onchange=()=>loadTrack($('a-who').value);
           },0);
           return wrap;
+        }
+
+        // ---- everyone, on one clock ----
+        // The per-player map answers "where has this person been". This answers
+        // the question you actually start with — "what happened here, and who
+        // was around" — which needs everyone on the same timeline.
+        let allData=null, allDim='', playTimer=null;
+
+        // How far back from the cursor a marker still counts as "just now".
+        // A fraction of the period, so a busy hour and a quiet day both read.
+        const MARKER_WINDOW=0.06;
+
+        // Stable per-player colour: the same person is the same colour every
+        // time the map is drawn, without keeping a palette in sync with a
+        // player list that changes.
+        function playerColor(name){
+          let h=0;
+          for(let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0;
+          return 'hsl('+(h%360)+' 62% 62%)';
+        }
+
+        async function loadAll(){
+          const box=$('t-map'); if(!box) return;
+          const r=await jget('/api/track?all=1');
+          if(r.status!==200){ box.innerHTML='<div class="note">unavailable</div>'; return; }
+          allData=r.body; allDim='';
+          showAdmins(r.body.admins);
+          const t=$('t-time'); if(t) t.value=1000;
+          paintAll();
+        }
+
+        function stopPlay(){
+          if(playTimer){ clearInterval(playTimer); playTimer=null; }
+          const b=$('t-play'); if(b) b.textContent='Play';
+        }
+        function togglePlay(){
+          if(playTimer){ stopPlay(); return; }
+          const t=$('t-time'); if(!t) return;
+          if(+t.value>=1000) t.value=0;
+          $('t-play').textContent='Pause';
+          // ~20 seconds end to end, whatever the period actually covers.
+          playTimer=setInterval(()=>{
+            const next=+t.value+8;
+            if(next>=1000){ t.value=1000; stopPlay(); }
+            else t.value=next;
+            paintAll();
+          },160);
+        }
+
+        function paintAll(){
+          const box=$('t-map'); if(!box || !allData) return;
+          const tracks=allData.tracks||{}, acts=allData.actions||[];
+          const names=Object.keys(tracks);
+          if(!names.length && !acts.length){
+            box.innerHTML='<div class="note">Nothing recorded yet'+
+              ((allData.trackSeconds===0)?' — activity-track-seconds is 0, so paths are off.'
+                                         :'. It fills in as people play.')+'</div>';
+            $('t-at').textContent=''; $('t-dims').textContent=''; return;
+          }
+
+          // One dimension at a time: overworld and nether coordinates share
+          // numbers but not places, and drawing them together is a lie.
+          const all=[].concat(...names.map(n=>tracks[n])).concat(acts);
+          const dims=[...new Set(all.map(p=>p.dim).filter(Boolean))];
+          if(!allDim || !dims.includes(allDim)) allDim=dims[0]||'';
+          $('t-dims').innerHTML = dims.length>1
+            ? dims.map(d=>'<button class="btn'+(d===allDim?' on':'')+'" data-tdim="'+esc(d)+'" '+
+                'style="padding:3px 9px;font-size:12px;margin-left:6px">'+esc(d)+'</button>').join('')
+            : esc(allDim);
+
+          const from=allData.from||0, to=allData.to||from+1;
+          const frac=(+$('t-time').value)/1000;
+          const cursor=from+(to-from)*frac;
+          const windowMs=Math.max(1,(to-from)*MARKER_WINDOW);
+          $('t-at').textContent=fmtAgo(cursor)+(frac>=1?' (now)':'');
+
+          const inDim=p=>p.dim===allDim;
+          const shownActs=acts.filter(a=>inDim(a) && a.at<=cursor && a.at>=cursor-windowMs);
+          const paths=names.map(n=>({name:n, pts:tracks[n].filter(p=>inDim(p) && p.at<=cursor)}))
+                           .filter(t=>t.pts.length);
+
+          const pool=[].concat(...paths.map(t=>t.pts)).concat(acts.filter(inDim));
+          if(!pool.length){
+            box.innerHTML='<div class="note">Nothing in '+esc(allDim)+'.</div>';
+            wireDims(); return;
+          }
+          const xs=pool.map(p=>p.x), zs=pool.map(p=>p.z);
+          let minX=Math.min(...xs), maxX=Math.max(...xs);
+          let minZ=Math.min(...zs), maxZ=Math.max(...zs);
+          const pad=Math.max(8,(Math.max(maxX-minX,maxZ-minZ))*0.06);
+          minX-=pad; maxX+=pad; minZ-=pad; maxZ+=pad;
+          const span=Math.max(maxX-minX,maxZ-minZ,16);
+          const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2;
+          const W=1000, H=Math.round(W*0.62);
+          const sx=v=>((v-cx)/span)*W*0.92+W/2;
+          const sz=v=>((v-cz)/span)*H*0.92+H/2;
+
+          const grid=[];
+          for(let g=0;g<=4;g++){
+            grid.push('<line x1="'+(W/4)*g+'" y1="0" x2="'+(W/4)*g+'" y2="'+H+'" stroke="#1b1f27"/>');
+            grid.push('<line x1="0" y1="'+(H/4)*g+'" x2="'+W+'" y2="'+(H/4)*g+'" stroke="#1b1f27"/>');
+          }
+
+          const lines=paths.map(t=>{
+            const c=playerColor(t.name);
+            const d=t.pts.map((p,i)=>(i?'L':'M')+sx(p.x).toFixed(1)+' '+sz(p.z).toFixed(1)).join(' ');
+            const last=t.pts[t.pts.length-1];
+            return '<path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="2.5" '+
+              'stroke-opacity=".55" stroke-linejoin="round" stroke-linecap="round"/>'+
+              '<circle cx="'+sx(last.x).toFixed(1)+'" cy="'+sz(last.z).toFixed(1)+'" r="5.5" '+
+              'fill="'+c+'" stroke="#0b0d11" stroke-width="1.5"/>';
+          }).join('');
+
+          const dots=shownActs.map((a,i)=>{
+            // Fades with age inside the window, so the eye finds the newest.
+            const age=(cursor-a.at)/windowMs;
+            return '<circle class="tmk" data-i="'+i+'" cx="'+sx(a.x).toFixed(1)+'" cy="'+
+              sz(a.z).toFixed(1)+'" r="'+(6-age*2).toFixed(1)+'" fill="'+
+              (ACTION_COLOR[a.action]||'#9aa3ae')+'" fill-opacity="'+(0.95-age*0.6).toFixed(2)+
+              '" stroke="#0b0d11" stroke-width="1.5"/>';
+          }).join('');
+
+          box.innerHTML='<div class="mapwrap">'+
+            '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" '+
+            'aria-label="Where everyone was and what they did">'+
+            grid.join('')+lines+dots+'</svg>'+
+            '<div class="maptip" id="t-tip"></div>'+
+            '<div class="legend" id="t-legend"></div></div>';
+
+          const used=[...new Set(shownActs.map(a=>a.action))];
+          $('t-legend').innerHTML=
+            paths.map(t=>'<span><i style="background:'+playerColor(t.name)+'"></i>'+
+              esc(t.name)+'</span>').join('')+
+            used.map(u=>'<span><i style="background:'+(ACTION_COLOR[u]||'#9aa3ae')+'"></i>'+
+              esc(u)+'</span>').join('')+
+            '<span class="muted">'+paths.length+' player(s) · '+shownActs.length+
+            ' action(s) in view · '+Math.round(span)+' blocks across</span>';
+
+          const svg=box.querySelector('svg'), tip=$('t-tip');
+          box.querySelectorAll('.tmk').forEach(el=>{
+            el.addEventListener('mouseenter',()=>{
+              const a=shownActs[+el.getAttribute('data-i')];
+              tip.textContent=(a.mask?a.mask+' ('+a.player+')':a.player)+' · '+a.action+
+                (a.count>1?' x'+a.count:'')+(a.detail?' · '+a.detail:'')+
+                ' · '+a.x+','+a.y+','+a.z+' · '+fmtAgo(a.at);
+              const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect();
+              tip.style.left=(r.left-b.left+(+el.getAttribute('cx'))/W*r.width)+'px';
+              tip.style.top=(r.top-b.top+(+el.getAttribute('cy'))/H*r.height-26)+'px';
+              tip.style.opacity='1';
+            });
+            el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
+          });
+          wireDims();
+        }
+
+        function wireDims(){
+          const host=$('t-dims'); if(!host) return;
+          host.querySelectorAll('[data-tdim]').forEach(b=>
+            b.onclick=()=>{ allDim=b.getAttribute('data-tdim'); paintAll(); });
+        }
+
+        // ---- who is recorded ----
+        function showAdmins(p){
+          const box=$('a-admins'); if(!box) return;
+          if(!p){ box.textContent=''; return; }
+          box.innerHTML=(p.includeAdmins
+              ? '<span class="state warn">Admins included</span> Ops and trusted UUIDs are '+
+                'being recorded alongside everyone else.'
+              : '<span class="state good">Admins excluded</span> Anyone who could read this '+
+                '— a trusted UUID, or any op — is not recorded.')+
+            (p.temporary ? ' <span class="muted">Set for this run only; the saved setting is '+
+              (p.configured?'on':'off')+'.</span>' : '')+
+            '<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+
+            '<button class="btn" id="a-adm-save">'+(p.configured?'Stop recording admins':
+              'Record admins')+' (saved)</button>'+
+            '<button class="btn" id="a-adm-temp">'+(p.includeAdmins?'Stop recording admins':
+              'Record admins')+' until restart</button>'+
+            (p.temporary?'<button class="btn" id="a-adm-clear">Back to the setting</button>':'')+
+            '</div>';
+          $('a-adm-save').onclick=()=>setAdmins(!p.configured,false);
+          $('a-adm-temp').onclick=()=>setAdmins(!p.includeAdmins,true);
+          const c=$('a-adm-clear'); if(c) c.onclick=()=>setAdmins(null,true);
+        }
+        async function setAdmins(value,temporary){
+          const r=await jpost('/api/activity',{action:'admins',value:value,temporary:temporary});
+          if(r.status!==200){ alert(r.body.error||'failed'); return; }
+          showAdmins(r.body);
+          loadActivity();
         }
 
         // ---- the movement map ----
@@ -838,6 +1039,7 @@ final class WebPage {
           if(r.status!==200){ $('a-rows').innerHTML='<div class="note">'+
             esc(r.body.error||'unavailable')+'</div>'; return; }
           activityRows=r.body.rows||[]; activityMeta=r.body;
+          showAdmins(r.body.admins);
           paintActivity();
         }
         function paintActivity(){

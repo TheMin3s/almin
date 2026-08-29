@@ -122,6 +122,38 @@ public final class PlayerTracks {
     }
 
     /** Thrown away with the activity log, since it is the same record. */
+    /**
+     * Everyone's path at once, thinned to fit a packet.
+     *
+     * <p>The in-game map draws the same picture as the web one, but it has to
+     * arrive over the network first, and full-resolution tracks for a busy
+     * server are far past what one packet should carry. Thinning takes every
+     * nth point rather than the most recent ones — a shorter path over the
+     * whole period is a truer picture than a complete path over the last
+     * five minutes.
+     *
+     * @param budget total points across all players
+     */
+    public static synchronized Map<String, List<Point>> everyone(int budget) {
+        Map<String, List<Point>> out = new LinkedHashMap<>();
+        Map<String, Integer> sizes = tracked();
+        int total = 0;
+        for (int n : sizes.values()) total += n;
+        if (total == 0) return out;
+        int stride = Math.max(1, (int) Math.ceil(total / (double) Math.max(1, budget)));
+        for (String name : sizes.keySet()) {
+            List<Point> full = of(name);
+            List<Point> thin = new ArrayList<>(full.size() / stride + 2);
+            for (int i = 0; i < full.size(); i += stride) thin.add(full.get(i));
+            // The last point is where they are now; never drop it.
+            if (!full.isEmpty() && thin.get(thin.size() - 1) != full.get(full.size() - 1)) {
+                thin.add(full.get(full.size() - 1));
+            }
+            if (!thin.isEmpty()) out.put(name, thin);
+        }
+        return out;
+    }
+
     public static synchronized void clear() {
         tracks.clear();
         names.clear();
