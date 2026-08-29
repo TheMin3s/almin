@@ -2402,6 +2402,12 @@ public final class WebUi {
                 JsonObject root = new JsonObject();
                 root.add("shots", arr);
                 root.addProperty("every", AlminConfig.get().mapSnapshotSeconds);
+                // Whether the ground is drawn from the game's own textures or
+                // from the map palette. Worth saying, because the difference
+                // is large and the answer depends on whether this server
+                // happens to have a resource pack lying around.
+                root.addProperty("textures", BlockTextures.source());
+                root.addProperty("texturedBlocks", BlockTextures.loaded());
                 json(ex, 200, root.toString());
                 return;
             }

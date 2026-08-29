@@ -206,7 +206,13 @@ final class WebPage {
                       border-radius:10px;padding:9px 11px;font-size:12.5px;
                       box-shadow:0 12px 32px rgba(0,0,0,.5)}
           .clusterbox h4{margin:0 0 7px;font-size:11px;color:var(--brand);
-                         text-transform:uppercase;letter-spacing:.8px}
+                         text-transform:uppercase;letter-spacing:.8px;
+                         display:flex;align-items:center;gap:8px}
+          .clusterbox h4 .shut{margin-left:auto;background:none;border:0;color:var(--dim);
+                               font-size:15px;line-height:1;cursor:pointer;padding:0 2px}
+          .clusterbox h4 .shut:hover{color:var(--ink)}
+          .clusterbox .cl{cursor:pointer}
+          .clusterbox .cl .tm{margin-left:auto;color:var(--mute);white-space:nowrap}
           .clusterbox .cl{display:flex;gap:7px;align-items:baseline;padding:3px 0;
                           border-bottom:1px solid rgba(255,255,255,.05)}
           .clusterbox .cl:last-child{border-bottom:0}
@@ -231,6 +237,37 @@ final class WebPage {
           .moment:hover{background:var(--card2)}
           .moment .lb{font-weight:650}
           .moment .wy{color:var(--dim)}
+          /* Fullscreen: the map takes the window and everything else floats
+             on top of it, because the point of going fullscreen is the map. */
+          .maplayout.fullmap{position:fixed;inset:0;z-index:60;display:block;
+                             background:#07090c;padding:0;gap:0}
+          .maplayout.fullmap > div{position:static}
+          .fullmap #t-map .mapwrap{border:0;border-radius:0;padding:0;height:100vh}
+          .fullmap #t-map .mapwrap > svg{height:100vh;max-height:100vh}
+          .fullmap .timeline{position:absolute;left:14px;right:14px;bottom:60px;margin:0}
+          .fullmap .timeline svg{height:70px;opacity:.94;
+                                 box-shadow:0 8px 26px rgba(0,0,0,.55)}
+          .fullmap .tlbar{position:absolute;left:14px;right:14px;bottom:12px;margin:0;
+                          background:rgba(11,13,17,.76);border:1px solid var(--line);
+                          border-radius:10px;padding:7px 11px;
+                          backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+          .fullmap .mapside{position:absolute;right:14px;top:14px;width:330px;
+                            max-height:calc(100vh - 160px);
+                            background:rgba(11,13,17,.76);
+                            backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+          .fullmap .legend{position:absolute;left:14px;bottom:150px;right:360px;margin:0;
+                           background:rgba(11,13,17,.72);border:1px solid var(--line);
+                           border-radius:9px;padding:7px 10px;
+                           backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+          /* The floating side list would otherwise sit on top of the map's own
+             buttons, which are the way back out of fullscreen. */
+          .fullmap.side .mapbtns{right:358px}
+          .fullmap.side .onlinebar{right:410px}
+          .fullmap .onlinebar{top:14px;left:14px}
+          @media(max-width:900px){.fullmap .mapside{display:none}
+                                  .fullmap .legend{right:14px}
+                                  .fullmap.side .mapbtns{right:12px}
+                                  .fullmap.side .onlinebar{right:64px}}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
                   border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
                   color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
@@ -1437,6 +1474,11 @@ final class WebPage {
                             faces:true, paths:true, cluster:true, overlays:true};
         let mapOpts=Object.assign({},MAP_DEFAULTS);
         let optsOpen=false;
+        // The map, given the whole window, with everything else floating over
+        // it. Not the browser's own fullscreen — that swallows the tab strip
+        // and the escape key belongs to it; this is the panel's, and Escape
+        // leaves it.
+        let fullMap=false;
         try {
           const saved=localStorage.getItem('almin.map');
           if(saved) mapOpts=Object.assign({},MAP_DEFAULTS,JSON.parse(saved));
@@ -1482,7 +1524,7 @@ final class WebPage {
 
         // Pictures of the ground, so the map has a world under it rather than
         // a grid. Listed once; the browser picks which one matches the cursor.
-        let shots=[], shotEvery=0;
+        let shots=[], shotEvery=0, shotTextures='none';
 
         /**
          * Fetches the period.
@@ -1510,6 +1552,7 @@ final class WebPage {
             const m=await jget('/api/map');
             shots=(m.status===200 && m.body.shots)?m.body.shots:[];
             shotEvery=(m.body&&m.body.every)||0;
+            shotTextures=(m.body&&m.body.textures)||'none';
             if(keep){ allDim=dim; }
             else { allDim=''; cursorSet=false; win.set=false; view.set=false; }
             lastLiveLoad=Date.now();
@@ -1556,9 +1599,6 @@ final class WebPage {
           for(const n of Object.keys(allData.tracks||{}))
             for(const p of allData.tracks[n]) at.push(p.at);
           for(const a of (allData.actions||[])) at.push(a.at);
-          // Now counts as a moment, so a server that emptied an hour ago shows
-          // that hour as quiet rather than as the edge of the record.
-          if(allData.now) at.push(allData.now);
           if(at.length<2) return [];
           at.sort((x,y)=>x-y);
           const gaps=[];
@@ -1729,17 +1769,22 @@ final class WebPage {
             : esc(allDim);
 
           const from=allData.from||0;
-          // The period runs to the clock, not to the last thing anyone did. On
-          // a quiet server those are an hour apart, and a timeline that stopped
-          // at the last row would say the map was showing an hour ago.
-          const to=Math.max(allData.to||from+1, allData.now||0);
+          // The period is exactly what is saved, end to end. It used to run to
+          // the clock, which on a server nobody had played on since yesterday
+          // meant most of the timeline was empty and there was nothing to zoom
+          // out to but blank.
+          const to=allData.to||allData.now||from+1;
           if(live){ cursorAt=to; cursorSet=true; }
           else if(!cursorSet){ cursorAt=to; cursorSet=true; }
           cursorAt=Math.max(from,Math.min(to,cursorAt));
           const cursor=cursorAt;
           const windowMs=Math.max(1,(to-from)*MARKER_WINDOW);
-          $('t-at').textContent=live?'live'
-            :fmtAgo(cursor)+(cursor>=to-1000?' (now)':'');
+          // Live, the cursor sits on the newest thing there is — which on a
+          // quiet server is not now, and saying so is better than implying it.
+          const stale=(allData.now||0)-to;
+          $('t-at').textContent=live
+            ? (stale>120000?'live · nothing since '+fmtAgo(to):'live')
+            : fmtAgo(cursor)+(cursor>=to-1000?' (latest)':'');
 
           const inDim=p=>p.dim===allDim;
           const mine=a=>!focusPlayer || a.player===focusPlayer;
@@ -1780,7 +1825,7 @@ final class WebPage {
           const side=$('t-side'), layout=$('t-layout');
           const wide=layout ? layout.clientWidth>=900 : false;
           const sidebar=wide && mapOpts.overlays;
-          if(layout) layout.className='maplayout'+(sidebar?' side':'');
+          if(layout) layout.className='maplayout'+(sidebar?' side':'')+(fullMap?' fullmap':'');
           if(side) side.style.display=sidebar?'':'none';
           // With a panel beside the map, dead centre is not the middle of what
           // you can see. Nudged left so the interesting half is not under it.
@@ -1795,11 +1840,21 @@ final class WebPage {
           // chunk that was not loaded when it was taken — used to come out as
           // flat black squares scattered through the terrain, which read as
           // holes in the world rather than as gaps in the record.
+          // Drawn far past the viewBox on purpose. The SVG is letterboxed to
+          // keep the map square-on, and content is not clipped to the viewBox
+          // — only to the viewport — so anything sized to the viewBox left
+          // bare strips down each side. The ground picture reached into them
+          // and the darkening rect did not, which is exactly the bright band
+          // on either edge. Now the hatch fills them and everything that is
+          // part of the map is clipped to the map.
           const backing='<defs><pattern id="unknown" width="12" height="12" '+
             'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'+
             '<rect width="12" height="12" fill="#12161d"/>'+
-            '<rect width="6" height="12" fill="#161b23"/></pattern></defs>'+
-            '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="url(#unknown)"/>';
+            '<rect width="6" height="12" fill="#161b23"/></pattern>'+
+            '<clipPath id="mapclip"><rect x="0" y="0" width="'+W+'" height="'+H+
+            '"/></clipPath></defs>'+
+            '<rect x="'+(-2*W)+'" y="'+(-2*H)+'" width="'+(5*W)+'" height="'+(5*H)+
+            '" fill="url(#unknown)"/>';
           // Only where there is no picture. Over terrain a grid is four lines
           // that mean nothing crossing something that does.
           const grid=[];
@@ -1925,13 +1980,16 @@ final class WebPage {
           box.innerHTML='<div class="mapwrap">'+
             '<svg id="t-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
             'role="img" aria-label="Where everyone was and what they did">'+
-            backing+groundImage+grid.join('')+lines+dots+heads.join('')+'</svg>'+
+            backing+'<g clip-path="url(#mapclip)">'+
+            groundImage+grid.join('')+lines+dots+heads.join('')+'</g></svg>'+
             '<div class="maptip" id="t-tip"></div>'+
             (mapOpts.overlays?'<div class="onlinebar" id="t-online"></div>':'')+
             '<div class="mapbtns">'+
               '<button id="t-in" title="Zoom in">+</button>'+
               '<button id="t-out" title="Zoom out">−</button>'+
               '<button id="t-home" title="Fit everything in view">⌂</button>'+
+              '<button id="t-full" title="'+(fullMap?'Leave fullscreen (Esc)':'Fullscreen')+
+              '">'+(fullMap?'⤡':'⤢')+'</button>'+
               '<button id="t-cog" title="How the map looks">'+ICON.cog+'</button>'+
             '</div>'+
             (optsOpen?mapOptionsHtml():'')+
@@ -1947,6 +2005,7 @@ final class WebPage {
           wireClusters(box,groups);
           wireMapOptions();
           wireDims();
+          drawCluster();
         }
 
         /**
@@ -2056,42 +2115,80 @@ final class WebPage {
           return [...by.values()].sort((p,q)=>q.n-p.n||q.at-p.at);
         }
 
+        /**
+         * The box that is currently open, in world coordinates.
+         *
+         * <p>Held here rather than as a DOM node because every repaint throws
+         * the map away and builds it again — playback frames, live refreshes,
+         * a pan — so a panel that only existed in the DOM was gone before it
+         * could be read. Keeping where it is in blocks also means it stays on
+         * its marks while you zoom.
+         */
+        let clusterAt=null;
+
         function closeCluster(){
+          clusterAt=null;
           const box=$('t-cluster'); if(box) box.remove();
         }
 
         function wireClusters(box,groups){
           box.querySelectorAll('.tcl').forEach(el=>{
-            el.onclick=ev=>{
-              ev.stopPropagation();
+            const open=ev=>{
+              ev.preventDefault(); ev.stopPropagation();
               const g=groups[+el.getAttribute('data-i')];
-              if(g) showCluster(box,g);
+              if(!g) return;
+              let x=0,z=0;
+              for(const a of g.items){ x+=a.x; z+=a.z; }
+              clusterAt={items:g.items, x:x/g.items.length, z:z/g.items.length};
+              drawCluster();
             };
+            // Both, because a mark is small and a click that moves a pixel
+            // between down and up is a click the browser will not report.
+            el.addEventListener('pointerup',open);
+            el.addEventListener('click',open);
           });
           const svg=$('t-svg');
-          if(svg) svg.addEventListener('pointerdown',closeCluster,{once:true});
+          if(svg && !svg.almCloses){
+            svg.almCloses=true;
+            svg.addEventListener('pointerdown',e=>{
+              if(!e.target.closest('.tcl')) closeCluster();
+            });
+          }
         }
 
-        function showCluster(box,g){
-          closeCluster();
-          const svg=$('t-svg'); if(!svg) return;
-          // Into the wrapper, which is the positioned ancestor. Hung off the
-          // outer box instead, an absolutely-positioned panel resolves against
-          // whatever further up the page happens to be positioned — which put
-          // it over the section heading rather than over the mark.
-          const wrap=box.querySelector('.mapwrap')||box;
+        /**
+         * What is inside the open box, drawn where its marks are.
+         *
+         * <p>Called at the end of every paint, so it follows the map rather
+         * than being orphaned by it.
+         */
+        function drawCluster(){
+          const old=$('t-cluster'); if(old) old.remove();
+          if(!clusterAt) return;
+          const box=$('t-map'), svg=$('t-svg'); if(!box||!svg) return;
+          const wrap=box.querySelector('.mapwrap'); if(!wrap) return;
           const r=svg.getBoundingClientRect(), b=wrap.getBoundingClientRect();
           // The SVG letterboxes inside its box; undo that or the panel lands
-          // somewhere near the mark rather than on it.
+          // somewhere near the marks rather than on them.
           const scale=Math.min(r.width/proj.W,r.height/proj.H);
+          if(!scale) return;
           const ox=(r.width-proj.W*scale)/2, oy=(r.height-proj.H*scale)/2;
+          const gx=((clusterAt.x-view.cx)/proj.span)*proj.W+proj.anchorX;
+          const gz=((clusterAt.z-view.cz)/proj.span)*proj.W+proj.H/2;
+
           const el=document.createElement('div');
           el.className='clusterbox';
           el.id='t-cluster';
-          const rows=clusterList(g.items);
+          const rows=clusterList(clusterAt.items);
           let total=0;
           for(const row of rows) total+=row.n;
-          el.innerHTML='<h4>'+total+' here · '+esc(g.items[0].dim)+'</h4>';
+          const head=document.createElement('h4');
+          head.textContent=total+' here · '+clusterAt.items[0].dim;
+          const shut=document.createElement('button');
+          shut.className='shut'; shut.textContent='×'; shut.title='Close';
+          shut.onclick=ev=>{ ev.stopPropagation(); closeCluster(); };
+          head.appendChild(shut);
+          el.appendChild(head);
           for(const row of rows){
             const a=row.a;
             const line=document.createElement('div');
@@ -2100,17 +2197,15 @@ final class WebPage {
               '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+esc(a.action)+
               '</span>'+(row.n>1?'<span class="xn">×'+row.n+'</span>':'')+
               (a.detail?'<span class="dt">'+esc(a.detail)+'</span>':'')+
-              '<span class="tm" style="margin-left:auto;color:var(--mute)">'+
-              esc(fmtAgo(row.at).replace(' ago',''))+'</span>';
-            line.style.cursor='pointer';
-            line.onclick=()=>{ cursorAt=row.at; cursorSet=true; live=false; stopPlay();
-              closeCluster(); paintAll(); };
+              '<span class="tm">'+esc(fmtAgo(row.at).replace(' ago',''))+'</span>';
+            line.onclick=ev=>{ ev.stopPropagation();
+              cursorAt=row.at; cursorSet=true; live=false; stopPlay(); paintAll(); };
             el.appendChild(line);
           }
           wrap.appendChild(el);
           // Kept inside the map: a panel half off the right-hand edge is a
           // panel you cannot read.
-          const px=r.left-b.left+ox+g.x*scale, py=r.top-b.top+oy+g.y*scale;
+          const px=r.left-b.left+ox+gx*scale, py=r.top-b.top+oy+gz*scale;
           const wide=el.offsetWidth||300, high=el.offsetHeight||200;
           el.style.left=Math.max(6,Math.min(wrap.clientWidth-wide-6,px+14))+'px';
           el.style.top=Math.max(6,Math.min(wrap.clientHeight-high-6,py-14))+'px';
@@ -2153,6 +2248,11 @@ final class WebPage {
             (focusPlayer?' · showing only '+esc(focusPlayer):'')+
             (shot?' · ground from '+fmtAgo(shot.at)
                  :' · no picture of the ground yet (map-snapshot-seconds)')+
+            (shot?(shotTextures==='none'
+              ? ' · <span title="Drop any resource pack into resourcepacks/ or '+
+                'config/almin/textures.zip and the ground is drawn in the game\u2019s own '+
+                'block textures instead">map palette</span>'
+              : ' · textures from '+esc(shotTextures)):'')+
             '</span>';
           $('t-legend').querySelectorAll('.pill-who').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
@@ -2437,7 +2537,9 @@ final class WebPage {
           let dragging=false, lastX=0, lastY=0;
           host.addEventListener('pointerdown',e=>{
             if(e.target.closest('.tmk')||e.target.closest('.thead')) return;
-            if(e.target.closest('.mapbtns')||e.target.closest('.onlinebar')) return;
+            if(e.target.closest('.tcl')||e.target.closest('.clusterbox')) return;
+            if(e.target.closest('.mapbtns')||e.target.closest('.mapopts')) return;
+            if(e.target.closest('.onlinebar')) return;
             const p=at(e); if(!p) return;
             dragging=true; lastX=p.x; lastY=p.y;
             const svg=host.querySelector('svg');
@@ -2485,10 +2587,39 @@ final class WebPage {
           if(outb) outb.onclick=()=>zoom(1.5);
           if(home) home.onclick=()=>{ view.set=false; paintAll(); };
           if(cog) cog.onclick=()=>{ optsOpen=!optsOpen; paintAll(); };
+          const full=$('t-full');
+          if(full) full.onclick=()=>setFull(!fullMap);
           const svg=$('t-svg');
           if(svg) svg.querySelectorAll('.thead').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
               focusPlayer=focusPlayer===n?'':n; paintAll(); };
+          });
+        }
+
+        /**
+         * Hands the window to the map, or takes it back.
+         *
+         * <p>The layout does not change — the timeline and the side list are
+         * the same elements in the same order — so nothing has to be rebuilt
+         * or rewired. They are simply positioned over the map instead of
+         * under and beside it, which is also why leaving fullscreen cannot
+         * lose the frame you were looking at.
+         */
+        function setFull(on){
+          if(fullMap===on) return;
+          fullMap=on;
+          document.body.style.overflow=on?'hidden':'';
+          closeCluster();
+          paintAll();
+        }
+        // Bound once, on the page, because in fullscreen the thing you want to
+        // press Escape on is the whole window.
+        if(!window.almEsc){
+          window.almEsc=true;
+          document.addEventListener('keydown',e=>{
+            if(e.key!=='Escape') return;
+            if(fullMap){ e.preventDefault(); setFull(false); }
+            else if(clusterAt) closeCluster();
           });
         }
 

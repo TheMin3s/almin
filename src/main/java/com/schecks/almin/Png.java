@@ -172,7 +172,13 @@ public final class Png {
                     if ((data[body + 12] & 0xFF) != 0) throw new IOException("interlaced PNG");
                     if (width <= 0 || height <= 0) throw new IOException("empty PNG");
                     if ((long) width * height > MAX_PIXELS) throw new IOException("PNG too large");
-                    if (depth != 8) throw new IOException("only 8-bit PNGs");
+                    // 1, 2 and 4 bits are packed several samples to a byte,
+                    // and Minecraft's own block textures use all of them —
+                    // sand and dirt are 4-bit palettes, snow is 2-bit. 16 is
+                    // legal PNG and used by nothing here.
+                    if (depth != 1 && depth != 2 && depth != 4 && depth != 8) {
+                        throw new IOException("PNG bit depth " + depth);
+                    }
                 }
                 case "PLTE" -> palette = java.util.Arrays.copyOfRange(data, body, body + length);
                 case "tRNS" -> transparency = java.util.Arrays.copyOfRange(data, body, body + length);
@@ -195,9 +201,20 @@ public final class Png {
             default -> throw new IOException("colour type " + colour);
         };
         if (colour == 3 && palette == null) throw new IOException("palette PNG with no palette");
+        if (depth != 8 && colour != 0 && colour != 3) {
+            // Sub-byte depths are only defined for greyscale and palette.
+            throw new IOException("bit depth " + depth + " with colour type " + colour);
+        }
 
-        byte[] raw = inflate(idat.toByteArray(), height * (1 + width * channels));
-        int stride = width * channels;
+        // Bytes per row, rounded up: at four bits a sample, two samples share
+        // a byte and an odd width leaves half of the last one unused.
+        int stride = (width * channels * depth + 7) / 8;
+        // What a filter means by "the pixel to the left". Below eight bits
+        // that is one byte, because filtering happens on bytes and knows
+        // nothing about how the samples inside them are packed.
+        int bpp = Math.max(1, channels * depth / 8);
+
+        byte[] raw = inflate(idat.toByteArray(), height * (1 + stride));
         if (raw.length < height * (long) (stride + 1)) throw new IOException("short image data");
 
         // Unfilter in place, row by row: every filter is defined against the
@@ -210,9 +227,9 @@ public final class Png {
             int up = dst - stride;
             for (int i = 0; i < stride; i++) {
                 int x = raw[src + i] & 0xFF;
-                int a = i >= channels ? pixels[dst + i - channels] & 0xFF : 0;
+                int a = i >= bpp ? pixels[dst + i - bpp] & 0xFF : 0;
                 int b = y > 0 ? pixels[up + i] & 0xFF : 0;
-                int c = (y > 0 && i >= channels) ? pixels[up + i - channels] & 0xFF : 0;
+                int c = (y > 0 && i >= bpp) ? pixels[up + i - bpp] & 0xFF : 0;
                 int value = switch (filter) {
                     case 0 -> x;
                     case 1 -> x + a;
@@ -226,6 +243,23 @@ public final class Png {
         }
 
         int[] argb = new int[width * height];
+        if (depth != 8) {
+            // One sample per pixel, packed high bits first, and greyscale
+            // samples are scaled up to a full byte.
+            int mask = (1 << depth) - 1;
+            int max = mask;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int bit = x * depth;
+                    int b = pixels[y * stride + (bit >> 3)] & 0xFF;
+                    int sample = (b >> (8 - depth - (bit & 7))) & mask;
+                    argb[y * width + x] = colour == 3
+                        ? fromPalette(palette, transparency, sample)
+                        : grey(sample * 255 / max, 255);
+                }
+            }
+            return new Image(width, height, argb);
+        }
         for (int i = 0, p = 0; i < argb.length; i++, p += channels) {
             argb[i] = switch (colour) {
                 case 0 -> grey(pixels[p] & 0xFF, 255);

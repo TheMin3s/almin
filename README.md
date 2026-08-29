@@ -449,7 +449,15 @@ separate again, because the grouping is by distance on screen rather than by
 distance in the world. Clicking a box lists what is inside it, and identical
 things fold with a count — fifty rows of "broke Stone" is one line saying
 `break ×50`, which is both shorter and more informative than fifty lines.
-Clicking one of those lines takes the timeline to it.
+Clicking one of those lines takes the timeline to it, and the box stays put
+through a repaint, a playback frame or a live refresh, following its marks as
+you pan and zoom.
+
+**Fullscreen** hands the whole window to the map, with the timeline, the
+controls, the side list and the legend floating over it instead of sitting
+around it. They are the same elements in the same order — only positioned
+differently — so going in and out cannot lose where you were looking. `Esc`
+comes back.
 
 #### How it looks
 
@@ -467,6 +475,13 @@ Two strips. The thin one on top is the whole period with the visible slice
 marked; the one below is that slice, drawn large. Scroll it to zoom about the
 pointer, drag it to scrub, and drag the top strip to move the window. **Back to
 live** puts the whole period back in view.
+
+The period is exactly what is saved, end to end, so zooming out stops at the
+oldest and newest rows there are. It used to run to the clock instead, which on
+a server nobody had touched since yesterday meant most of the timeline was
+empty and there was nothing to zoom out to but blank. Live still means the
+newest thing there is, and says `live · nothing since 3h ago` when that is
+older than a couple of minutes, rather than implying the map is showing now.
 
 **It opens live.** "What is happening" is the question you arrive with;
 "what happened at four o'clock" is the one you come to second. So the cursor
@@ -510,12 +525,43 @@ Vanilla gives every block one flat colour out of a small palette and picks
 between three brightnesses, which is why a vanilla map reads as blotches: a
 beach and a desert are the same yellow, and a hillside only shows at all if it
 happens to face north. Here relief comes from the slope in both directions, so
-a hill is a hill whichever way it faces; water is darkened and blued by how
-deep it is, so a coastline and a shelf are visible; and every block carries a
-fixed grain, so sand looks grainy, planks look like planks and grass is patchy
-rather than a single green. The grain is a function of the position, so the
-same column is the same pixel in every picture and nothing crawls between
-them.
+a hill is a hill whichever way it faces; and water is darkened and blued by how
+deep it is, so a coastline and a shelf are visible.
+
+**And where it can, it uses the game's own textures.** At one pixel per block
+there is exactly enough room for one texel, so a block takes its texture's
+colour nudged by the texel that falls at that position — which means a sand
+field comes out grainy the way sand actually is, a floor of oak planks comes
+out striped the way planks actually are, and sandstone stops being the same
+yellow as sand. It tiles the real 16×16 file across the world, so it is the
+game's grain rather than a rule somebody wrote about sand.
+
+Textures do not come from the server: a dedicated server jar ships none,
+because nothing on a server ever draws a block. So Almin looks for them, in
+order, in `config/almin/textures.zip`, `config/almin/textures/`, any
+`resourcepacks/*.zip` or unpacked pack folder, and finally its own classpath
+(which has them in a development run). **Any resource pack will do** — drop one
+into `resourcepacks/` and the next snapshot is textured. The legend under the
+map says which it is using, or `map palette` if it found none, and finding none
+is not an error: the map falls back to the palette with an invented grain, and
+looks the way it did before.
+
+A texture is only used where it is a surface: a cross-shaped plant, a pane of
+glass or a torch is mostly empty, and averaging one into a single pixel gives a
+colour nothing in the world is. Those keep the map palette. Greyscale textures
+— grass, leaves, water — are tint masks the game colours by biome, and nothing
+here knows the biome; the texture supplies the pattern and the palette supplies
+the green.
+
+Reading a texture never happens on a game tick: a block Almin has not seen
+before takes its palette colour for that picture and is loaded on a daemon
+thread for the next one.
+
+Where the top of a column has no colour of its own — glass, a barrier, a light
+block, scaffolding — the sampler looks down past it for a block that does,
+rather than reporting a hole. A glass roof used to punch one straight through
+the map, and the ground was there all along; it just was not the block being
+asked.
 
 Only chunks the server already has loaded are drawn; anything else stays
 transparent. Generating terrain in order to photograph it would be an enormous

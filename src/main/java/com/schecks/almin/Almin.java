@@ -44,6 +44,7 @@ public class Almin implements ModInitializer {
             ActivityLog.init(server);
             WorldSnapshots.init(server);
             AiInsights.init(server.getServerDirectory());
+            BlockTextures.init(server);
         });
         // Boot-time update check — runs after config is loaded. With auto-update
         // enabled (the default) it downloads, installs and restarts into a newer
@@ -75,6 +76,7 @@ public class Almin implements ModInitializer {
             ActivityLog.close();
             WorldSnapshots.close();
             AiInsights.close();
+            BlockTextures.close();
             // Last, and deliberately so: when the stop was a restart, this
             // starts the server again and then ends this process. Anything
             // that still has a file to close has to come above it, because

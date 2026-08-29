@@ -336,10 +336,23 @@ public final class WorldSnapshots {
     private static int column(ServerLevel level, LevelChunk chunk,
                               BlockPos.MutableBlockPos pos, int wx, int wz, int scale) {
         int surface = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, wx & 15, wz & 15);
-        pos.set(wx, surface - 1, wz);
-        BlockState state = chunk.getBlockState(pos);
-        MapColor color = state.getMapColor(level, pos);
-        if (color == null || color == MapColor.NONE) return 0;
+
+        // Down past anything with no colour of its own. A glass roof, a
+        // barrier, a light block or a piece of scaffolding is the top of the
+        // heightmap and answers NONE, and taking that as the answer punched
+        // holes in the map wherever anyone had built with glass — the ground
+        // was there, it just was not the block being asked.
+        BlockState state = null;
+        MapColor color = null;
+        int top = surface;
+        for (int drop = 0; drop < SEE_THROUGH && top > level.getMinY(); drop++, top--) {
+            pos.set(wx, top - 1, wz);
+            state = chunk.getBlockState(pos);
+            color = state.getMapColor(level, pos);
+            if (color != null && color != MapColor.NONE) break;
+            color = null;
+        }
+        if (color == null) return 0;
 
         // Anything sitting on top of solid ground — water, mostly. The depth
         // is what turns a flat blue sheet into a coastline.
@@ -354,8 +367,18 @@ public final class WorldSnapshots {
         int north = groundAt(level, chunk, wx, wz - scale, wet);
         int west = groundAt(level, chunk, wx - scale, wz, wet);
 
-        return shadeColumn(color.col, wx, wz, here, north, west, depth, family(color));
+        int base = BlockTextures.colourOf(state, color.col, wx, wz);
+        return shadeColumn(base, wx, wz, here, north, west, depth,
+            BlockTextures.textured() ? PLAIN : family(color));
     }
+
+    /**
+     * How far down to look for a block that has a colour.
+     *
+     * <p>Enough to see through a glass roof and the room under it, not enough
+     * to turn a deep shaft into a floor sample.
+     */
+    private static final int SEE_THROUGH = 24;
 
     // ---------- the arithmetic, with no world in it ----------
 
