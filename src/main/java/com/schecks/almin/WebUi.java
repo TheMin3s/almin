@@ -316,6 +316,7 @@ public final class WebUi {
         http.createContext("/api/file", guard("/api/file", ui::handleFile));
         http.createContext("/api/file/delete", guard("/api/file/delete", ui::handleFileDelete));
         http.createContext("/api/file/rename", guard("/api/file/rename", ui::handleFileRename));
+        http.createContext("/api/file/mkdir", guard("/api/file/mkdir", ui::handleFileMkdir));
         http.createContext("/api/server", guard("/api/server", ui::handleServerControl));
         http.createContext("/api/mods", guard("/api/mods", ui::handleMods));
         http.createContext("/api/mods/save", guard("/api/mods/save", ui::handleModSave));
@@ -324,6 +325,7 @@ public final class WebUi {
         http.createContext("/api/mods/upload", guard("/api/mods/upload", ui::handleModUpload));
         http.createContext("/api/mods/files/delete", guard("/api/mods/files/delete", ui::handleModFileDelete));
         http.createContext("/api/mods/modrinth", guard("/api/mods/modrinth", ui::handleModrinth));
+        http.createContext("/api/mods/icon", guard("/api/mods/icon", ui::handleModIcon));
         http.createContext("/api/config", guard("/api/config", ui::handleConfig));
         http.createContext("/api/config/reload", guard("/api/config/reload", ui::handleConfigReload));
         http.createContext("/api/password", guard("/api/password", ui::handlePassword));
@@ -337,6 +339,7 @@ public final class WebUi {
         http.createContext("/api/activity", guard("/api/activity", ui::handleActivity));
         http.createContext("/api/track", guard("/api/track", ui::handleTrack));
         http.createContext("/api/map", guard("/api/map", ui::handleMap));
+        http.createContext("/api/head", guard("/api/head", ui::handleHead));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -815,6 +818,10 @@ public final class WebUi {
                 o.addProperty("startCommand", plan.ok() ? plan.display() : "");
                 if (!plan.ok()) o.addProperty("startProblem", plan.problem());
                 if (!relaunchError.isEmpty()) o.addProperty("relaunchError", relaunchError);
+                // Whether to ask for faces at all. Without this the panel would
+                // request one per row and take a 404 each time on a server that
+                // has them turned off.
+                o.addProperty("heads", cfg.webPlayerHeads);
             }
             json(ex, 200, o.toString());
         } catch (Throwable t) {
@@ -1084,9 +1091,14 @@ public final class WebUi {
                 je.addProperty("name", e.name());
                 je.addProperty("directory", e.directory());
                 je.addProperty("size", e.size());
+                je.addProperty("modified", e.modified());
+                je.addProperty("items", e.items());
+                je.addProperty("writable", e.writable());
                 arr.add(je);
             }
             o.add("entries", arr);
+            o.addProperty("writable", listing.writable());
+            o.addProperty("roots", AlminConfig.get().dirWritableRoots);
             json(ex, 200, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -1165,6 +1177,31 @@ public final class WebUi {
         }
     }
 
+    /**
+     * Makes one folder inside the folder being looked at.
+     *
+     * <p>The write rules are the same as everywhere else and live in
+     * {@link WebFiles#mkdir} — this is only the transport.
+     */
+    private void handleFileMkdir(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject body = readBody(ex);
+            String parent = body.has("path") ? body.get("path").getAsString() : "";
+            String name = body.has("name") ? body.get("name").getAsString().trim() : "";
+            WebFiles.Result r = onServer(() -> WebFiles.mkdir(server, parent, name),
+                WebFiles.Result.fail("The server didn't answer in time."));
+            if (r.ok()) AlminLog.info("[almin] web created folder {}/{}", parent, name);
+            json(ex, r.ok() ? 200 : 400, result(r));
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
     // ---------- routes: advertised mods ----------
 
     /** The current offer list plus the three settings that govern it. */
@@ -1183,12 +1220,29 @@ public final class WebUi {
                 j.addProperty("sha256", m.sha256());
                 j.addProperty("required", m.required());
                 j.addProperty("file", m.file() == null ? "" : m.file());
+                j.addProperty("kind", m.kind());
+                j.addProperty("source", m.sourceOrEmpty());
+                j.addProperty("page", m.pageOrEmpty());
+                j.addProperty("icon", ModIcons.exists(m));
                 arr.add(j);
             }
             o.add("mods", arr);
             o.addProperty("advertise", cfg.modsAdvertise);
             o.addProperty("denyKicks", cfg.modsDenyKicks);
             o.addProperty("requireClientMod", cfg.requireClientMod);
+            // Jars sitting in modfiles/ that nothing advertises. Normally
+            // empty: an upload now makes its own advertisement. What lands
+            // here is a leftover from before that, or from a removed offer.
+            JsonArray unused = new JsonArray();
+            java.util.Set<String> claimed = new java.util.HashSet<>();
+            for (ModOffers.AdvertisedMod m : ModOffers.list()) {
+                if (m.serverHosted()) claimed.add(m.file());
+            }
+            for (String f : ModOffers.availableFiles()) {
+                if (!claimed.contains(f)) unused.add(f);
+            }
+            o.add("unusedFiles", unused);
+            o.addProperty("maxOffers", ModOffers.MAX_OFFERS);
             json(ex, 200, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -1217,7 +1271,9 @@ public final class WebUi {
                 url,
                 b.has("sha256") ? b.get("sha256").getAsString().trim() : "",
                 b.has("required") && b.get("required").getAsBoolean(),
-                b.has("file") ? b.get("file").getAsString().trim() : "");
+                b.has("file") ? b.get("file").getAsString().trim() : "",
+                pageFor(b, id),
+                sourceFor(b, id, file));
             // If the server holds the jar, believe the jar about its own id.
             mod = ModOffers.correctFromJar(mod);
             ModOffers.AddResult r = ModOffers.add(mod);
@@ -1324,10 +1380,36 @@ public final class WebUi {
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
             tmp = null;
             AlminLog.info("[almin] web uploaded mod file {} ({} bytes)", name, written);
+
+            // An uploaded jar advertises itself. Before this, uploading put a
+            // file in a folder and left a second, separate step to do — which
+            // is why the panel had two lists that were nearly the same thing.
+            // The jar already says what it is, so there is nothing to ask.
             JsonObject o = new JsonObject();
             o.addProperty("ok", true);
             o.addProperty("name", name);
             o.addProperty("bytes", written);
+            ModJars.Meta meta = ModJars.read(target);
+            if (meta.ok()) {
+                ModOffers.AdvertisedMod was = existingOffer(meta.modId());
+                ModOffers.AdvertisedMod mod = new ModOffers.AdvertisedMod(
+                    meta.modId(), meta.name(), meta.version(),
+                    "", sha256Of(target),
+                    was != null && was.required(),
+                    name,
+                    was == null ? "" : was.pageOrEmpty(),
+                    was == null ? "upload" : was.sourceOrEmpty());
+                ModOffers.AddResult r = ModOffers.add(mod);
+                o.addProperty("advertised", r == ModOffers.AddResult.OK);
+                o.addProperty("modId", mod.modId());
+                o.addProperty("modName", mod.name());
+                if (r != ModOffers.AddResult.OK) o.addProperty("listProblem", r.toString());
+            } else {
+                // looksLikeValidMod already passed, so this is a jar with a
+                // fabric.mod.json that has no id in it. Rare, and worth saying.
+                o.addProperty("advertised", false);
+                o.addProperty("listProblem", "NO_ID");
+            }
             json(ex, 200, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -1359,6 +1441,56 @@ public final class WebUi {
         } finally {
             ex.close();
         }
+    }
+
+    /**
+     * The picture for one advertised mod.
+     *
+     * <p>Served from this origin rather than linked to Modrinth's CDN, so that
+     * opening the Mods tab does not make the admin's browser announce to a
+     * third party what this server runs — and so the tab still has pictures on
+     * a machine whose browser cannot reach the internet.
+     */
+    private void handleModIcon(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            String id = queryParam(ex, "id");
+            ModOffers.AdvertisedMod mod = ModOffers.list().stream()
+                .filter(m -> m.modId().equalsIgnoreCase(id))
+                .findFirst().orElse(null);
+            ModIcons.Icon icon = mod == null ? ModIcons.cached(id) : ModIcons.forMod(mod);
+            if (icon == null) { json(ex, 404, err("No icon for " + id + ".")); return; }
+            image(ex, icon.contentType(), icon.bytes());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** The project page a saved mod should link to, preserving what it had. */
+    private static String pageFor(JsonObject b, String id) {
+        if (b.has("page")) return b.get("page").getAsString().trim();
+        ModOffers.AdvertisedMod existing = existingOffer(id);
+        return existing == null ? "" : existing.pageOrEmpty();
+    }
+
+    /**
+     * How this mod was added. An edit through the panel must not relabel a
+     * Modrinth mod as hand-typed just because the form posted every field, so
+     * an existing offer keeps whatever it already said.
+     */
+    private static String sourceFor(JsonObject b, String id, String file) {
+        if (b.has("source")) return b.get("source").getAsString().trim();
+        ModOffers.AdvertisedMod existing = existingOffer(id);
+        if (existing != null && !existing.sourceOrEmpty().isEmpty()) return existing.sourceOrEmpty();
+        return file.isEmpty() ? "link" : "upload";
+    }
+
+    private static ModOffers.AdvertisedMod existingOffer(String id) {
+        return ModOffers.list().stream()
+            .filter(m -> m.modId().equalsIgnoreCase(id))
+            .findFirst().orElse(null);
     }
 
     // ---------- routes: settings ----------
@@ -1697,6 +1829,8 @@ public final class WebUi {
                     o.addProperty("title", h.title());
                     o.addProperty("description", h.description());
                     o.addProperty("downloads", h.downloads());
+                    o.addProperty("icon", h.iconUrl());
+                    o.addProperty("page", "https://modrinth.com/mod/" + h.slug());
                     hits.add(o);
                 }
                 JsonObject out = new JsonObject();
@@ -1738,8 +1872,13 @@ public final class WebUi {
                 meta.ok() ? meta.modId() : found.slug(),
                 meta.ok() && !meta.name().isBlank() ? meta.name() : found.title(),
                 meta.ok() && !meta.version().isBlank() ? meta.version() : found.version(),
-                "", sha256Of(target), required, found.filename());
+                "", sha256Of(target), required, found.filename(),
+                found.page(), "modrinth");
             ModOffers.AddResult r = ModOffers.add(mod);
+            // The project's picture, kept locally. Best effort: a mod without
+            // one is a blank square, and failing the add over that would be
+            // the wrong trade. Already off the server thread.
+            if (r == ModOffers.AddResult.OK) ModIcons.fetch(mod.modId(), found.iconUrl());
 
             JsonObject out = new JsonObject();
             out.addProperty("ok", r == ModOffers.AddResult.OK);
@@ -1861,6 +2000,7 @@ public final class WebUi {
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
+            o.addProperty("uuid", e.uuid());
             // The mask is a live lookup, not part of the row: masks change, and
             // the log is a record of who did something, not of what they were
             // called at the time.
@@ -2078,6 +2218,59 @@ public final class WebUi {
             fault(ex, t);
         } finally {
             ex.close();
+        }
+    }
+
+    /**
+     * A player's face, as a small PNG.
+     *
+     * <p>Behind the login: which UUIDs this server knows about is not public
+     * information, and an open endpoint would be a way of asking.
+     *
+     * <p>The one thing that has to happen on the server thread is reading a
+     * connected player's profile, which is where the skin already is for
+     * anyone online. Everything after that — Mojang, the download, the
+     * decode — happens here, on a web thread, because it blocks.
+     */
+    private void handleHead(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!AlminConfig.get().webPlayerHeads) {
+                json(ex, 404, err("Player faces are turned off (web-player-heads)."));
+                return;
+            }
+            java.util.UUID id = Heads.parseUuid(queryParam(ex, "uuid"));
+            if (id == null) { json(ex, 400, err("Not a UUID.")); return; }
+            String name = queryParam(ex, "name");
+            String texture = serverRunning
+                ? onServer(() -> Heads.textureFromProfile(server, id), "")
+                : "";
+            byte[] png = Heads.head(id, name, texture == null ? "" : texture);
+            if (png == null) { json(ex, 404, err("No skin for that player.")); return; }
+            image(ex, "image/png", png);
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Sends image bytes.
+     *
+     * <p>{@code nosniff} matters more here than anywhere else in the panel:
+     * these bytes came from a jar or from the internet, they are served from
+     * the panel's own origin, and the content type was decided by looking at
+     * the bytes rather than by believing a header.
+     */
+    private static void image(HttpExchange ex, String contentType, byte[] bytes) throws IOException {
+        ex.getResponseHeaders().set("Content-Type", contentType);
+        ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+        ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        ex.getResponseHeaders().set("Content-Security-Policy", "default-src 'none'; sandbox");
+        ex.sendResponseHeaders(200, bytes.length);
+        try (OutputStream out = ex.getResponseBody()) {
+            out.write(bytes);
         }
     }
 

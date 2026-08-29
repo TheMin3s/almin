@@ -160,6 +160,15 @@ public final class AlminConfig {
     public int mapBlocksPerPixel = 2;
     /** Blocks either side of the players the picture covers. */
     public int mapRadius = 192;
+    /**
+     * Show player faces in the panel's player and activity lists.
+     *
+     * <p>On by default. A face for someone who is connected costs nothing —
+     * the skin is already in their profile. A face for someone who has left,
+     * or anyone at all on an offline-mode server, means asking Mojang, so
+     * this is also the switch for "this server does not talk to Mojang".
+     */
+    public boolean webPlayerHeads = true;
 
     public enum Type { INT, BOOL, TEXT }
 
@@ -284,7 +293,9 @@ public final class AlminConfig {
         intKey("map-blocks-per-pixel", "Detail of those pictures; 1 is finest and costs the most", 1, 8,
             c -> c.mapBlocksPerPixel, (c, v) -> c.mapBlocksPerPixel = (Integer) v),
         intKey("map-radius", "Blocks either side of the players each picture covers", 32, 512,
-            c -> c.mapRadius, (c, v) -> c.mapRadius = (Integer) v)
+            c -> c.mapRadius, (c, v) -> c.mapRadius = (Integer) v),
+        boolKey("web-player-heads", "Show player faces in the panel (looks skins up from Mojang for players who are not online)",
+            c -> c.webPlayerHeads, (c, v) -> c.webPlayerHeads = (Boolean) v)
     );
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */

@@ -67,12 +67,32 @@ public final class ModOffers {
     /**
      * One advertised mod. {@code modId} is the Fabric mod id, used by the client
      * to skip anything already installed. {@code sha256} may be empty.
+     *
+     * <p>{@code page} and {@code source} are for the panel and nothing else:
+     * where a person can read about this mod, and which of the three ways of
+     * adding one produced it. Neither is sent to a client — the offer packet is
+     * unchanged, so a server and a client on different versions still agree.
      */
     public record AdvertisedMod(String modId, String name, String version,
                                 String url, String sha256, boolean required,
-                                String file) {
+                                String file, String page, String source) {
+        /** The shape the rest of the mod has always used; adds no provenance. */
+        public AdvertisedMod(String modId, String name, String version,
+                             String url, String sha256, boolean required, String file) {
+            this(modId, name, version, url, sha256, required, file, "", "");
+        }
+
         /** True when the jar is hosted by this server rather than fetched from a URL. */
         public boolean serverHosted() { return file != null && !file.isBlank(); }
+
+        /** "jar" or "link" — how a player actually gets this mod. */
+        public String kind() { return serverHosted() ? "jar" : "link"; }
+
+        /** Never null, so callers can compare without a guard. */
+        public String sourceOrEmpty() { return source == null ? "" : source; }
+
+        /** Never null, so callers can compare without a guard. */
+        public String pageOrEmpty() { return page == null ? "" : page; }
     }
 
     /** Load (or create) mods.json. Call once at server start. */
@@ -85,6 +105,7 @@ public final class ModOffers {
         } catch (IOException e) {
             AlminLog.warn("[almin] could not create modfiles/ folder: {}", e.getMessage());
         }
+        ModIcons.init(dir);
         if (!Files.exists(path)) writeStub();
         reload();
     }
@@ -166,7 +187,9 @@ public final class ModOffers {
                     url,
                     str(o, "sha256"),
                     o.has("required") && o.get("required").getAsBoolean(),
-                    file));
+                    file,
+                    str(o, "page"),
+                    str(o, "source")));
             }
             return true;
         } catch (Exception e) {
@@ -235,7 +258,8 @@ public final class ModOffers {
                 mod.file(), meta.modId());
         }
         return new AdvertisedMod(meta.modId(), name, version,
-            mod.url(), mod.sha256(), mod.required(), mod.file());
+            mod.url(), mod.sha256(), mod.required(), mod.file(),
+            mod.pageOrEmpty(), mod.sourceOrEmpty());
     }
 
     public static synchronized AddResult add(AdvertisedMod mod) {
@@ -258,6 +282,7 @@ public final class ModOffers {
     public static synchronized boolean remove(String modId) {
         if (path == null || modId == null) return false;
         if (!OFFERS.removeIf(m -> m.modId().equalsIgnoreCase(modId))) return false;
+        ModIcons.forget(modId);
         persist();
         return true;
     }
@@ -269,7 +294,8 @@ public final class ModOffers {
             AdvertisedMod m = OFFERS.get(i);
             if (m.modId().equalsIgnoreCase(modId)) {
                 OFFERS.set(i, new AdvertisedMod(m.modId(), m.name(), m.version(),
-                    m.url(), m.sha256(), required, m.file()));
+                    m.url(), m.sha256(), required, m.file(),
+                    m.pageOrEmpty(), m.sourceOrEmpty()));
                 persist();
                 return true;
             }
@@ -291,6 +317,8 @@ public final class ModOffers {
                 o.addProperty("file", m.file() == null ? "" : m.file());
                 o.addProperty("sha256", m.sha256());
                 o.addProperty("required", m.required());
+                o.addProperty("page", m.pageOrEmpty());
+                o.addProperty("source", m.sourceOrEmpty());
                 arr.add(o);
             }
             JsonObject root = new JsonObject();

@@ -158,11 +158,43 @@ panel — see [Restarting](#restarting). You should not need to set it at all.
 |---|---|
 | Overview | live metrics, TPS trend, the dashboard rows |
 | Console | the server log, tailing, with a command box under it |
-| Files | browse, upload, download, rename, delete, fetch a URL, and an editor that opens when you pick a file |
+| Files | a full-width folder browser — right-click anything for what you can do with it |
 | Activity | a timeline map of everyone, and what players have been doing |
 | Players | who's online, who's been on before, and display-name masks |
-| Mods | the mods advertised to joining players, and the jars behind them |
+| Mods | one list of the mods advertised to joining players, with the icons and settings behind it |
 | Settings | every Almin setting, the admin password, and the update check |
+
+### The file browser
+
+The browser takes the whole page. Each row carries what a folder view is for —
+the kind of file, its size or how many things are in it, and when it last
+changed — and every row says whether Almin may write to it, because writes are
+limited to the configured roots and finding that out by being refused is no way
+to learn it.
+
+**Right-click is the way in.** On a file: edit, download, rename, delete, copy
+its path. On a folder: open, rename, delete. Anything the write rules forbid is
+shown greyed with the reason rather than offered and then refused, and a jar or
+a region file is not offered to a text editor at all.
+
+**Right-clicking anywhere else** — or the **+ New** button — is about the folder
+you are looking at: upload files, download a link straight to the server, a new
+file, a new folder. The editor is an overlay now rather than a permanent second
+column, so it appears when there is something to edit and the browser gets the
+full width the rest of the time.
+
+### Player faces
+
+The **Players** and **Activity** lists show each player's face, cropped out of
+their skin. Someone who is connected costs nothing — the skin is already in
+their profile from the login handshake. Anyone who has left, and everyone on an
+offline-mode server, means asking Mojang; both answers are cached, misses
+included, so a long history is not a long list of requests.
+
+`web-player-heads false` turns the whole thing off: no faces, no requests to
+Mojang, and the lists draw a coloured initial instead. That fallback is also
+what you get for any player whose skin cannot be found, so a cracked server
+without the setting changed simply shows initials.
 
 The header carries **Stop**, **Restart** and **Start** for the Minecraft server
 itself. Stop means stop. **Restart** genuinely restarts: Almin stops the server
@@ -346,6 +378,7 @@ life rather than accumulating: a day by default, from memory and from
 | `activity-combat` | `true` | damage taken, hits landed, deaths |
 | `activity-items` | `true` | item use, entity interaction, containers |
 | `activity-track-seconds` | `5` | position sampling for the map; 0 turns it off |
+| `web-player-heads` | `true` | player faces in the panel's lists; off means Almin never asks Mojang |
 
 Recorded: joins and leaves, chat, commands, blocks placed, blocks broken,
 blocks used, containers opened, item use, entity interaction, hits landed,
@@ -446,6 +479,23 @@ thing immediately, from memory and disk. There is no export.
 A server can suggest mods to joining players. Manage the list with
 `/almin mods` in game, or the web panel's **Mods** tab.
 
+In the panel it is **one list**, whichever way a mod got onto it. Each row has
+the mod's own icon, its name and version, whether the jar is served by this
+server or fetched from a link, and where it came from. **Edit** opens the same
+form for every mod; the **⋯** menu flips required, opens the Modrinth page, or
+stops advertising it. **+ Add mod** offers the three ways in — search Modrinth,
+upload a jar, or advertise a link by hand — and all three land on that one list:
+uploading a jar now advertises it, reading the id out of the file, instead of
+leaving a second step to do. The settings that govern offering mods live behind
+the cog beside it.
+
+Icons come from the jar itself where there is one — Fabric mods name their own
+icon — and otherwise from Modrinth, downloaded once when the mod is added and
+served from your server afterwards. That is deliberate: linking straight to
+Modrinth's CDN would mean every admin who opens the tab tells a third party what
+this server runs, and it would leave the tab blank on a machine whose browser
+cannot reach the internet. A mod with no icon anywhere gets its initial.
+
 ```
 /almin mods                          list what's advertised
 /almin mods files                    list jars this server holds
@@ -490,9 +540,9 @@ same thing, and a mod that `provides` another id answers for it too.
 
 ### Where the jar comes from
 
-**Preferred: host it yourself.** Drop the jar in `config/almin/modfiles/` — or
-upload it in the web panel's Mods tab — then advertise it with
-`/almin mods addfile`. Players download it straight from your server over the
+**Preferred: host it yourself.** Drop the jar in `config/almin/modfiles/` and
+advertise it with `/almin mods addfile` — or upload it in the web panel's Mods
+tab, which does both at once. Players download it straight from your server over the
 game connection they're already on. Nothing needs a public link, no third-party
 host is involved, and the file never has to be reachable from the internet.
 Jars are capped at 32 MB.

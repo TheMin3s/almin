@@ -106,19 +106,10 @@ final class WebPage {
           input,textarea{background:#0b0d11;border:1px solid var(--line);color:var(--ink);border-radius:8px;
                          padding:9px 11px;font:inherit;width:100%;outline:none}
           input:focus,textarea:focus{border-color:var(--brand)}
+          input:disabled,select:disabled,textarea:disabled{opacity:.5;cursor:not-allowed}
           textarea{font:12px/1.5 ui-monospace,Menlo,monospace;min-height:46vh;resize:vertical}
           .term{display:flex;gap:8px;margin-top:12px}
           .term input{font:12px/1.5 ui-monospace,Menlo,monospace}
-          .files{display:grid;grid-template-columns:minmax(250px,1fr) 2fr;gap:14px;margin-top:14px}
-          .flist{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;
-                 max-height:64vh;overflow:auto}
-          .fentry{padding:6px 9px;border-radius:7px;cursor:pointer;display:flex;gap:8px;align-items:center}
-          .fentry:hover{background:var(--card2)}
-          .fentry .sz{margin-left:auto;color:var(--mute);font-size:11px}
-          .dir{color:var(--brand)}
-          .editor{display:flex;flex-direction:column;gap:9px}
-          .editor .bar{display:flex;gap:8px;align-items:center}
-          .editor .bar input{flex:1}
           .msg{min-height:18px;font-size:12px;color:var(--dim)}
           .msg.err{color:#e97070}.msg.ok{color:#57c957}
           .login{max-width:380px;margin:52px auto;background:var(--card);border:1px solid var(--line);
@@ -146,7 +137,8 @@ final class WebPage {
           .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:9px;font-size:12px;color:var(--dim)}
           .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;
                     margin-right:4px;vertical-align:-1px}
-          .arow{display:grid;grid-template-columns:52px 190px 110px 1fr auto;gap:10px;align-items:baseline;
+          .arow{display:grid;grid-template-columns:19px 52px 172px 106px minmax(0,1fr) auto;
+                gap:10px;align-items:center;
                 padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.045);font-size:13px}
           .arow:last-child{border-bottom:0}
           .arow .ago{color:var(--mute);font-variant-numeric:tabular-nums}
@@ -154,7 +146,7 @@ final class WebPage {
           .arow .what{font-weight:600}
           .arow .det{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
           .arow .at{color:var(--mute);font-size:12px;white-space:nowrap}
-          @media(max-width:760px){.arow{grid-template-columns:46px 1fr;row-gap:2px}
+          @media(max-width:760px){.arow{grid-template-columns:19px 46px minmax(0,1fr);row-gap:2px}
                                   .arow .det,.arow .at{grid-column:1/-1}}
           .cfgrow{display:flex;gap:14px;align-items:center;padding:9px 0;
                   border-bottom:1px solid rgba(255,255,255,.045)}
@@ -172,7 +164,111 @@ final class WebPage {
           /* The status word always stays — a bare coloured dot would leave state
              carried by colour alone. Shed padding, never the label. */
           @media(max-width:620px){ header{padding:11px 14px;gap:9px} .pill{padding:4px 8px} }
-          @media(max-width:760px){.files{grid-template-columns:1fr}main{padding:16px 14px 30px}}
+          @media(max-width:760px){main{padding:16px 14px 30px}}
+
+          /* ---- player faces ---- */
+          /* Skins are 8x8 pixel art scaled up; smoothing them turns a face
+             into a smudge, so every one of these is nearest-neighbour. */
+          .face{width:26px;height:26px;border-radius:6px;flex:none;
+                image-rendering:pixelated;image-rendering:crisp-edges;
+                background:var(--card2);border:1px solid var(--line);object-fit:cover}
+          .face.sm{width:19px;height:19px;border-radius:4px}
+          .face.lg{width:34px;height:34px;border-radius:8px}
+          /* The stand-in when there is no skin to be had: an initial on a
+             colour derived from the name, so two players never look alike. */
+          span.face{display:inline-flex;align-items:center;justify-content:center;
+                    font-weight:700;font-size:12px;color:#0b0d11;line-height:1}
+          span.face.sm{font-size:10px}
+          span.face.lg{font-size:15px}
+
+          /* ---- overlays, menus, chips ---- */
+          .scrim{position:fixed;inset:0;background:rgba(6,8,11,.74);z-index:40;display:flex;
+                 align-items:flex-start;justify-content:center;padding:38px 16px;overflow:auto}
+          .modal{background:var(--card);border:1px solid var(--line);border-radius:14px;
+                 width:min(880px,100%);padding:17px 20px 20px;
+                 box-shadow:0 24px 60px rgba(0,0,0,.55)}
+          .modal.wide{width:min(1100px,100%)}
+          .modal h3{margin:0;font-size:15.5px;font-weight:650}
+          .mtop{display:flex;align-items:center;gap:10px;margin-bottom:13px}
+          .mtop .btn{margin-left:auto}
+          .modal .grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+          @media(max-width:620px){.modal .grid2{grid-template-columns:1fr}}
+          .modal label.f{display:block;font-size:11.5px;text-transform:uppercase;
+                         letter-spacing:.8px;color:var(--mute);font-weight:600;margin:11px 0 4px}
+          .modal .row2{display:flex;gap:8px;align-items:center;margin-top:13px;flex-wrap:wrap}
+          select{background:#0b0d11;border:1px solid var(--line);color:var(--ink);
+                 border-radius:8px;padding:9px 11px;font:inherit;width:100%;outline:none}
+          select:focus{border-color:var(--brand)}
+          .menu{position:fixed;z-index:60;background:var(--card2);border:1px solid var(--line);
+                border-radius:10px;padding:5px;min-width:206px;
+                box-shadow:0 14px 34px rgba(0,0,0,.55)}
+          .menu button{display:flex;gap:10px;align-items:center;width:100%;text-align:left;
+                       background:none;border:0;color:var(--ink);padding:7px 10px;
+                       border-radius:7px;font:inherit}
+          .menu button:hover:not([disabled]){background:#333a45}
+          .menu button[disabled]{opacity:.32;cursor:not-allowed}
+          .menu button.danger:hover:not([disabled]){color:#ffb3b3}
+          .menu b{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;
+                  color:var(--mute);display:block;padding:6px 10px 3px}
+          .menu hr{border:0;border-top:1px solid var(--line);margin:5px 3px}
+          .menu .sub{color:var(--mute);font-size:11.5px;margin-left:auto;padding-left:12px}
+          .chip{display:inline-block;padding:1px 7px;border-radius:5px;font-size:10.5px;
+                font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+                border:1px solid var(--line);color:var(--dim);vertical-align:1px}
+          .chip.jar{color:#8fd4b0;border-color:#315c49}
+          .chip.link{color:#8ab6e8;border-color:#31485f}
+          .chip.req{color:#f0c46a;border-color:#5e4b26}
+          .icon{width:15px;height:15px;flex:none;vertical-align:-3px}
+          .bartitle{display:flex;align-items:center;gap:10px;margin:0 0 12px;flex-wrap:wrap}
+          .bartitle h2{margin:0}
+          .bartitle .spacer{margin-left:auto}
+          .cog{padding:6px 9px;line-height:1}
+
+          /* ---- file browser ---- */
+          .crumbs{display:flex;align-items:center;gap:1px;flex-wrap:wrap;font-size:13px;min-width:0}
+          .crumbs button{background:none;border:0;color:var(--dim);padding:4px 7px;
+                         border-radius:6px;font:inherit}
+          .crumbs button:hover{color:var(--ink);background:var(--card2)}
+          .crumbs button:last-of-type{color:var(--ink);font-weight:600}
+          .crumbs i{color:var(--mute);font-style:normal;font-size:11px}
+          .browser{background:var(--card);border:1px solid var(--line);border-radius:12px;
+                   overflow:hidden}
+          .frow{display:grid;grid-template-columns:34px minmax(0,1fr) 118px 92px 150px;
+                gap:14px;align-items:center;padding:11px 16px;
+                border-bottom:1px solid rgba(255,255,255,.05)}
+          .frow:last-child{border-bottom:0}
+          .frow:hover{background:var(--card2)}
+          .frow.pick{background:#232a35}
+          .frow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+          .frow .meta{color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+          .frow .kind{color:var(--dim);font-size:12px}
+          .frow.up .nm{color:var(--brand)}
+          .fico{width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+                border-radius:7px;background:#0e1116;border:1px solid var(--line);font-size:13px}
+          .fempty{padding:34px 16px;text-align:center;color:var(--mute);font-style:italic}
+          /* Reaches to the bottom of the window so that "right-click anywhere"
+             means anywhere, and not only the few pixels a short listing
+             happens to leave inside the box. */
+          .filespanel{min-height:calc(100vh - 190px)}
+          @media(max-width:900px){.frow{grid-template-columns:34px minmax(0,1fr) 92px}
+                                  .frow .kind,.frow .when{display:none}}
+          @media(max-width:600px){.frow{grid-template-columns:34px minmax(0,1fr)}
+                                  .frow .sz{display:none}}
+
+          /* ---- mods ---- */
+          .modrow{display:flex;gap:14px;align-items:center;padding:13px 16px;
+                  border-bottom:1px solid rgba(255,255,255,.05)}
+          .modrow:last-child{border-bottom:0}
+          .modrow .body{min-width:0;flex:1}
+          .modrow .ttl{font-weight:650;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+          .modrow .sub{color:var(--mute);font-size:12px;margin-top:2px;
+                       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .modicon{width:46px;height:46px;border-radius:11px;flex:none;object-fit:cover;
+                   background:#0e1116;border:1px solid var(--line)}
+          span.modicon{display:flex;align-items:center;justify-content:center;
+                       font-size:19px;font-weight:700;color:var(--mute)}
+          .modrow .acts{display:flex;gap:7px;flex:none}
+          @media(max-width:620px){.modrow{flex-wrap:wrap}.modrow .acts{width:100%}}
         </style>
         <header>
           <span class="brand">ALMIN</span>
@@ -190,6 +286,9 @@ final class WebPage {
         const $ = id => document.getElementById(id);
         let authed=false, secure=false, encrypted=false, pwSet=false, publicMetrics=true;
         let serverRunning=true, canStart=false, supervisor=false;
+        // Whether to ask the server for player faces at all. Off means the
+        // lists draw initials instead and nothing is requested.
+        let headsOn=true;
         let tab='dash', last=null, stuck=true, tpsHistory=[];
         // The panel is served out of the mod jar, so an update replaces it.
         // These track the version this page came from and whether we are
@@ -208,6 +307,144 @@ final class WebPage {
         async function jpost(u,d){ const r=await fetch(u,{method:'POST',credentials:'same-origin',
             headers:{'Content-Type':'application/json'},body:JSON.stringify(d||{})});
           return {status:r.status, body:await r.json().catch(()=>({}))}; }
+
+        // ---- shared pieces: faces, menus, overlays, formatting ----
+
+        // A hue derived from the name, so a player with no skin still gets
+        // something that is theirs rather than one shared grey box.
+        function nameHue(s){
+          let h=0; for(let i=0;i<(s||'').length;i++) h=(h*31+s.charCodeAt(i))|0;
+          return Math.abs(h)%360;
+        }
+        /**
+         * A player's face. An <img> when heads are on, falling back to an
+         * initial the moment the request 404s — which is the ordinary answer
+         * for a player whose skin the server could not find, so the fallback
+         * is the common path and not an error case.
+         */
+        function avatar(name,uuid,size){
+          const cls='face'+(size?' '+size:'');
+          const letter=((name||'?').trim().charAt(0)||'?').toUpperCase();
+          const stand=()=>{ const s=document.createElement('span'); s.className=cls;
+            s.textContent=letter; s.style.background='hsl('+nameHue(name)+' 45% 62%)';
+            s.title=name||''; return s; };
+          if(!headsOn || !uuid) return stand();
+          const img=document.createElement('img'); img.className=cls;
+          img.alt=''; img.loading='lazy'; img.title=name||'';
+          img.src='/api/head?uuid='+encodeURIComponent(uuid)+
+                  '&name='+encodeURIComponent(name||'');
+          img.onerror=()=>{ if(img.parentNode) img.parentNode.replaceChild(stand(),img); };
+          return img;
+        }
+
+        let openMenu=null, openScrim=null;
+        function closeMenu(){ if(openMenu){ openMenu.remove(); openMenu=null; } }
+        function closeModal(){ if(openScrim){ openScrim.remove(); openScrim=null; } }
+        document.addEventListener('keydown',e=>{
+          if(e.key!=='Escape') return;
+          if(openMenu) closeMenu(); else closeModal();
+        });
+        window.addEventListener('resize',closeMenu);
+
+        /**
+         * A context menu at a point on screen. Items are
+         * {label, icon, hint, run, danger, disabled, why}, the string 'sep',
+         * or {header}.
+         */
+        function menu(x,y,items){
+          closeMenu();
+          const m=document.createElement('div'); m.className='menu';
+          for(const it of items){
+            if(it==='sep'){ m.appendChild(document.createElement('hr')); continue; }
+            if(it.header){ const b=document.createElement('b'); b.textContent=it.header;
+              m.appendChild(b); continue; }
+            const b=document.createElement('button');
+            b.innerHTML=(it.icon||'')+'<span>'+esc(it.label)+'</span>'+
+              (it.hint?'<span class="sub">'+esc(it.hint)+'</span>':'');
+            if(it.danger) b.className='danger';
+            if(it.disabled){ b.disabled=true; if(it.why) b.title=it.why; }
+            else b.onclick=()=>{ closeMenu(); it.run(); };
+            m.appendChild(b);
+          }
+          document.body.appendChild(m);
+          // Flip rather than clip: a menu opened near an edge stays whole.
+          const r=m.getBoundingClientRect();
+          m.style.left=Math.max(6,Math.min(x,window.innerWidth-r.width-6))+'px';
+          m.style.top=Math.max(6,Math.min(y,window.innerHeight-r.height-6))+'px';
+          openMenu=m;
+          // Added next tick, or the very click that opened this would close it.
+          setTimeout(()=>document.addEventListener('click',closeMenu,{once:true}),0);
+          return m;
+        }
+        function menuUnder(btn,items){
+          const r=btn.getBoundingClientRect();
+          menu(r.left,r.bottom+6,items);
+        }
+        function menuAt(ev,items){
+          ev.preventDefault(); ev.stopPropagation();
+          menu(ev.clientX,ev.clientY,items);
+        }
+
+        /** An overlay. `build(body, close)` fills it in. */
+        function modal(title,build,opts){
+          closeModal(); closeMenu();
+          const scrim=document.createElement('div'); scrim.className='scrim';
+          const box=document.createElement('div');
+          box.className='modal'+((opts&&opts.wide)?' wide':'');
+          const top=document.createElement('div'); top.className='mtop';
+          const h=document.createElement('h3'); h.textContent=title;
+          const x=document.createElement('button'); x.className='btn'; x.textContent='Close';
+          x.onclick=closeModal;
+          top.append(h,x);
+          const body=document.createElement('div');
+          box.append(top,body);
+          scrim.appendChild(box);
+          scrim.onclick=e=>{ if(e.target===scrim) closeModal(); };
+          document.body.appendChild(scrim);
+          openScrim=scrim;
+          build(body,closeModal);
+          return body;
+        }
+
+        function fmtBytes(n){
+          if(n==null||n<0) return '';
+          if(n<1024) return n+' B';
+          const u=['KB','MB','GB','TB']; let v=n/1024, i=0;
+          while(v>=1024 && i<u.length-1){ v/=1024; i++; }
+          return (v>=100?v.toFixed(0):v>=10?v.toFixed(1):v.toFixed(2))+' '+u[i];
+        }
+        function fmtWhen(ts){
+          if(!ts) return '';
+          const d=new Date(ts), now=Date.now();
+          const clock=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+          if(new Date(now).toDateString()===d.toDateString()) return clock;
+          if(now-ts < 300*24*3600*1000)
+            return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+clock;
+          return d.toLocaleDateString();
+        }
+        /** Clipboard where it works, a selectable prompt where it does not. */
+        function copyText(t){
+          if(navigator.clipboard && window.isSecureContext){
+            navigator.clipboard.writeText(t).catch(()=>prompt('Path:',t));
+          } else prompt('Path:',t);
+        }
+
+        const ICON={
+          folder:'<svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M1.6 4A1.6 1.6 0 0 1 3.2 2.4h2.6L7.2 4h5.6A1.6 1.6 0 0 1 14.4 5.6v6A1.6 1.6 0 0 1 12.8 13.2H3.2A1.6 1.6 0 0 1 1.6 11.6z"/></svg>',
+          file:'<svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M3.4 1.8h5L13 6.2v8A1.4 1.4 0 0 1 11.6 15.6H3.4A1.4 1.4 0 0 1 2 14.2V3.2A1.4 1.4 0 0 1 3.4 1.8zm5 1.3v3.3H12z"/></svg>',
+          edit:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5l2 2L6 12l-3 1 1-3z"/><path d="M2.5 14.5h11"/></svg>',
+          down:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8"/><path d="M4.5 7L8 10.5 11.5 7"/><path d="M2.5 13.5h11"/></svg>',
+          up:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V3"/><path d="M4.5 6.5L8 3l3.5 3.5"/><path d="M2.5 13.5h11"/></svg>',
+          trash:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.2h10.4"/><path d="M6.2 4.2V2.6h3.6v1.6"/><path d="M4.2 4.2l.7 9.2h6.2l.7-9.2"/></svg>',
+          rename:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.6h4"/><path d="M8 2.6v10.8"/><path d="M6 13.4h4"/><path d="M1.8 5.6h3.4M10.8 5.6h3.4"/></svg>',
+          plus:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+          cog:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.3"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3"/></svg>',
+          globe:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c1.9 2 1.9 10 0 12M8 2C6.1 4 6.1 12 8 14"/></svg>',
+          box:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.7l5.6 2.9v6.8L8 14.3 2.4 11.4V4.6z"/><path d="M2.4 4.6L8 7.5l5.6-2.9M8 7.5v6.8"/></svg>',
+          refresh:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.8"/><path d="M13.6 2.4v3.4h-3.4"/></svg>',
+          pencilnew:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 2.2h5L12.8 6.6v3"/><path d="M8.2 2.2v4.4h4.6"/><path d="M3.2 2.2v11.6h4.4"/><path d="M10 13.6h4M12 11.6v4"/></svg>',
+          foldernew:'<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M1.9 12V4.3h3.9L7 5.9h5.2v2.3"/><path d="M1.9 12h6"/><path d="M12.4 10v4.4M10.2 12.2h4.4"/></svg>'
+        };
 
         // ---- tiles ----
         function tpsState(tps,target){
@@ -343,7 +580,11 @@ final class WebPage {
                                  ['mods','Mods'],['settings','Settings']]
                               : [['dash','Overview']];
           for(const [id,label] of tabs){
-            const b=document.createElement('button'); b.textContent=label; b.className=(id===tab?'on':'');
+            const b=document.createElement('button'); b.className=(id===tab?'on':'');
+            // Settings is the one tab that is a place rather than a subject,
+            // so it gets the cog everything else has learned to look for.
+            if(id==='settings'){ b.innerHTML=ICON.cog+' '+esc(label); b.title='Settings'; }
+            else b.textContent=label;
             b.onclick=()=>{ tab=id; render(); }; nav.appendChild(b);
           }
         }
@@ -469,118 +710,270 @@ final class WebPage {
           return wrap;
         }
 
-        let curDir='';
+        """;
+
+    /**
+     * The file browser: listing, context menus, and the overlays they open.
+     *
+     * <p>Split for the same reason as the others — see {@link #HTML}.
+     */
+    private static final String PARTFILES = """
+        // ---- files ----
+        let curDir='', dirWritable=false, dirRoots='', dirEntries=[];
+
+        const KINDS={jar:'Java archive',json:'JSON',txt:'Text',log:'Log',yml:'YAML',yaml:'YAML',
+          properties:'Properties',png:'Image',jpg:'Image',jpeg:'Image',gif:'Image',webp:'Image',
+          zip:'Archive',gz:'Archive',xz:'Archive',mca:'Region data',mcr:'Region data',
+          dat:'NBT data',nbt:'NBT data',toml:'TOML',sh:'Shell script',bat:'Batch script',
+          js:'JavaScript',html:'HTML',css:'CSS',mcmeta:'Pack metadata',md:'Markdown',
+          conf:'Config',cfg:'Config',ini:'Config',lock:'Lock file',db:'Database'};
+        /** Things a textarea would only mangle. */
+        const BINARY=new Set(['jar','zip','gz','xz','7z','rar','zst','png','jpg','jpeg','gif',
+          'webp','ico','mca','mcr','dat','dat_old','nbt','class','so','dll','dylib','bin','db',
+          'ttf','otf','wav','ogg','mp3','pdf','jfr','hprof']);
+        function extOf(name){
+          const i=(name||'').lastIndexOf('.');
+          return i<=0 ? '' : name.slice(i+1).toLowerCase();
+        }
+        function kindOf(name){
+          const e=extOf(name);
+          if(!e) return 'File';
+          return KINDS[e] || (e.length<=7 ? e.toUpperCase()+' file' : 'File');
+        }
+        function isText(name){ const e=extOf(name); return !e || !BINARY.has(e); }
+
         function filesPanel(){
-          const wrap=document.createElement('div'); wrap.className='files';
-          const listBox=document.createElement('div'); listBox.className='flist'; listBox.id='flist';
-          const ed=document.createElement('div'); ed.className='editor';
-          // The editor is a mode, not the default view. It used to fill this
-          // column with a 50vh textarea whether or not anything was open,
-          // which pushed upload and fetch off the bottom of the page.
-          ed.innerHTML=
-            '<section><h2>Put a file in this folder</h2>'+
-            '<p class="muted" id="fupwhere"></p>'+
-            '<input type="file" id="fup">'+
-            '<button class="btn" id="fupgo" style="margin-top:8px">Upload</button>'+
-            '<div class="msg" id="fupmsg"></div></section>'+
-            '<section><h2>Download a link straight to the server</h2>'+
-            '<div class="term"><input id="ffurl" placeholder="https://... link to a jar, pack or config">'+
-            '<button class="btn" id="ffgo">Fetch</button></div>'+
-            '<p class="muted" style="margin-top:6px">Saved into the folder on the left, '+
-            'keeping the name from the link.</p>'+
-            '<div class="msg" id="ffmsg"></div></section>'+
-            '<section><h2>Editor</h2>'+
-            '<p class="muted">Click a text file on the left to edit it, or start a new one.</p>'+
-            '<button class="btn" id="fnew">New file\u2026</button></section>';
-          wrap.append(listBox,ed);
-          setTimeout(()=>{ loadDir(curDir);
-            $('fupgo').onclick=upFile; $('ffgo').onclick=fetchUrl;
-            $('fnew').onclick=()=>openEditor('', true); },0);
+          const wrap=document.createElement('div');
+          wrap.className='filespanel';
+          wrap.innerHTML=
+            '<div class="bartitle">'+
+              '<div class="crumbs" id="fcrumbs"></div>'+
+              '<span class="spacer"></span>'+
+              '<span class="muted num" id="fcount"></span>'+
+              '<button class="btn" id="fadd">'+ICON.plus+' New</button>'+
+              '<button class="btn cog" id="frefresh" title="Reload this folder">'+
+                ICON.refresh+'</button>'+
+            '</div>'+
+            '<p class="muted" id="fhint" style="margin:-5px 0 12px"></p>'+
+            '<div class="browser" id="flist"></div>'+
+            '<div class="msg" id="fmsg"></div>';
+          setTimeout(()=>{
+            $('fadd').onclick=()=>menuUnder($('fadd'),addMenu());
+            $('frefresh').onclick=()=>loadDir(curDir);
+            // Right-clicking anywhere that is not a row is the same as the
+            // + button: it is about the folder, not about any one thing in it.
+            // On the whole panel rather than on the list, because a full
+            // folder leaves no empty list to click.
+            wrap.oncontextmenu=e=>{
+              if(e.target.closest('.frow:not(.up)')) return;
+              menuAt(e,addMenu());
+            };
+            loadDir(curDir);
+          },0);
           return wrap;
         }
 
-        /**
-         * Swaps the right-hand column into edit mode. `fresh` means a new file:
-         * the path box starts in the current folder and the body starts empty.
-         */
-        function openEditor(path, fresh){
-          const ed=document.querySelector('.editor'); if(!ed) return;
-          const start = fresh ? (curDir ? curDir+'/' : '') : path;
-          ed.innerHTML='<div class="bar">'+
-            '<input id="fpath" placeholder="path under a writable root">'+
-            '<button class="btn" id="fsave">Save</button>'+
-            '<button class="btn" id="fdl">Download</button>'+
-            '<button class="btn danger" id="fdel">Delete</button>'+
-            '<button class="btn" id="fren">Rename</button>'+
-            '<button class="btn" id="fclose">Close</button></div>'+
-            '<textarea id="fbody" placeholder="'+
-            (fresh?'Type the contents, set the path, then Save.':'Loading\u2026')+'"></textarea>'+
-            '<div class="msg" id="fmsg"></div>';
-          $('fpath').value=start;
-          $('fsave').onclick=saveFile; $('fdel').onclick=delFile; $('fren').onclick=renFile;
-          $('fdl').onclick=dlFile; $('fclose').onclick=()=>{ render(); };
-          if(fresh){ $('fbody').value=''; $('fpath').focus(); }
-          else openFile(path);
+        function fmsg(text,cls){
+          const m=$('fmsg'); if(!m) return;
+          m.className='msg'+(cls?' '+cls:''); m.textContent=text||'';
         }
-        function dlFile(){
-          const p=$('fpath').value.trim();
-          if(!p){ const m=$('fmsg'); m.className='msg err'; m.textContent='Pick a file first.'; return; }
-          // Same-origin GET, so the session cookie goes with it.
-          location.href='/api/file/download?path='+encodeURIComponent(p);
+
+        function crumbs(){
+          const box=$('fcrumbs'); if(!box) return;
+          box.innerHTML='';
+          const parts=curDir?curDir.split('/').filter(Boolean):[];
+          const add=(label,path,last)=>{
+            const b=document.createElement('button'); b.textContent=label;
+            if(!last) b.onclick=()=>loadDir(path);
+            box.appendChild(b);
+            if(!last){ const i=document.createElement('i'); i.textContent='/';
+              box.appendChild(i); }
+          };
+          add('server root','',parts.length===0);
+          let sofar='';
+          parts.forEach((seg,n)=>{
+            sofar = sofar ? sofar+'/'+seg : seg;
+            add(seg,sofar,n===parts.length-1);
+          });
         }
-        async function upFile(){
-          const inp=$('fup'), msg=$('fupmsg');
-          if(!curDir){ msg.className='msg err';
-            msg.textContent='Open a writable folder first \u2014 mods, config, resourcepacks or shared.'; return; }
-          if(!inp.files || !inp.files.length){ msg.className='msg err'; msg.textContent='Choose a file first.'; return; }
-          const f=inp.files[0];
-          msg.className='msg'; msg.textContent='Uploading '+f.name+'\u2026';
-          try{
-            const r=await fetch('/api/file/upload?path='+encodeURIComponent(curDir+'/'+f.name),
-              {method:'POST',credentials:'same-origin',
-               headers:{'Content-Type':'application/octet-stream'},body:f});
-            const b=await r.json().catch(()=>({}));
-            msg.className='msg '+(r.status===200?'ok':'err');
-            msg.textContent = r.status===200 ? ('uploaded '+b.path+' ('+b.bytes+' bytes)')
-                                             : (b.error||('upload failed ('+r.status+')'));
-            if(r.status===200){ inp.value=''; loadDir(curDir); }
-          }catch(e){ msg.className='msg err'; msg.textContent='upload failed: '+e.message; }
+
+        function fileIcon(e){
+          const d=document.createElement('div'); d.className='fico';
+          if(e.directory){ d.innerHTML=ICON.folder; d.style.color='var(--brand)'; }
+          else if(extOf(e.name)==='jar'){ d.innerHTML=ICON.box; d.style.color='#8fd4b0'; }
+          else { d.innerHTML=ICON.file; d.style.color='var(--mute)'; }
+          return d;
         }
-        async function fetchUrl(){
-          const msg=$('ffmsg'), url=$('ffurl').value.trim();
-          if(!curDir){ msg.className='msg err';
-            msg.textContent='Open a writable folder first \u2014 mods, config, resourcepacks or shared.'; return; }
-          if(!url){ msg.className='msg err'; msg.textContent='Paste a link first.'; return; }
-          msg.className='msg'; msg.textContent='Fetching\u2026';
-          const r=await jpost('/api/fetch',{url:url,dest:curDir+'/'});
-          msg.className='msg '+(r.status===200?'ok':'err');
-          msg.textContent=r.body.message||r.body.error||'fetch failed';
-          if(r.status===200){ $('ffurl').value=''; loadDir(curDir); }
+
+        function fullPath(name){ return curDir ? curDir+'/'+name : name; }
+
+        /** What right-clicking one row offers. */
+        function entryMenu(e){
+          const path=fullPath(e.name);
+          const readOnly='Read-only here — writes are limited to '+
+            (dirRoots||'the configured roots');
+          const items=[{header:e.name}];
+          if(e.directory){
+            items.push({label:'Open',icon:ICON.folder,run:()=>loadDir(path)});
+          } else {
+            const big=e.size>2*1024*1024;
+            items.push({label:'Edit',icon:ICON.edit,
+              disabled:!isText(e.name)||big,
+              why:big?'Larger than the 2 MB the editor can open'
+                     :'Not a text file — download it instead',
+              run:()=>openEditor(path,false,e.writable)});
+            items.push({label:'Download',icon:ICON.down,run:()=>dlFile(path)});
+          }
+          items.push('sep');
+          items.push({label:'Rename…',icon:ICON.rename,disabled:!e.writable,
+            why:readOnly,run:()=>renameDialog(path,e.name)});
+          items.push({label:'Delete…',icon:ICON.trash,danger:true,disabled:!e.writable,
+            why:readOnly,run:()=>deleteDialog(path,e)});
+          items.push('sep');
+          items.push({label:'Copy path',run:()=>copyText('/'+path)});
+          return items;
         }
+
+        /** What right-clicking the folder itself, or the + button, offers. */
+        function addMenu(){
+          const why='This folder is read-only — writes are limited to '+
+            (dirRoots||'the configured roots');
+          return [
+            {header:'Add to '+(curDir?'/'+curDir:'the server root')},
+            {label:'Upload files…',icon:ICON.up,disabled:!dirWritable,why,run:uploadDialog},
+            {label:'Download from a link…',icon:ICON.globe,disabled:!dirWritable,why,
+             run:fetchDialog},
+            'sep',
+            {label:'New file…',icon:ICON.pencilnew,disabled:!dirWritable,why,
+             run:()=>openEditor('',true)},
+            {label:'New folder…',icon:ICON.foldernew,disabled:!dirWritable,why,
+             run:mkdirDialog}
+          ];
+        }
+
         async function loadDir(path){
+          // A menu belongs to what was on screen a moment ago; leaving it up
+          // over a different folder would offer the wrong thing.
+          closeMenu();
           curDir=path;
           const r=await jget('/api/files?path='+encodeURIComponent(path));
-          const box=$('flist'); if(!box) return; box.innerHTML='';
-          if(r.status!==200){ box.innerHTML='<div class="note">'+esc(r.body.error||'unavailable')+'</div>'; return; }
-          const crumb=document.createElement('div'); crumb.className='fentry';
-          crumb.innerHTML='<b>'+(path? esc('/'+path) : '/ (server root)')+'</b>'; box.appendChild(crumb);
-          const where=$('fupwhere');
-          if(where) where.textContent = path ? 'Lands in /'+path
-            : 'The server root is not writable \u2014 open mods, config, resourcepacks or shared.';
-          if(path){ const up=document.createElement('div'); up.className='fentry dir';
-            up.textContent='↑ up'; up.onclick=()=>loadDir(path.split('/').slice(0,-1).join('/')); box.appendChild(up); }
-          for(const e of (r.body.entries||[])){
-            const row=document.createElement('div'); row.className='fentry'+(e.directory?' dir':'');
-            const full = path ? path+'/'+e.name : e.name;
-            row.innerHTML='<span>'+(e.directory?'📁':'📄')+' '+esc(e.name)+'</span>'+
-              (e.directory?'':'<span class="sz">'+(e.size>=0?e.size+' B':'')+'</span>');
-            row.onclick=()=> e.directory ? loadDir(full) : openEditor(full, false);
-            box.appendChild(row);
+          const box=$('flist'); if(!box) return;
+          fmsg('');
+          if(r.status!==200){
+            box.innerHTML='<div class="fempty">'+esc(r.body.error||'unavailable')+'</div>';
+            return;
           }
+          dirWritable=!!r.body.writable; dirRoots=r.body.roots||'';
+          dirEntries=r.body.entries||[];
+          crumbs();
+          const hint=$('fhint');
+          if(hint) hint.textContent = dirWritable
+            ? 'Right-click anything for what you can do with it.'
+            : 'Read-only here. Writes are limited to '+(dirRoots||'the configured roots')+
+              ' (and each world’s datapacks folder).';
+          const count=$('fcount');
+          if(count){
+            const dirs=dirEntries.filter(e=>e.directory).length;
+            count.textContent=dirEntries.length
+              ? dirs+' folder'+(dirs===1?'':'s')+' · '+
+                (dirEntries.length-dirs)+' file'+(dirEntries.length-dirs===1?'':'s')
+              : '';
+          }
+          box.innerHTML='';
+          if(path){
+            const up=document.createElement('div'); up.className='frow up';
+            const ico=document.createElement('div'); ico.className='fico';
+            ico.innerHTML=ICON.up; ico.style.color='var(--brand)';
+            const nm=document.createElement('div'); nm.className='nm'; nm.textContent='… up one folder';
+            up.append(ico,nm);
+            up.onclick=()=>loadDir(path.split('/').slice(0,-1).join('/'));
+            box.appendChild(up);
+          }
+          if(!dirEntries.length){
+            const empty=document.createElement('div'); empty.className='fempty';
+            empty.textContent=dirWritable
+              ? 'This folder is empty. Right-click to put something in it.'
+              : 'This folder is empty.';
+            box.appendChild(empty);
+            return;
+          }
+          for(const e of dirEntries) box.appendChild(fileRow(e));
         }
+
+        function fileRow(e){
+          const path=fullPath(e.name);
+          const row=document.createElement('div'); row.className='frow';
+          const nm=document.createElement('div'); nm.className='nm';
+          nm.textContent=e.name; nm.title=e.name;
+          if(e.directory) nm.style.color='var(--brand)';
+          const kind=document.createElement('div'); kind.className='kind';
+          kind.textContent=e.directory?'Folder':kindOf(e.name);
+          const sz=document.createElement('div'); sz.className='meta sz';
+          sz.textContent = e.directory
+            ? (e.items<0?'':e.items+' item'+(e.items===1?'':'s'))
+            : fmtBytes(e.size);
+          const when=document.createElement('div'); when.className='meta when';
+          when.textContent=fmtWhen(e.modified);
+          row.append(fileIcon(e),nm,kind,sz,when);
+          row.onclick=()=>{
+            if(e.directory) return loadDir(path);
+            if(isText(e.name) && e.size<=2*1024*1024) return openEditor(path,false,e.writable);
+            dlFile(path);
+          };
+          row.oncontextmenu=ev=>menuAt(ev,entryMenu(e));
+          return row;
+        }
+
+        // ---- what the menus open ----
+
+        /**
+         * The editor, as an overlay rather than a column. It used to sit
+         * permanently beside the list taking half the width whether or not
+         * anything was open; now the browser gets the whole page and the
+         * editor appears when there is something to edit.
+         */
+        function openEditor(path,fresh,writable){
+          const canWrite = fresh ? dirWritable : !!writable;
+          modal(fresh?'New file':path,(body)=>{
+            body.innerHTML=
+              '<label class="f">Path</label>'+
+              '<input id="fpath" placeholder="path under a writable root">'+
+              '<label class="f">Contents</label>'+
+              '<textarea id="fbody" placeholder="'+
+              (fresh?'Type the contents, set the path, then Save.':'Loading…')+'"></textarea>'+
+              '<div class="row2">'+
+                '<button class="btn go" id="fsave">Save</button>'+
+                '<button class="btn" id="fdl">Download</button>'+
+                '<button class="btn" id="fren">Rename…</button>'+
+                '<button class="btn danger" id="fdel">Delete…</button>'+
+              '</div>'+
+              '<div class="msg" id="emsg"></div>';
+            $('fpath').value = fresh ? (curDir?curDir+'/':'') : path;
+            $('fsave').onclick=saveFile;
+            $('fdl').onclick=()=>dlFile($('fpath').value.trim());
+            $('fren').onclick=()=>{
+              const p=$('fpath').value.trim();
+              renameDialog(p,p.split('/').pop());
+            };
+            $('fdel').onclick=()=>deleteDialog($('fpath').value.trim(),null);
+            // Match the context menu: what the write rules forbid is not
+            // offered here either, rather than offered and then refused.
+            ['fren','fdel'].forEach(id=>$(id).disabled=fresh || !canWrite);
+            $('fdl').disabled=!!fresh;
+            if(!canWrite){
+              $('fsave').disabled=true;
+              const why='Read-only here — writes are limited to '+
+                (dirRoots||'the configured roots');
+              ['fsave','fren','fdel'].forEach(id=>$(id).title=why);
+              const m=$('emsg'); m.className='msg'; m.textContent=why+'.';
+            }
+            if(fresh) $('fpath').focus(); else openFile(path);
+          },{wide:true});
+        }
+
         async function openFile(path){
           const r=await jget('/api/file?path='+encodeURIComponent(path));
-          const msg=$('fmsg'); if(!msg) return;
+          const msg=$('emsg'); if(!msg) return;
           if(r.status!==200){
             msg.className='msg err';
             msg.textContent=(r.body.error||'could not open')+
@@ -588,29 +981,149 @@ final class WebPage {
             $('fbody').value='';
             return;
           }
-          $('fpath').value=path; $('fbody').value=r.body.content; msg.className='msg'; msg.textContent='';
+          $('fpath').value=path; $('fbody').value=r.body.content;
+          // The message line is left alone: anything in it was put there by
+          // openEditor — the read-only note — and loading the file does not
+          // make it untrue.
         }
         async function saveFile(){
           const r=await jpost('/api/file',{path:$('fpath').value,content:$('fbody').value});
-          const msg=$('fmsg'); msg.className='msg '+(r.body.ok?'ok':'err');
-          msg.textContent=r.body.ok?'saved':(r.body.message||r.body.error||'save failed');
+          const msg=$('emsg'); msg.className='msg '+(r.body.ok?'ok':'err');
+          msg.textContent=r.body.ok?'Saved.':(r.body.message||r.body.error||'save failed');
           if(r.body.ok) loadDir(curDir);
         }
-        async function delFile(){
-          const p=$('fpath').value; if(!p) return;
-          if(!confirm('Delete '+p+'?')) return;
-          const r=await jpost('/api/file/delete',{path:p});
-          const msg=$('fmsg'); msg.className='msg '+(r.body.ok?'ok':'err');
-          msg.textContent=r.body.ok?'deleted':(r.body.message||r.body.error||'delete failed');
-          if(r.body.ok){ loadDir(curDir); render(); }
+        function dlFile(path){
+          if(!path){ fmsg('Pick a file first.','err'); return; }
+          // Same-origin GET, so the session cookie goes with it.
+          location.href='/api/file/download?path='+encodeURIComponent(path);
         }
-        async function renFile(){
-          const p=$('fpath').value; if(!p) return;
-          const name=prompt('New name for '+p.split('/').pop()+':'); if(!name) return;
-          const r=await jpost('/api/file/rename',{path:p,name:name});
-          const msg=$('fmsg'); msg.className='msg '+(r.body.ok?'ok':'err');
-          msg.textContent=r.body.ok?'renamed':(r.body.message||r.body.error||'rename failed');
-          if(r.body.ok) loadDir(curDir);
+
+        function renameDialog(path,name){
+          modal('Rename',(body,close)=>{
+            body.innerHTML='<p class="muted">Renaming <code>/'+esc(path)+'</code>. '+
+              'It stays in the same folder.</p>'+
+              '<label class="f">New name</label><input id="rnname">'+
+              '<div class="row2"><button class="btn go" id="rngo">Rename</button></div>'+
+              '<div class="msg" id="rnmsg"></div>';
+            const inp=$('rnname'); inp.value=name; inp.focus(); inp.select();
+            const go=async()=>{
+              const v=inp.value.trim();
+              const msg=$('rnmsg');
+              if(!v){ msg.className='msg err'; msg.textContent='Type a name.'; return; }
+              const r=await jpost('/api/file/rename',{path:path,name:v});
+              if(r.body.ok){ close(); loadDir(curDir); fmsg('Renamed to '+v+'.','ok'); }
+              else { msg.className='msg err';
+                msg.textContent=r.body.message||r.body.error||'rename failed'; }
+            };
+            inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } };
+            $('rngo').onclick=go;
+          });
+        }
+
+        function deleteDialog(path,entry){
+          modal('Delete',(body,close)=>{
+            const warn = entry && entry.directory
+              ? 'Folders are only deleted when they are already empty.'
+              : 'This cannot be undone.';
+            body.innerHTML='<p>Delete <code>/'+esc(path)+'</code>?</p>'+
+              '<p class="muted">'+esc(warn)+'</p>'+
+              '<div class="row2"><button class="btn danger" id="dlgo">Delete</button>'+
+              '<button class="btn" id="dlno">Cancel</button></div>'+
+              '<div class="msg" id="dlmsg"></div>';
+            $('dlno').onclick=close;
+            $('dlgo').onclick=async()=>{
+              const r=await jpost('/api/file/delete',{path:path});
+              if(r.body.ok){ close(); loadDir(curDir); fmsg('Deleted '+path+'.','ok'); }
+              else { const m=$('dlmsg'); m.className='msg err';
+                m.textContent=r.body.message||r.body.error||'delete failed'; }
+            };
+          });
+        }
+
+        function mkdirDialog(){
+          modal('New folder',(body,close)=>{
+            body.innerHTML='<p class="muted">Created inside <code>'+
+              esc(curDir?'/'+curDir:'the server root')+'</code>.</p>'+
+              '<label class="f">Name</label><input id="mkname" placeholder="folder name">'+
+              '<div class="row2"><button class="btn go" id="mkgo">Create</button></div>'+
+              '<div class="msg" id="mkmsg"></div>';
+            const inp=$('mkname'); inp.focus();
+            const go=async()=>{
+              const v=inp.value.trim(); const msg=$('mkmsg');
+              if(!v){ msg.className='msg err'; msg.textContent='Type a name.'; return; }
+              const r=await jpost('/api/file/mkdir',{path:curDir,name:v});
+              if(r.body.ok){ close(); loadDir(curDir); fmsg('Created '+v+'.','ok'); }
+              else { msg.className='msg err';
+                msg.textContent=r.body.message||r.body.error||'could not create it'; }
+            };
+            inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } };
+            $('mkgo').onclick=go;
+          });
+        }
+
+        function uploadDialog(){
+          modal('Upload files',(body,close)=>{
+            body.innerHTML='<p class="muted">Landing in <code>'+
+              esc(curDir?'/'+curDir:'the server root')+'</code>. '+
+              'Pick more than one and they go up in order.</p>'+
+              '<input type="file" id="fup" multiple>'+
+              '<div class="row2"><button class="btn go" id="fupgo">Upload</button></div>'+
+              '<div class="msg" id="fupmsg"></div>';
+            $('fupgo').onclick=()=>upFiles(close);
+          });
+        }
+        async function upFiles(close){
+          const inp=$('fup'), msg=$('fupmsg'), btn=$('fupgo');
+          if(!inp.files||!inp.files.length){
+            msg.className='msg err'; msg.textContent='Choose a file first.'; return; }
+          btn.disabled=true;
+          let done=0, failed=0;
+          for(const f of inp.files){
+            msg.className='msg';
+            msg.textContent='Uploading '+f.name+' ('+(done+1)+' of '+inp.files.length+')…';
+            try{
+              const r=await fetch('/api/file/upload?path='+
+                  encodeURIComponent((curDir?curDir+'/':'')+f.name),
+                {method:'POST',credentials:'same-origin',
+                 headers:{'Content-Type':'application/octet-stream'},body:f});
+              const b=await r.json().catch(()=>({}));
+              if(r.status===200) done++;
+              else { failed++; msg.className='msg err';
+                msg.textContent=f.name+': '+(b.error||'upload failed ('+r.status+')');
+                break; }
+            }catch(err){
+              failed++; msg.className='msg err';
+              msg.textContent=f.name+': upload failed — '+err.message; break;
+            }
+          }
+          btn.disabled=false;
+          loadDir(curDir);
+          if(!failed){ close(); fmsg('Uploaded '+done+' file'+(done===1?'':'s')+'.','ok'); }
+        }
+
+        function fetchDialog(){
+          modal('Download a link to the server',(body,close)=>{
+            body.innerHTML='<p class="muted">Saved into <code>'+
+              esc(curDir?'/'+curDir:'the server root')+'</code>, keeping the name from the link. '+
+              'The server fetches it, so the file never passes through this browser.</p>'+
+              '<label class="f">Link</label>'+
+              '<input id="ffurl" placeholder="https://… link to a jar, pack or config">'+
+              '<div class="row2"><button class="btn go" id="ffgo">Fetch</button></div>'+
+              '<div class="msg" id="ffmsg"></div>';
+            const inp=$('ffurl'); inp.focus();
+            const go=async()=>{
+              const msg=$('ffmsg'), url=inp.value.trim();
+              if(!url){ msg.className='msg err'; msg.textContent='Paste a link first.'; return; }
+              msg.className='msg'; msg.textContent='Fetching…';
+              const r=await jpost('/api/fetch',{url:url,dest:curDir+'/'});
+              if(r.status===200){ close(); loadDir(curDir);
+                fmsg(r.body.message||'Fetched.','ok'); }
+              else { msg.className='msg err';
+                msg.textContent=r.body.error||r.body.message||'fetch failed'; }
+            };
+            inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } };
+            $('ffgo').onclick=go;
+          });
         }
 
         // ---- players and masks ----
@@ -640,7 +1153,8 @@ final class WebPage {
         }
         function playerRow(p,sub){
           const row=document.createElement('div'); row.className='row';
-          row.style.alignItems='center'; row.style.gap='8px';
+          row.style.alignItems='center'; row.style.gap='10px';
+          row.appendChild(avatar(p.name,p.uuid,'lg'));
           const left=document.createElement('span'); left.className='k'; left.style.whiteSpace='normal';
           // Real name first and always: an admin screen that showed only the
           // mask would be the one place the mask was not supposed to work.
@@ -1204,14 +1718,15 @@ final class WebPage {
           for(const e of rows){
             const d=document.createElement('div'); d.className='arow';
             const col=ACTION_COLOR[e.action]||'#9aa3ae';
-            d.innerHTML='<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
+            d.appendChild(avatar(e.player,e.uuid,'sm'));
+            d.insertAdjacentHTML('beforeend','<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
               '<span class="who">'+esc(e.player)+
                 (e.mask?' <span class="muted" style="font-weight:400">as '+
                   esc(e.mask)+'</span>':'')+'</span>'+
               '<span class="what" style="color:'+col+'">'+esc(e.action)+
                 (e.count>1?' &times;'+e.count:'')+'</span>'+
               '<span class="det" title="'+esc(e.detail)+'">'+esc(e.detail)+'</span>'+
-              '<span class="at">'+esc(e.where)+'</span>';
+              '<span class="at">'+esc(e.where)+'</span>');
             box.appendChild(d);
           }
         }
@@ -1232,6 +1747,14 @@ final class WebPage {
           const box=$('a-map'); if(box) box.innerHTML='';
         }
 
+        """;
+
+    /**
+     * The third chunk: settings, mods and the polling loop.
+     *
+     * <p>Split for the same reason as the others — see {@link #HTML}.
+     */
+    private static final String PART3 = """
         // ---- settings ----
         function settingsPanel(){
           const wrap=document.createElement('div');
@@ -1427,64 +1950,286 @@ final class WebPage {
         };
 
         // ---- advertised mods ----
+        // ---- mods ----
+        let modsData=null, modSettingsOpen=false;
+
         function modsPanel(){
           const wrap=document.createElement('div');
-          wrap.innerHTML='<p class="muted">Mods this server suggests when someone joins. '+
+          wrap.innerHTML=
+            '<p class="muted">Mods this server suggests when someone joins. '+
             'Nothing is installed without the player agreeing.</p>'+
-            '<div id="modsettings" class="muted" style="margin-bottom:10px"></div>'+
-            '<section><h2>Add from Modrinth</h2>'+
-            '<p class="muted">The easiest way, and the one that gets the mod id right: Almin '+
-            'downloads the build that fits the Minecraft version this server runs, and reads '+
-            'the id '+
-            'out of the jar. Search, or paste a link like '+
-            '<code>https://modrinth.com/mod/modmenu</code>.</p>'+
-            '<div class="term"><input id="mr-q" placeholder="search Modrinth, or paste a project link">'+
-            '<button class="btn" id="mr-go">Search</button>'+
-            '<button class="btn go" id="mr-add">Add link</button></div>'+
-            '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
-            '<input type="checkbox" id="mr-req" style="width:auto"> Mark anything added as required</label>'+
-            '<div class="msg" id="mr-msg"></div>'+
-            '<div id="mr-hits"></div></section>'+
-            '<div id="modlist" style="margin-top:13px"></div>'+
-            '<section style="margin-top:14px"><h2>Or upload a jar yourself</h2>'+
-            '<p class="muted">Stored in <code>config/almin/modfiles/</code>. Players download it '+
-            'over their game connection &mdash; no public link, nothing else to host. Almin reads '+
-            'the mod id out of the jar, so you do not have to know it.</p>'+
-            '<input type="file" id="m-file" accept=".jar">'+
-            '<button class="btn" id="m-upload" style="margin-top:8px">Upload</button>'+
-            '<div class="msg" id="m-upmsg"></div>'+
-            '<div id="m-files" style="margin-top:10px"></div></section>'+
-            '<section style="margin-top:14px"><h2>Advertise by hand</h2>'+
-            '<p class="muted">Only needed for a mod that is not on Modrinth. The mod id must be '+
-            'the one inside <code>fabric.mod.json</code> in the jar &mdash; not the name on the '+
-            'download page &mdash; or a client cannot tell it already has the mod. '+
-            'Upload the jar instead and Almin works it out.</p>'+
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
-            '<input id="m-id" placeholder="fabric mod id (e.g. sodium)">'+
-            '<input id="m-name" placeholder="display name (optional)">'+
-            '<input id="m-ver" placeholder="version (optional)">'+
-            '<input id="m-sha" placeholder="sha256 (optional, recommended)">'+
+            '<div class="bartitle">'+
+              '<h2 id="m-count">Advertised mods</h2>'+
+              '<span class="spacer"></span>'+
+              '<button class="btn go" id="m-add">'+ICON.plus+' Add mod</button>'+
+              '<button class="btn cog" id="m-cog" title="Settings for offering mods">'+
+                ICON.cog+'</button>'+
             '</div>'+
-            '<p class="muted" style="margin:10px 0 4px">Source &mdash; pick an uploaded file, '+
-            'or leave it on &ldquo;URL&rdquo; and paste an https link.</p>'+
-            '<select id="m-src" style="width:100%;background:#0b0d11;border:1px solid var(--line);'+
-            'color:var(--ink);border-radius:8px;padding:9px 11px;font:inherit"></select>'+
-            '<input id="m-url" placeholder="https://... direct link to the .jar" style="margin-top:8px">'+
-            '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
-            '<input type="checkbox" id="m-req" style="width:auto"> Required '+
-            '(declining can disconnect, if mods-deny-kicks is on)</label>'+
-            '<button class="btn" id="m-save" style="margin-top:10px">Save mod</button>'+
-            '<div class="msg" id="m-msg"></div></section>';
-          setTimeout(()=>{ loadMods(); loadModFiles();
-            $('m-save').onclick=saveMod; $('m-upload').onclick=uploadMod;
-            $('mr-go').onclick=searchModrinth;
-            $('mr-add').onclick=()=>addModrinth($('mr-q').value.trim());
-            $('mr-q').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); searchModrinth(); } };
-            $('m-src').onchange=()=>{ $('m-url').style.display=$('m-src').value?'none':''; }; },0);
+            '<div id="m-settings"></div>'+
+            '<div class="browser" id="modlist"></div>'+
+            '<div id="m-unused" style="margin-top:14px"></div>'+
+            '<div class="msg" id="m-msg"></div>';
+          setTimeout(()=>{
+            $('m-add').onclick=()=>menuUnder($('m-add'),addModMenu());
+            $('m-cog').onclick=()=>{ modSettingsOpen=!modSettingsOpen; renderModSettings(); };
+            $('modlist').oncontextmenu=e=>{
+              if(e.target.closest('.modrow')) return;
+              menuAt(e,addModMenu());
+            };
+            loadMods();
+          },0);
           return wrap;
         }
 
-        // ---- Modrinth ----
+        /** The three ways of adding a mod, all landing on the one list. */
+        function addModMenu(){
+          return [
+            {header:'Add a mod'},
+            {label:'Search Modrinth…',icon:ICON.globe,hint:'easiest',run:modrinthDialog},
+            {label:'Upload a jar…',icon:ICON.box,hint:'hosted here',run:uploadModDialog},
+            {label:'Advertise a link…',icon:ICON.edit,hint:'by hand',
+             run:()=>editModDialog(null)}
+          ];
+        }
+
+        /** The settings that govern offering mods, behind the cog. */
+        function renderModSettings(){
+          const box=$('m-settings'); if(!box) return;
+          box.innerHTML='';
+          if(!modSettingsOpen || !modsData) return;
+          const sec=document.createElement('section');
+          sec.style.margin='0 0 13px';
+          sec.innerHTML='<h2>Settings</h2>';
+          sec.append(
+            cfgToggle('mods-advertise','Advertise on join',modsData.advertise,loadMods),
+            cfgToggle('mods-deny-kicks','Declining disconnects',modsData.denyKicks,loadMods),
+            cfgToggle('require-client-mod','Almin required to play',
+                      modsData.requireClientMod,loadMods));
+          box.appendChild(sec);
+        }
+
+        function modIcon(m){
+          const letter=((m.name||m.id||'?').trim().charAt(0)||'?').toUpperCase();
+          const stand=()=>{ const s=document.createElement('span'); s.className='modicon';
+            s.textContent=letter; return s; };
+          if(!m.icon) return stand();
+          const img=document.createElement('img'); img.className='modicon';
+          img.alt=''; img.loading='lazy';
+          img.src='/api/mods/icon?id='+encodeURIComponent(m.id);
+          img.onerror=()=>{ if(img.parentNode) img.parentNode.replaceChild(stand(),img); };
+          return img;
+        }
+
+        function modRow(m){
+          const row=document.createElement('div'); row.className='modrow';
+          row.appendChild(modIcon(m));
+          const body=document.createElement('div'); body.className='body';
+          const jar=m.kind==='jar';
+          const chips='<span class="chip '+(jar?'jar':'link')+'">'+(jar?'Jar':'Link')+'</span>'+
+            (m.source==='modrinth'?' <span class="chip">Modrinth</span>':'')+
+            (m.required?' <span class="chip req">Required</span>':'')+
+            (m.sha256?' <span class="chip">Pinned</span>':'');
+          const where = jar
+            ? 'served by this server — '+esc(m.file)
+            : esc(m.url);
+          body.innerHTML='<div class="ttl">'+esc(m.name||m.id)+
+            (m.version?' <span class="muted" style="font-weight:400">'+esc(m.version)+
+              '</span>':'')+' '+chips+'</div>'+
+            '<div class="sub" title="'+esc(m.url||m.file||'')+'">'+
+              '<code>'+esc(m.id)+'</code> · '+where+'</div>';
+          const acts=document.createElement('div'); acts.className='acts';
+          const edit=document.createElement('button'); edit.className='btn';
+          edit.textContent='Edit'; edit.onclick=()=>editModDialog(m);
+          const more=document.createElement('button'); more.className='btn cog';
+          more.innerHTML='&#8943;'; more.title='More';
+          more.onclick=()=>menuUnder(more,modMenu(m));
+          acts.append(edit,more);
+          row.append(body,acts);
+          row.oncontextmenu=ev=>menuAt(ev,modMenu(m));
+          return row;
+        }
+
+        function modMenu(m){
+          const items=[{header:m.name||m.id},
+            {label:'Edit…',icon:ICON.edit,run:()=>editModDialog(m)},
+            {label:m.required?'Make optional':'Make required',
+             run:()=>setModRequired(m,!m.required)}];
+          if(m.page) items.push({label:'Open on Modrinth',icon:ICON.globe,
+            run:()=>window.open(m.page,'_blank','noopener')});
+          items.push('sep');
+          items.push({label:'Stop advertising…',icon:ICON.trash,danger:true,
+            run:()=>removeModDialog(m)});
+          return items;
+        }
+
+        async function setModRequired(m,required){
+          const r=await jpost('/api/mods/save',{
+            id:m.id,name:m.name,version:m.version,url:m.url,file:m.file,
+            sha256:m.sha256,required:required,page:m.page||'',source:m.source||''});
+          const msg=$('m-msg');
+          if(msg){ msg.className='msg '+(r.status===200?'ok':'err');
+            msg.textContent=r.status===200
+              ? (m.name||m.id)+' is now '+(required?'required':'optional')+'.'
+              : (r.body.error||'update failed'); }
+          loadMods();
+        }
+
+        function removeModDialog(m){
+          modal('Stop advertising',(body,close)=>{
+            body.innerHTML='<p>Stop offering <b>'+esc(m.name||m.id)+'</b> to joining players?</p>'+
+              '<p class="muted">'+(m.kind==='jar'
+                ? 'The jar stays in <code>config/almin/modfiles/</code> — delete it separately '+
+                  'if you want it gone.'
+                : 'Nothing is deleted; the link is simply no longer offered.')+'</p>'+
+              '<div class="row2"><button class="btn danger" id="rm-go">Stop advertising</button>'+
+              '<button class="btn" id="rm-no">Cancel</button></div>'+
+              '<div class="msg" id="rm-msg"></div>';
+            $('rm-no').onclick=close;
+            $('rm-go').onclick=async()=>{
+              const r=await jpost('/api/mods/delete',{id:m.id});
+              if(r.status===200){ close(); loadMods(); }
+              else { const x=$('rm-msg'); x.className='msg err';
+                x.textContent=r.body.error||'remove failed'; }
+            };
+          });
+        }
+
+        /**
+         * One form for both "edit this mod" and "advertise a link by hand" —
+         * they are the same fields, and having two of them was how the panel
+         * ended up with a page of stacked forms.
+         */
+        function editModDialog(m){
+          const fresh=!m;
+          modal(fresh?'Advertise a mod by hand':'Edit '+(m.name||m.id),(body,close)=>{
+            body.innerHTML=
+              (fresh?'<p class="muted">Only needed for a mod that is not on Modrinth. The mod id '+
+                'must be the one inside <code>fabric.mod.json</code> — not the name on the '+
+                'download page — or a client cannot tell it already has the mod. Uploading the '+
+                'jar instead lets Almin read it.</p>':'')+
+              '<div class="grid2">'+
+                '<div><label class="f" id="e-idlabel">Mod id</label>'+
+                  '<input id="e-id" placeholder="fabric mod id (e.g. sodium)"></div>'+
+                '<div><label class="f">Display name</label><input id="e-name"></div>'+
+                '<div><label class="f">Version</label><input id="e-ver"></div>'+
+                '<div><label class="f">SHA-256 (optional, recommended)</label>'+
+                  '<input id="e-sha"></div>'+
+              '</div>'+
+              '<label class="f">Where the jar comes from</label>'+
+              '<select id="e-src"><option value="">URL (external https link)</option></select>'+
+              '<input id="e-url" placeholder="https://… direct link to the .jar" '+
+                'style="margin-top:8px">'+
+              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:12px">'+
+                '<input type="checkbox" id="e-req" style="width:auto"> Required '+
+                '(declining can disconnect, if mods-deny-kicks is on)</label>'+
+              '<div class="row2"><button class="btn go" id="e-save">Save</button></div>'+
+              '<div class="msg" id="e-msg"></div>';
+            if(m){
+              $('e-id').value=m.id||''; $('e-name').value=m.name||'';
+              $('e-ver').value=m.version||''; $('e-sha').value=m.sha256||'';
+              $('e-url').value=m.url||''; $('e-req').checked=!!m.required;
+              // The jar decides its own id, so editing it here would only
+              // produce a second entry the client could never match.
+              if(m.kind==='jar'){ $('e-id').disabled=true;
+                $('e-idlabel').textContent='Mod id — read from the jar'; }
+            }
+            const src=$('e-src');
+            const showUrl=()=>{ $('e-url').style.display=src.value?'none':''; };
+            src.onchange=showUrl;
+            jget('/api/mods/files').then(r=>{
+              const files=(r.status===200&&r.body.files)?r.body.files:[];
+              src.innerHTML='<option value="">URL (external https link)</option>'+
+                files.map(f=>'<option value="'+esc(f)+'">served by this server: '+
+                  esc(f)+'</option>').join('');
+              if(m&&m.file) src.value=m.file;
+              showUrl();
+            });
+            $('e-save').onclick=async()=>{
+              const msg=$('e-msg');
+              const id=$('e-id').value.trim();
+              const file=src.value;
+              if(!id){ msg.className='msg err'; msg.textContent='A mod id is required.'; return; }
+              if(!file && !$('e-url').value.trim()){
+                msg.className='msg err';
+                msg.textContent='Pick a file on this server, or paste an https link.'; return; }
+              const r=await jpost('/api/mods/save',{
+                id:id, name:$('e-name').value.trim(), version:$('e-ver').value.trim(),
+                sha256:$('e-sha').value.trim(), file:file,
+                url:file?'':$('e-url').value.trim(), required:$('e-req').checked,
+                page:m?(m.page||''):'', source:m?(m.source||''):'link'});
+              if(r.status!==200){ msg.className='msg err';
+                msg.textContent=r.body.error||'save failed'; return; }
+              // Changing the id makes a new entry; the old one would otherwise
+              // stay behind, advertising the same mod twice.
+              if(m && m.id && m.id.toLowerCase()!==id.toLowerCase()){
+                await jpost('/api/mods/delete',{id:m.id});
+              }
+              close(); loadMods();
+            };
+          });
+        }
+
+        function uploadModDialog(){
+          modal('Upload a jar',(body,close)=>{
+            body.innerHTML='<p class="muted">Stored in <code>config/almin/modfiles/</code> and '+
+              'streamed to players over the game connection they already have — no public link, '+
+              'nothing else to host. Almin reads the mod id out of the jar and adds it to the '+
+              'list, so there is no second step.</p>'+
+              '<input type="file" id="m-file" accept=".jar" multiple>'+
+              '<div class="row2"><button class="btn go" id="m-upgo">Upload</button></div>'+
+              '<div class="msg" id="m-upmsg"></div>';
+            $('m-upgo').onclick=()=>uploadMods(close);
+          });
+        }
+        async function uploadMods(close){
+          const inp=$('m-file'), msg=$('m-upmsg'), btn=$('m-upgo');
+          if(!inp.files||!inp.files.length){
+            msg.className='msg err'; msg.textContent='Choose a .jar first.'; return; }
+          btn.disabled=true;
+          const added=[]; let failed='';
+          for(const f of inp.files){
+            msg.className='msg'; msg.textContent='Uploading '+f.name+'…';
+            try{
+              const r=await fetch('/api/mods/upload?name='+encodeURIComponent(f.name),
+                {method:'POST',credentials:'same-origin',
+                 headers:{'Content-Type':'application/octet-stream'},body:f});
+              const b=await r.json().catch(()=>({}));
+              if(r.status!==200){ failed=f.name+': '+(b.error||'upload failed'); break; }
+              added.push(b.advertised ? (b.modName||b.modId) : f.name+' (stored, but not listed)');
+            }catch(e){ failed=f.name+': upload failed — '+e.message; break; }
+          }
+          btn.disabled=false;
+          loadMods();
+          if(failed){ msg.className='msg err'; msg.textContent=failed; return; }
+          close();
+          const out=$('m-msg');
+          if(out){ out.className='msg ok';
+            out.textContent='Added '+added.join(', ')+' to the list.'; }
+        }
+
+        function modrinthDialog(){
+          modal('Add from Modrinth',(body)=>{
+            body.innerHTML='<p class="muted">Almin downloads the build that fits the Minecraft '+
+              'version this server runs and reads the mod id out of the jar, which is the part '+
+              'that is easy to get wrong by hand. Search, or paste a link like '+
+              '<code>https://modrinth.com/mod/modmenu</code>.</p>'+
+              '<div class="term"><input id="mr-q" '+
+                'placeholder="search Modrinth, or paste a project link">'+
+              '<button class="btn" id="mr-go">Search</button>'+
+              '<button class="btn go" id="mr-add">Add link</button></div>'+
+              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:9px">'+
+              '<input type="checkbox" id="mr-req" style="width:auto"> '+
+              'Mark anything added as required</label>'+
+              '<div class="msg" id="mr-msg"></div>'+
+              '<div id="mr-hits"></div>';
+            $('mr-go').onclick=searchModrinth;
+            $('mr-add').onclick=()=>addModrinth($('mr-q').value.trim());
+            $('mr-q').onkeydown=e=>{
+              if(e.key==='Enter'){ e.preventDefault(); searchModrinth(); } };
+            $('mr-q').focus();
+          },{wide:true});
+        }
+
         async function searchModrinth(){
           const q=$('mr-q').value.trim(), msg=$('mr-msg'), box=$('mr-hits');
           if(!q){ msg.className='msg err'; msg.textContent='Type something to search for.'; return; }
@@ -1497,128 +2242,121 @@ final class WebPage {
           const hits=r.body.hits||[];
           msg.className='msg';
           msg.textContent=hits.length
-            ? hits.length+' Fabric mod'+(hits.length===1?'':'s')+' for Minecraft '+r.body.gameVersion
+            ? hits.length+' Fabric mod'+(hits.length===1?'':'s')+
+              ' for Minecraft '+r.body.gameVersion
             : 'Nothing on Modrinth matches that for Minecraft '+r.body.gameVersion+'.';
           box.innerHTML='';
           if(!hits.length) return;
-          const sec=document.createElement('section'); sec.style.marginTop='10px';
+          const list=document.createElement('div'); list.className='browser';
+          list.style.marginTop='11px';
           for(const h of hits){
-            const row=document.createElement('div'); row.className='row';
-            row.style.alignItems='center'; row.style.gap='8px';
-            const left=document.createElement('span'); left.className='k';
-            left.style.whiteSpace='normal';
-            left.innerHTML='<b style="color:var(--ink)">'+esc(h.title)+'</b> '+
-              '<span class="muted">'+h.downloads.toLocaleString()+' downloads</span>'+
-              '<br><span class="muted" style="font-size:12px">'+esc(h.description)+'</span>';
-            const btn=document.createElement('button'); btn.className='btn go'; btn.textContent='Add';
-            btn.style.marginLeft='auto';
-            btn.onclick=()=>addModrinth(h.slug);
-            row.append(left,btn); sec.appendChild(row);
+            const row=document.createElement('div'); row.className='modrow';
+            // Search results are the one place a picture is linked rather than
+            // cached: nothing has been added yet, so there is nothing to cache
+            // it against. Once added, the icon is served from this server.
+            const img=document.createElement('img'); img.className='modicon';
+            img.alt=''; img.loading='lazy'; img.referrerPolicy='no-referrer';
+            img.src=h.icon||'';
+            img.onerror=()=>{ const s=document.createElement('span'); s.className='modicon';
+              s.textContent=((h.title||'?').charAt(0)||'?').toUpperCase();
+              if(img.parentNode) img.parentNode.replaceChild(s,img); };
+            row.appendChild(img);
+            const body=document.createElement('div'); body.className='body';
+            body.innerHTML='<div class="ttl">'+esc(h.title)+
+              ' <span class="muted" style="font-weight:400">'+
+              h.downloads.toLocaleString()+' downloads</span></div>'+
+              '<div class="sub">'+esc(h.description)+'</div>';
+            const acts=document.createElement('div'); acts.className='acts';
+            const add=document.createElement('button'); add.className='btn go';
+            add.textContent='Add'; add.onclick=()=>addModrinth(h.slug);
+            acts.appendChild(add);
+            row.append(body,acts);
+            list.appendChild(row);
           }
-          box.appendChild(sec);
+          box.appendChild(list);
         }
         async function addModrinth(link){
           const msg=$('mr-msg');
           if(!link){ msg.className='msg err'; msg.textContent='Paste a link or search first.'; return; }
-          msg.className='msg'; msg.textContent='Fetching '+esc(link)+'…';
+          msg.className='msg'; msg.textContent='Fetching '+link+'…';
           const r=await jpost('/api/mods/modrinth',
             {action:'add',link:link,required:$('mr-req').checked});
           msg.className='msg '+(r.status===200?'ok':'err');
           msg.textContent=r.body.message||r.body.error||'failed';
-          if(r.status===200){ $('mr-q').value=''; $('mr-hits').innerHTML='';
-            loadMods(); loadModFiles(); }
+          if(r.status===200){ $('mr-q').value=''; loadMods(); }
         }
+
         async function loadMods(){
           const r=await jget('/api/mods');
           const box=$('modlist'); if(!box) return;
-          if(r.status!==200){ box.innerHTML='<div class="note">'+esc(r.body.error||'unavailable')+'</div>'; return; }
-          const s=$('modsettings');
-          if(s){ s.innerHTML='';
-            s.append(cfgToggle('mods-advertise','Advertise on join',r.body.advertise,loadMods),
-                     cfgToggle('mods-deny-kicks','Declining disconnects',r.body.denyKicks,loadMods),
-                     cfgToggle('require-client-mod','Almin required to play',r.body.requireClientMod,loadMods)); }
+          if(r.status!==200){
+            box.innerHTML='<div class="fempty">'+esc(r.body.error||'unavailable')+'</div>';
+            return;
+          }
+          modsData=r.body;
           const mods=r.body.mods||[];
-          if(!mods.length){ box.innerHTML='<div class="note">Nothing advertised yet.</div>'; return; }
+          const count=$('m-count');
+          if(count) count.textContent='Advertised mods'+(mods.length?' ('+mods.length+')':'');
           box.innerHTML='';
+          if(!mods.length){
+            box.innerHTML='<div class="fempty">Nothing advertised yet — '+
+              'use <b>Add mod</b>, or right-click here.</div>';
+          } else {
+            for(const m of mods) box.appendChild(modRow(m));
+          }
+          paintUnusedJars(r.body.unusedFiles||[]);
+          renderModSettings();
+        }
+
+        /**
+         * Jars in modfiles/ that nothing advertises. Normally none: an upload
+         * now makes its own entry. What shows up here is a leftover from
+         * before that, or from an offer someone removed.
+         */
+        function paintUnusedJars(files){
+          const box=$('m-unused'); if(!box) return;
+          box.innerHTML='';
+          if(!files.length) return;
           const sec=document.createElement('section');
-          sec.innerHTML='<h2>Advertised ('+mods.length+')</h2>';
-          for(const m of mods){
+          sec.innerHTML='<h2>Jars on this server that nothing offers ('+files.length+')</h2>'+
+            '<p class="muted">In <code>config/almin/modfiles/</code>, taking up space but '+
+            'never sent to anyone.</p>';
+          for(const f of files){
             const row=document.createElement('div'); row.className='row';
+            row.style.alignItems='center'; row.style.gap='8px';
             const left=document.createElement('span'); left.className='k';
-            left.style.whiteSpace='normal';
-            left.innerHTML='<b style="color:var(--ink)">'+esc(m.name||m.id)+'</b>'+
-              (m.version?' <span class="muted">'+esc(m.version)+'</span>':'')+
-              (m.required?' <span class="state warn">REQUIRED</span>':' <span class="muted">optional</span>')+
-              (m.sha256?' <span class="muted">&middot; pinned</span>':'')+
-              '<br><span class="muted" style="font-size:12px">id <code>'+esc(m.id)+'</code>'+
-              ' &middot; '+(m.file? 'served by this server ('+esc(m.file)+')' : esc(m.url))+'</span>';
-            const btn=document.createElement('button'); btn.className='btn danger'; btn.textContent='Remove';
-            btn.style.marginLeft='auto';
-            btn.onclick=async()=>{ if(!confirm('Stop advertising '+m.id+'?')) return;
-              const d=await jpost('/api/mods/delete',{id:m.id});
-              if(d.status!==200) alert(d.body.error||'remove failed'); loadMods(); };
-            const edit=document.createElement('button'); edit.className='btn'; edit.textContent=m.required?'Make optional':'Make required';
-            edit.onclick=async()=>{ const d=await jpost('/api/mods/save',{
-                id:m.id,name:m.name,version:m.version,url:m.url,file:m.file,
-                sha256:m.sha256,required:!m.required});
-              if(d.status!==200) alert(d.body.error||'update failed'); loadMods(); };
-            row.append(left,edit,btn);
-            row.style.gap='8px'; row.style.alignItems='center';
+            left.textContent=f;
+            const add=document.createElement('button'); add.className='btn go';
+            add.textContent='Advertise'; add.style.marginLeft='auto';
+            add.onclick=async()=>{
+              // Any id will do: the server reads the real one out of the jar.
+              const r=await jpost('/api/mods/save',
+                {id:f.replace(/\\.jar$/i,'').toLowerCase().replace(/[^a-z0-9_-]+/g,'-'),
+                 file:f, source:'upload'});
+              const msg=$('m-msg');
+              if(msg){ msg.className='msg '+(r.status===200?'ok':'err');
+                msg.textContent=r.status===200?'Advertising '+f+'.':(r.body.error||'failed'); }
+              loadMods();
+            };
+            const del=document.createElement('button'); del.className='btn danger';
+            del.textContent='Delete';
+            del.onclick=()=>modal('Delete jar',(b,close)=>{
+              b.innerHTML='<p>Delete <code>'+esc(f)+'</code> from the server?</p>'+
+                '<div class="row2"><button class="btn danger" id="dj-go">Delete</button>'+
+                '<button class="btn" id="dj-no">Cancel</button></div>'+
+                '<div class="msg" id="dj-msg"></div>';
+              $('dj-no').onclick=close;
+              $('dj-go').onclick=async()=>{
+                const d=await jpost('/api/mods/files/delete',{name:f});
+                if(d.status===200){ close(); loadMods(); }
+                else { const x=$('dj-msg'); x.className='msg err';
+                  x.textContent=d.body.error||'delete failed'; }
+              };
+            });
+            row.append(left,add,del);
             sec.appendChild(row);
           }
           box.appendChild(sec);
-        }
-        async function loadModFiles(){
-          const r=await jget('/api/mods/files');
-          const sel=$('m-src'), box=$('m-files');
-          if(!sel) return;
-          const files=(r.status===200 && r.body.files)?r.body.files:[];
-          sel.innerHTML='<option value="">URL (external https link)</option>'+
-            files.map(f=>'<option value="'+esc(f)+'">server file: '+esc(f)+'</option>').join('');
-          $('m-url').style.display=sel.value?'none':'';
-          if(box){
-            box.innerHTML = files.length
-              ? '<div class="muted">On this server: '+files.map(f=>
-                  '<span style="display:inline-flex;gap:6px;align-items:center;margin:2px 8px 2px 0">'+
-                  esc(f)+' <a href="#" data-f="'+esc(f)+'" class="delfile" style="color:#e97070">remove</a></span>').join('')+'</div>'
-              : '<div class="note">No jars uploaded yet.</div>';
-            box.querySelectorAll('.delfile').forEach(a=>a.onclick=async e=>{
-              e.preventDefault();
-              const f=a.getAttribute('data-f');
-              if(!confirm('Delete '+f+' from the server?')) return;
-              const d=await jpost('/api/mods/files/delete',{name:f});
-              if(d.status!==200) alert(d.body.error||'delete failed');
-              loadModFiles(); loadMods(); });
-          }
-        }
-        async function uploadMod(){
-          const inp=$('m-file'), msg=$('m-upmsg');
-          if(!inp.files || !inp.files.length){ msg.className='msg err'; msg.textContent='Choose a .jar first.'; return; }
-          const f=inp.files[0];
-          msg.className='msg'; msg.textContent='Uploading '+f.name+'…';
-          try{
-            const r=await fetch('/api/mods/upload?name='+encodeURIComponent(f.name),
-              {method:'POST',credentials:'same-origin',
-               headers:{'Content-Type':'application/octet-stream'},body:f});
-            const b=await r.json().catch(()=>({}));
-            msg.className='msg '+(r.status===200?'ok':'err');
-            msg.textContent = r.status===200 ? ('uploaded '+b.name+' ('+b.bytes+' bytes)')
-                                             : (b.error||'upload failed');
-            if(r.status===200){ inp.value=''; loadModFiles(); }
-          }catch(e){ msg.className='msg err'; msg.textContent='upload failed'; }
-        }
-        async function saveMod(){
-          const msg=$('m-msg');
-          const src=$('m-src').value;
-          const r=await jpost('/api/mods/save',{
-            id:$('m-id').value.trim(), name:$('m-name').value.trim(),
-            version:$('m-ver').value.trim(), sha256:$('m-sha').value.trim(),
-            file:src, url:src?'':$('m-url').value.trim(), required:$('m-req').checked});
-          msg.className='msg '+(r.status===200?'ok':'err');
-          msg.textContent = r.status===200 ? 'saved' : (r.body.error||'save failed');
-          if(r.status===200){ ['m-id','m-name','m-ver','m-sha','m-url'].forEach(i=>$(i).value='');
-            $('m-req').checked=false; $('m-src').value=''; $('m-url').style.display='';
-            loadMods(); loadModFiles(); }
         }
 
         // ---- polling ----
@@ -1633,6 +2371,8 @@ final class WebPage {
           restarting=!!s.body.restarting;
           startCommand=s.body.startCommand||''; startProblem=s.body.startProblem||'';
           relaunchError=s.body.relaunchError||'';
+          // Absent for a logged-out session, which never asks for a face anyway.
+          if(s.body.heads!=null) headsOn=!!s.body.heads;
           if(restarting && !awaitingReturn){ awaitingReturn=true; waitingSince=Date.now(); }
           // A different version answering on this address means the jar was
           // replaced under us and this page is the old panel. Reload onto the
@@ -1697,12 +2437,14 @@ final class WebPage {
         """;
 
     /**
-     * The page, in two halves.
+     * The page, in four pieces.
      *
      * <p>Not a style choice: a single string constant cannot exceed 64KB in a
      * class file, and this page passed that. Joining at runtime keeps each
-     * half under the constant-pool limit — {@code PART1 + PART2} would not,
-     * since the compiler folds that straight back into one constant.
+     * piece under the constant-pool limit — writing {@code PART1 + PART2}
+     * instead would not, since the compiler folds that straight back into one
+     * constant. The split points follow the page's own sections so that a
+     * piece is a readable unit and not an arbitrary cut.
      */
-    static final String HTML = String.join("", PART1, PART2);
+    static final String HTML = String.join("", PART1, PARTFILES, PART2, PART3);
 }

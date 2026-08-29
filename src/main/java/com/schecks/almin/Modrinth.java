@@ -55,16 +55,22 @@ public final class Modrinth {
     private Modrinth() {}
 
     /** One search hit, trimmed to what a person choosing needs to see. */
-    public record Hit(String slug, String title, String description, int downloads) {}
+    public record Hit(String slug, String title, String description, int downloads,
+                      String iconUrl) {}
 
     /** A file that fits this server: what to advertise and where to get it. */
     public record Resolved(String slug, String title, String version, String url,
-                           String filename, String sha512, String problem) {
+                           String filename, String sha512, String iconUrl, String problem) {
         public boolean ok() { return problem.isEmpty(); }
         static Resolved fail(String why) {
-            return new Resolved("", "", "", "", "", "", why);
+            return new Resolved("", "", "", "", "", "", "", why);
         }
+        /** The project page, for a link out of the panel. */
+        public String page() { return slug.isEmpty() ? "" : "https://modrinth.com/mod/" + slug; }
     }
+
+    /** A project's display name and icon, both optional. */
+    private record About(String title, String iconUrl) {}
 
     /**
      * The project slug in a Modrinth link, or "" if it is not one.
@@ -107,7 +113,8 @@ public final class Modrinth {
                 str(o, "slug"),
                 str(o, "title"),
                 str(o, "description"),
-                o.has("downloads") ? o.get("downloads").getAsInt() : 0));
+                o.has("downloads") ? o.get("downloads").getAsInt() : 0,
+                str(o, "icon_url")));
         }
         return out;
     }
@@ -138,12 +145,13 @@ public final class Modrinth {
             JsonObject file = primaryFile(best);
             if (file == null) return Resolved.fail("That release has no file attached.");
 
-            String title = titleOf(slug);
-            return new Resolved(slug, title,
+            About about = aboutProject(slug);
+            return new Resolved(slug, about.title(),
                 str(best, "version_number"),
                 str(file, "url"),
                 str(file, "filename"),
                 file.has("hashes") ? str(file.getAsJsonObject("hashes"), "sha512") : "",
+                about.iconUrl(),
                 "");
         } catch (IOException e) {
             return Resolved.fail("Could not reach Modrinth: " + e.getMessage());
@@ -181,12 +189,14 @@ public final class Modrinth {
         return firstJar;
     }
 
-    /** The project's display name, falling back to the slug if the call fails. */
-    private static String titleOf(String slug) {
+    /** The project's display name and icon, falling back to the slug. */
+    private static About aboutProject(String slug) {
         try {
-            return str(getJson(API + "/project/" + enc(slug)).getAsJsonObject(), "title");
+            JsonObject o = getJson(API + "/project/" + enc(slug)).getAsJsonObject();
+            String title = str(o, "title");
+            return new About(title.isEmpty() ? slug : title, str(o, "icon_url"));
         } catch (Exception e) {
-            return slug;
+            return new About(slug, "");
         }
     }
 

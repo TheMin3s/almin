@@ -40,8 +40,31 @@ public final class WebFiles {
      *  can't produce a runaway response. */
     public static final int MAX_LIST_ENTRIES = 2000;
 
-    public record Entry(String name, boolean directory, long size) {}
-    public record Listing(String path, boolean isDir, long fileSize, List<Entry> entries) {}
+    /** Past this many folders in one listing, none of them are counted. */
+    private static final int MAX_COUNTED_DIRS = 120;
+
+    /** A folder with more children than this just reports "lots". */
+    private static final int MAX_COUNTED_CHILDREN = 5000;
+
+    /**
+     * One row in a folder view. {@code modified} is epoch millis (0 when the
+     * filesystem would not say), {@code items} is a directory's child count or
+     * -1, and {@code writable} is whether the write rules would let this one be
+     * renamed or deleted — worked out here so the browser can grey the actions
+     * out rather than offering them and failing.
+     */
+    public record Entry(String name, boolean directory, long size,
+                        long modified, int items, boolean writable) {
+        public Entry(String name, boolean directory, long size) {
+            this(name, directory, size, 0L, -1, false);
+        }
+    }
+    public record Listing(String path, boolean isDir, long fileSize,
+                          List<Entry> entries, boolean writable) {
+        public Listing(String path, boolean isDir, long fileSize, List<Entry> entries) {
+            this(path, isDir, fileSize, entries, false);
+        }
+    }
     public record Result(boolean ok, String message) {
         static Result pass()          { return new Result(true, "ok"); }
         static Result fail(String m)  { return new Result(false, m); }
@@ -97,7 +120,7 @@ public final class WebFiles {
         if (!Files.exists(target)) throw new IOException("No such path: " + rel);
         if (!Files.isDirectory(target)) {
             long size = Files.size(target);
-            return new Listing(rel, false, size, List.of());
+            return new Listing(rel, false, size, List.of(), isWritable(server, target));
         }
         List<Path> paths = new ArrayList<>();
         try (Stream<Path> s = Files.list(target)) {
@@ -107,14 +130,27 @@ public final class WebFiles {
             .comparing((Path p) -> !Files.isDirectory(p))
             .thenComparing(p -> p.getFileName().toString().toLowerCase()));
         List<Entry> entries = new ArrayList<>(Math.min(paths.size(), MAX_LIST_ENTRIES));
+        // Counting a folder's children means opening it, so it is only done
+        // when a listing has few enough folders for that to stay cheap. A big
+        // one simply reports -1 and the panel says nothing about its contents.
+        long folders = paths.stream().filter(Files::isDirectory).count();
+        boolean countChildren = folders <= MAX_COUNTED_DIRS;
         for (Path p : paths) {
             if (entries.size() >= MAX_LIST_ENTRIES) break;
             boolean dir = Files.isDirectory(p);
             long size = -1;
-            if (!dir) { try { size = Files.size(p); } catch (IOException ignored) {} }
-            entries.add(new Entry(p.getFileName().toString(), dir, size));
+            long modified = 0;
+            int items = -1;
+            try { modified = Files.getLastModifiedTime(p).toMillis(); } catch (IOException ignored) {}
+            if (dir) {
+                if (countChildren) items = countUpTo(p, MAX_COUNTED_CHILDREN);
+            } else {
+                try { size = Files.size(p); } catch (IOException ignored) {}
+            }
+            entries.add(new Entry(p.getFileName().toString(), dir, size,
+                modified, items, isWritable(server, p)));
         }
-        return new Listing(rel, true, -1, entries);
+        return new Listing(rel, true, -1, entries, isWritable(server, target));
     }
 
     /** Reads a text file's contents, capped at {@link #MAX_READ_BYTES}. */
@@ -246,6 +282,68 @@ public final class WebFiles {
         Path target = resolveUnder(root, rel);
         if (target == null || !Files.isRegularFile(target)) return null;
         return target;
+    }
+
+    /** How many children {@code dir} has, stopping at {@code limit}. */
+    private static int countUpTo(Path dir, int limit) {
+        int n = 0;
+        try (var stream = Files.newDirectoryStream(dir)) {
+            for (var ignored : stream) {
+                if (++n >= limit) break;
+            }
+        } catch (IOException | RuntimeException e) {
+            return -1;
+        }
+        return n;
+    }
+
+    /**
+     * Creates a folder under a writable root.
+     *
+     * <p>The name is a single path element by design: the browser's "new
+     * folder" makes one folder in the folder you are looking at, and letting
+     * it carry separators would be a second, quieter way of choosing a path.
+     */
+    public static Result mkdir(MinecraftServer server, String parentRel, String name) {
+        Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR)
+            .toAbsolutePath().normalize().getParent();
+        return mkdir(root(server), AlminConfig.get().dirWritableRootsAsSet(),
+            datapacks, parentRel, name);
+    }
+
+    /**
+     * The same rules, without a server behind them — the shape
+     * {@link #uploadTarget(Path, java.util.Set, Path, String)} already uses,
+     * and for the same reason: this is path arithmetic and the config, so it
+     * can be exercised against a real directory instead of described.
+     */
+    public static Result mkdir(Path root, java.util.Set<String> writableRoots,
+                               Path datapacksParent, String parentRel, String name) {
+        if (name == null || name.isBlank() || name.contains("/") || name.contains("\\")
+                || name.contains("..")) {
+            return Result.fail("Invalid folder name: " + name);
+        }
+        Path base = root.toAbsolutePath().normalize();
+        Path parent = resolveUnder(base, parentRel);
+        if (parent == null) return Result.fail("Path escapes server directory");
+        if (!Files.isDirectory(parent)) return Result.fail("Not a folder: " + parentRel);
+        Path target = parent.resolve(name).toAbsolutePath().normalize();
+        if (!target.startsWith(base)) return Result.fail("That resolves outside the server directory");
+        Path relative = base.relativize(target);
+        boolean allowed = relative.getNameCount() > 0
+            && (writableRoots.contains(relative.getName(0).toString())
+                || (datapacksParent != null && target.startsWith(datapacksParent)));
+        if (!allowed) {
+            return Result.fail("New folders are limited to: " + String.join(", ", writableRoots)
+                + " (or a world's datapacks/)");
+        }
+        if (Files.exists(target)) return Result.fail("Something named " + name + " is already there");
+        try {
+            Files.createDirectory(target);
+            return Result.pass();
+        } catch (IOException e) {
+            return Result.fail("Could not create the folder: " + e.getMessage());
+        }
     }
 
     /** Renames a file within its directory, under a writable root. */
