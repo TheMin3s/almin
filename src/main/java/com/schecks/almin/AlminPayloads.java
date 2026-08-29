@@ -92,5 +92,8 @@ public final class AlminPayloads {
         PayloadTypeRegistry.serverboundPlay().registerLarge(
             FileUploadPayload.TYPE, FileUploadPayload.CODEC,
             FileUploadPayload.MAX_BYTES + 8192);
+        PayloadTypeRegistry.serverboundPlay().registerLarge(
+            ClientProfilePayload.TYPE, ClientProfilePayload.CODEC,
+            ClientProfilePayload.MAX_BYTES);
     }
 }

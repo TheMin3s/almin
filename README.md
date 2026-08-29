@@ -215,6 +215,63 @@ Mojang, and the lists draw a coloured initial instead. That fallback is also
 what you get for any player whose skin cannot be found, so a cracked server
 without the setting changed simply shows initials.
 
+### What each client is running
+
+Every row in the **Players** list carries a badge saying whether that client
+has the Almin mod — the same test the join handler uses to decide whether to
+send it anything, so it is the truth rather than a guess.
+
+**Client** on a row that has one opens what it reported: the mod list, the
+Minecraft and loader versions, the launcher's own name for itself, and the
+shape of the machine — operating system, version, architecture, processors,
+and the heap Java was given. That is what a support question needs.
+
+The list is ordered so that *what changed* does not need reading. Present mods
+are alphabetical; ones that arrived since the last join are green with a `+`
+and stay in that alphabetical order; ones that have gone sit at the bottom,
+struck through, with the date, for `client-mod-history-days` (a week by
+default) and are then forgotten. A mod that comes back clears its own removal,
+so toggling a profile does not fill the list with ghosts, and a version change
+is an upgrade rather than an install.
+
+**Everything here is self-reported.** A modified client can put anything it
+likes in that packet. It is a support tool and a house rule; nothing that
+treats it as proof is right about what it has.
+
+**What is deliberately not collected:** no machine model, no serial number, no
+username, no file paths, no addresses. Reading a Mac's model would mean running
+`sysctl` on somebody's computer, and a mod that shells out on a player's
+machine to report what it found is a different kind of program from this one.
+`client-report false` turns the whole thing off, and then the client sends
+nothing at all.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `client-report` | `true` | let the client mod report its mods and machine |
+| `client-mod-history-days` | `7` | how long a removed mod stays listed as recently removed |
+
+### Restricting mods
+
+**Mods → Settings → Restricted mods** takes a list of mod ids players are asked
+not to run — `xaerominimap`, as the loader spells it, not the display name.
+Every client's report is checked at join: a hit is logged and, with
+`mods-restricted-kick` on, disconnects them with the names in the message.
+
+The section is hidden until **Almin required to play** is on, and that is not
+tidiness. Without the client mod there is no mod list to check, so the rule
+would only ever land on the players honest enough to be visible — which is the
+wrong half of them. `mods-show-restricted` puts it back for anyone who wants it
+regardless.
+
+Like everything else here it is self-reported, so it is a house rule and not an
+anti-cheat.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `mods-restricted` | *(empty)* | comma-separated mod ids to restrict |
+| `mods-show-restricted` | `false` | show the section without `require-client-mod` |
+| `mods-restricted-kick` | `false` | disconnect a player running one, rather than only logging it |
+
 ### What each player has been doing
 
 Every row in the **Players** list carries three more things.
@@ -480,7 +537,12 @@ block under the cursor stays under it — and drag to move. The buttons in the
 corner zoom in, zoom out, and put the framing back to everything in view.
 
 Every player's **face** is drawn where they were at the cursor, so scrubbing
-moves them along their paths, and it goes grey once nobody has moved it. Nobody
+moves them along their paths. Somebody who has logged off by then is drawn
+smaller, greyed, with a small arrow on the corner saying they left there — a
+path ends where somebody logs off, and a face left standing at full size says
+they are still there, which after an evening of people coming and going is a
+map full of players who all went home hours ago. Rejoining undoes it. A face
+also goes grey once nobody has moved it. Nobody
 is sampled while they stand still, so the gap between the cursor and their last
 sample is exactly how long they have not moved — which makes the grey right
 when you scrub back, rather than only describing right now. Clicking a face —

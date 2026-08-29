@@ -200,6 +200,35 @@ public final class AlminConfig {
     /** Blocks either side of the players the picture covers. */
     public int mapRadius = 192;
     /**
+     * Let the Almin client mod report what it is running.
+     *
+     * <p>On by default, because it is the reason to install a client mod on an
+     * administered server: it is what turns "it crashed" into a mod list and a
+     * Java version. It is also the one thing Almin collects about a player's
+     * computer rather than about their play, so it is a switch and it is
+     * documented as one.
+     *
+     * <p>Self-reported, always. A modified client can put anything it likes in
+     * that packet, so this is a support tool and a house rule, never proof.
+     */
+    public boolean clientReport = true;
+    /** How long a removed mod stays listed as recently removed. */
+    public int clientModHistoryDays = 7;
+    /**
+     * Mod ids players are asked not to run, comma-separated.
+     *
+     * <p>Only meaningful alongside {@link #requireClientMod}: without the
+     * client mod there is no mod list to check, so the restriction would apply
+     * to whoever was honest enough to be visible. The panel hides the whole
+     * section until the requirement is on, unless
+     * {@link #modsShowRestricted} says otherwise.
+     */
+    public String modsRestricted = "";
+    /** Show the restricted-mods section even without require-client-mod. */
+    public boolean modsShowRestricted = false;
+    /** Disconnect a player found running a restricted mod, rather than only logging it. */
+    public boolean modsRestrictedKick = false;
+    /**
      * Read the activity log with a language model, so the map comes with a
      * paragraph saying what happened rather than four thousand rows.
      *
@@ -374,6 +403,16 @@ public final class AlminConfig {
             c -> c.mapRadius, (c, v) -> c.mapRadius = (Integer) v),
         boolKey("web-player-heads", "Show player faces in the panel (looks skins up from Mojang for players who are not online)",
             c -> c.webPlayerHeads, (c, v) -> c.webPlayerHeads = (Boolean) v),
+        boolKey("client-report", "Let the Almin client mod report its mod list and machine details",
+            c -> c.clientReport, (c, v) -> c.clientReport = (Boolean) v),
+        intKey("client-mod-history-days", "How long a removed client mod stays listed as recently removed", 1, 90,
+            c -> c.clientModHistoryDays, (c, v) -> c.clientModHistoryDays = (Integer) v),
+        textKey("mods-restricted", "Comma-separated mod ids players are asked not to run",
+            c -> c.modsRestricted, (c, v) -> c.modsRestricted = (String) v),
+        boolKey("mods-show-restricted", "Show the restricted-mods section even without require-client-mod",
+            c -> c.modsShowRestricted, (c, v) -> c.modsShowRestricted = (Boolean) v),
+        boolKey("mods-restricted-kick", "Disconnect a player found running a restricted mod",
+            c -> c.modsRestrictedKick, (c, v) -> c.modsRestrictedKick = (Boolean) v),
         boolKey("ai-enabled", "Let a language model summarise the activity log (sends player activity to the chosen service)",
             c -> c.aiEnabled, (c, v) -> c.aiEnabled = (Boolean) v),
         textKey("ai-provider", "anthropic, openai, or local (anything speaking the OpenAI chat API at ai-base-url)",

@@ -345,6 +345,7 @@ public final class WebUi {
         http.createContext("/api/properties", guard("/api/properties", ui::handleProperties));
         http.createContext("/api/blocks", guard("/api/blocks", ui::handleBlocks));
         http.createContext("/api/item", guard("/api/item", ui::handleItem));
+        http.createContext("/api/client", guard("/api/client", ui::handleClient));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -1235,6 +1236,9 @@ public final class WebUi {
             o.addProperty("advertise", cfg.modsAdvertise);
             o.addProperty("denyKicks", cfg.modsDenyKicks);
             o.addProperty("requireClientMod", cfg.requireClientMod);
+            o.addProperty("restricted", cfg.modsRestricted);
+            o.addProperty("showRestricted", cfg.modsShowRestricted);
+            o.addProperty("restrictedKick", cfg.modsRestrictedKick);
             // Jars sitting in modfiles/ that nothing advertises. Normally
             // empty: an upload now makes its own advertisement. What lands
             // here is a leftover from before that, or from a removed offer.
@@ -2379,6 +2383,65 @@ public final class WebUi {
     }
 
     /**
+     * What one player's client is running, and what it used to be.
+     *
+     * <p>Everything here was said by that client. It is the answer to "why is
+     * it crashing for them", and it is not evidence of anything: a modified
+     * client can report whatever it likes.
+     */
+    private void handleClient(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            java.util.UUID id = Heads.parseUuid(queryParam(ex, "uuid"));
+            if (id == null) { json(ex, 400, err("Not a UUID.")); return; }
+            ClientProfiles.Profile p = ClientProfiles.of(id);
+            JsonObject root = new JsonObject();
+            root.addProperty("enabled", AlminConfig.get().clientReport);
+            root.addProperty("historyDays", AlminConfig.get().clientModHistoryDays);
+            if (p == null) {
+                root.addProperty("known", false);
+                json(ex, 200, root.toString());
+                return;
+            }
+            root.addProperty("known", true);
+            root.addProperty("name", p.name());
+            root.addProperty("at", p.at());
+            root.addProperty("minecraft", p.minecraft());
+            root.addProperty("loader", p.loader());
+            root.addProperty("launcher", p.launcher());
+            root.addProperty("os", p.os());
+            root.addProperty("osVersion", p.osVersion());
+            root.addProperty("arch", p.arch());
+            root.addProperty("java", p.java());
+            root.addProperty("cores", p.cores());
+            root.addProperty("memoryMb", p.memoryMb());
+
+            java.util.TreeSet<String> banned = ClientProfiles.restrictedSet();
+            JsonArray mods = new JsonArray();
+            for (ClientProfiles.Mod m : p.present()) mods.add(modJson(m, banned));
+            root.add("mods", mods);
+            JsonArray gone = new JsonArray();
+            for (ClientProfiles.Mod m : p.removed()) gone.add(modJson(m, banned));
+            root.add("removed", gone);
+            json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    private static JsonObject modJson(ClientProfiles.Mod m, java.util.Set<String> banned) {
+        JsonObject o = new JsonObject();
+        o.addProperty("id", m.id());
+        o.addProperty("version", m.version());
+        o.addProperty("firstSeen", m.firstSeen());
+        o.addProperty("removedAt", m.removedAt());
+        o.addProperty("restricted", banned.contains(m.id().toLowerCase(java.util.Locale.ROOT)));
+        return o;
+    }
+
+    /**
      * What colour each block is, by the name the log records.
      *
      * <p>For the isometric view, which has to draw a block and knows only what
@@ -2641,6 +2704,11 @@ public final class WebUi {
             String mask = MaskConfig.maskFor(p.getUUID());
             o.addProperty("mask", mask == null ? "" : mask);
             o.addProperty("sessionMillis", PlayerHistory.sessionLength(p.getUUID()));
+            // Whether this client can hear Almin at all. It is the same test
+            // the join handler uses to decide whether to send them anything.
+            o.addProperty("hasMod", net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
+                .canSend(p, ServerVersionPayload.TYPE));
+            o.addProperty("reported", ClientProfiles.of(p.getUUID()) != null);
             online.add(o);
         }
         root.add("online", online);
@@ -2659,11 +2727,16 @@ public final class WebUi {
                 o.addProperty("playtimeMillis", v.playtimeMillis());
                 String mask = MaskConfig.maskFor(e.getKey());
                 o.addProperty("mask", mask == null ? "" : mask);
+                // Somebody who is offline cannot be asked; what is known is
+                // whether they ever told us.
+                o.addProperty("reported", ClientProfiles.of(e.getKey()) != null);
                 history.add(o);
             }
         }
         root.add("history", history);
         root.addProperty("maxPlayers", server.getMaxPlayers());
+        root.addProperty("clientReport", AlminConfig.get().clientReport);
+        root.addProperty("requireClientMod", AlminConfig.get().requireClientMod);
         return root.toString();
     }
 

@@ -89,6 +89,10 @@ public class AlminClient implements ClientModInitializer {
 
         // Drop cached state when we leave a server, so the next join is
         // evaluated fresh by ClientUpdater.
+        // Told once, at join, and only to a server that asked for the mod.
+        // Nothing polls for this and nothing asks again.
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
+            ClientProfileReport.send());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) ->
             ClientUpdater.reset());
     }

@@ -353,6 +353,31 @@ final class WebPage {
           .sprow.edited code{color:var(--brand)}
           .sprow.edited input,.sprow.edited select{border-color:var(--brand)}
           .sprow.edited .btn{visibility:visible}
+          .modbadge{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+                    border-radius:999px;padding:2px 8px;border:1px solid var(--line);
+                    color:var(--mute);white-space:nowrap}
+          .modbadge.yes{border-color:#3d7a4a;color:#8ee0a1;background:rgba(61,122,74,.16)}
+          .modbadge.no{border-color:var(--line);color:var(--mute)}
+          .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px 14px}
+          .facts div{display:flex;gap:8px;align-items:baseline;font-size:13px;
+                     border-bottom:1px solid rgba(255,255,255,.05);padding:4px 0}
+          .facts span{color:var(--dim);min-width:120px}
+          .facts b{color:var(--ink);font-weight:600;word-break:break-word}
+          .csec{margin:16px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.9px;
+                color:var(--brand)}
+          .cmod{display:flex;gap:8px;align-items:baseline;padding:4px 2px;font-size:12.5px;
+                border-bottom:1px solid rgba(255,255,255,.05)}
+          .cmod:last-child{border-bottom:0}
+          .cmod code{color:var(--ink)}
+          .cmod .ver{color:var(--mute);font-size:11.5px}
+          .cmod .when{margin-left:auto;color:var(--mute);font-size:11px;white-space:nowrap}
+          .cmod .plus{font-style:normal;color:#8ee0a1;font-weight:700}
+          .cmod .minus{font-style:normal;color:#ff8f90;font-weight:700}
+          .cmod.fresh code{color:#8ee0a1}
+          .cmod.gone{opacity:.65}
+          .cmod.gone code{text-decoration:line-through}
+          .cmod .ban{border:1px solid #d7484a;color:#ff8f90;border-radius:999px;
+                     padding:0 7px;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
                   border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
                   color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
@@ -1413,11 +1438,30 @@ final class WebPage {
             if(v===null) return;
             const t=v.trim();
             sendMask(p.name, t, t===''); };
+          // Whether Almin can talk to this client at all. It is the first
+          // thing you want to know about a player and the answer to half the
+          // questions that follow.
+          const badge=document.createElement('span');
+          const modded=p.hasMod!==undefined?!!p.hasMod:!!p.reported;
+          badge.className='modbadge'+(modded?' yes':' no');
+          badge.textContent=modded?'Almin':'vanilla';
+          badge.title=modded
+            ? 'This client has the Almin mod'
+            : (p.hasMod===undefined
+                ? 'This client never reported the Almin mod'
+                : 'This client does not have the Almin mod');
           const see=document.createElement('button'); see.className='btn';
           see.textContent='Activity';
           see.title='Open this player on the activity map';
           see.onclick=()=>openInActivity(p.name);
-          row.append(left,see,set);
+          const kit=document.createElement('button'); kit.className='btn';
+          kit.textContent='Client';
+          kit.disabled=!p.reported;
+          kit.title=p.reported
+            ? 'What this client is running, and what changed'
+            : 'This client has not reported what it is running';
+          kit.onclick=()=>showClient(p);
+          row.append(badge,left,kit,see,set);
           if(p.mask){ const c=document.createElement('button'); c.className='btn danger'; c.textContent='Clear';
             c.onclick=()=>sendMask(p.name,'',true); row.appendChild(c); }
           card.appendChild(row);
@@ -1638,6 +1682,84 @@ final class WebPage {
               fmtDur(p.playtimeMillis)+' played · last seen '+fmtAgo(p.lastSeen)));
           hs.appendChild(s2);
         }
+        /**
+         * What one client is running.
+         *
+         * <p>Present mods in alphabetical order, ones that arrived since the
+         * last join marked and green, and ones that have gone at the bottom
+         * for as long as the history window keeps them. That ordering is the
+         * point: the answer to "what changed" should not need reading.
+         */
+        async function showClient(p){
+          modal('What '+p.name+' is running', body=>{
+            body.innerHTML='<div class="note">loading…</div>';
+            jget('/api/client?uuid='+encodeURIComponent(p.uuid)).then(r=>{
+              if(r.status!==200 || !r.body){ body.innerHTML='<div class="note">unavailable</div>';
+                return; }
+              const c=r.body;
+              if(!c.enabled){
+                body.innerHTML='<div class="note"><b>Client reporting is off.</b> '+
+                  'Turn on <code>client-report</code> to let the Almin client mod say '+
+                  'what it is running.</div>';
+                return;
+              }
+              if(!c.known){
+                body.innerHTML='<div class="note">This client has not reported anything. '+
+                  'It happens when they have not joined since reporting was turned on, '+
+                  'or they are not running the Almin mod.</div>';
+                return;
+              }
+              const facts=[
+                ['Minecraft',c.minecraft],['Loader',c.loader],['Launcher',c.launcher],
+                ['System',[c.os,c.osVersion].filter(Boolean).join(' ')],
+                ['Architecture',c.arch],['Java',c.java],
+                ['Processors',c.cores?String(c.cores):''],
+                ['Memory given to Java',c.memoryMb?c.memoryMb+' MB':'']];
+              let html='<div class="facts">';
+              for(const [k,v] of facts){
+                if(!v) continue;
+                html+='<div><span>'+esc(k)+'</span><b>'+esc(v)+'</b></div>';
+              }
+              html+='</div>'+
+                '<p class="muted" style="margin:10px 0 4px">Reported by the client itself '+
+                esc(fmtAgo(c.at))+'. A modified client can say anything, so this is a '+
+                'support tool rather than proof of anything.</p>';
+              const mods=c.mods||[], gone=c.removed||[];
+              html+='<h3 class="csec">Installed ('+mods.length+')</h3><div id="cl-mods"></div>';
+              if(gone.length){
+                html+='<h3 class="csec">Removed in the last '+(c.historyDays||7)+
+                  ' days ('+gone.length+')</h3><div id="cl-gone"></div>';
+              }
+              body.innerHTML=html;
+              paintMods($('cl-mods'),mods,c.at,false);
+              if(gone.length) paintMods($('cl-gone'),gone,c.at,true);
+            });
+          });
+        }
+
+        /** One list of client mods: new ones marked, removed ones dated. */
+        function paintMods(box,list,at,removed){
+          if(!box) return;
+          box.innerHTML='';
+          for(const m of list){
+            const row=document.createElement('div');
+            // New means "arrived at the join that produced this report", which
+            // is the only definition that does not call every mod new the
+            // first time a client is seen.
+            const fresh=!removed && m.firstSeen>=at-1000;
+            row.className='cmod'+(fresh?' fresh':'')+(removed?' gone':'')+
+              (m.restricted?' banned':'');
+            row.innerHTML=(fresh?'<i class="plus">+</i>':(removed?'<i class="minus">−</i>':''))+
+              '<code>'+esc(m.id)+'</code>'+
+              (m.version?'<span class="ver">'+esc(m.version)+'</span>':'')+
+              (m.restricted?'<span class="ban">restricted</span>':'')+
+              '<span class="when">'+esc(removed?('gone '+fmtAgo(m.removedAt))
+                                              :(fresh?'new':'since '+fmtAgo(m.firstSeen)))+
+              '</span>';
+            box.appendChild(row);
+          }
+        }
+
         async function sendMask(name,mask,clear){
           const r=await jpost('/api/mask',{name:name,mask:mask,clear:clear});
           const msg=$('p-msg'); msg.className='msg '+(r.status===200?'ok':'err');
@@ -2503,6 +2625,18 @@ final class WebPage {
           // threshold for everybody all the time, and a map where nobody is
           // ever moving says nothing.
           const afkSecs=Math.max(allData.afkSeconds||0,(allData.trackSeconds||0)*3);
+
+          // Who had actually gone by the cursor. A path ends where somebody
+          // logged off, and a face left standing there says they are there —
+          // which after an evening of people coming and going is a map full of
+          // players who all went home hours ago.
+          const away={};
+          for(const a of acts){
+            if(a.action!=='join' && a.action!=='leave') continue;
+            if(a.at>cursor) continue;
+            const seen=away[a.player];
+            if(!seen || a.at>=seen.at) away[a.player]={at:a.at, gone:a.action==='leave'};
+          }
           const inDim=p=>p.dim===allDim;
           const mine=a=>!focusPlayer || a.player===focusPlayer;
           // Everything that had happened by the cursor, not just the last
@@ -2649,13 +2783,18 @@ final class WebPage {
               // not moved — which is what AFK means, and it stays true when
               // you scrub back rather than only describing right now.
               const stillFor=cursor-last.at;
-              const away=afkSecs>0 && stillFor>afkSecs*1000;
+              const gone=!!(away[n] && away[n].gone && away[n].at>=last.at-1000);
+              const idle=!gone && afkSecs>0 && stillFor>afkSecs*1000;
+              const dim=gone||idle;
               const hx=sx(last.x), hy=sz(last.z);
               // Faces are sized on their own: they are what you look for on
               // the map, and tying them to the marker size meant making them
-              // readable made everything else shout.
-              const R=13*mapOpts.head*unitAdjust;
-              const frame=away?'#5b6472':c;
+              // readable made everything else shout. Somebody who has left is
+              // drawn smaller as well as greyer — where they went is still
+              // worth knowing, and it is not worth as much as where the people
+              // still here are.
+              const R=13*mapOpts.head*unitAdjust*(gone?0.62:1);
+              const frame=dim?'#5b6472':c;
               let head='<rect x="'+(hx-R).toFixed(1)+'" y="'+(hy-R).toFixed(1)+
                 '" width="'+(R*2).toFixed(1)+'" height="'+(R*2).toFixed(1)+
                 '" rx="'+(R*0.19).toFixed(1)+'" fill="'+frame+
@@ -2669,11 +2808,25 @@ final class WebPage {
                   '" style="image-rendering:pixelated"'+
                   // Greyed rather than hidden: where they are still matters,
                   // it is only that they are not doing anything there.
-                  (away?' filter="url(#grey)" opacity=".72"':'')+'/>';
+                  (dim?' filter="url(#grey)" opacity="'+(gone?'.55':'.72')+'"':'')+'/>';
               }
-              heads.push('<g class="thead'+(away?' afk':'')+'" data-who="'+esc(n)+
-                '" style="cursor:pointer">'+head+'<title>'+esc(n)+
-                (away?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):'')+
+              if(gone){
+                // A small tag on the corner, so a greyed face is read as
+                // "left here" rather than as a face that failed to load.
+                const tx=hx+R*0.72, ty=hy-R*0.72, tr=R*0.52;
+                head+='<circle cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="'+
+                  tr.toFixed(1)+'" fill="#0a0c10" stroke="#9aa3ae" stroke-width="'+
+                  (1.4*unitAdjust).toFixed(1)+'"/>'+
+                  // The same left-pointing arrow the leave mark uses.
+                  '<polygon points="'+
+                  [[tr*0.42,-tr*0.5],[-tr*0.42,0],[tr*0.42,tr*0.5]]
+                    .map(q=>(tx+q[0]).toFixed(1)+','+(ty+q[1]).toFixed(1)).join(' ')+
+                  '" fill="#9aa3ae"/>';
+              }
+              heads.push('<g class="thead'+(idle?' afk':'')+(gone?' gone':'')+
+                '" data-who="'+esc(n)+'" style="cursor:pointer">'+head+'<title>'+esc(n)+
+                (gone?' — left here '+fmtAgo(away[n].at)
+                     :(idle?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):''))+
                 '</title></g>');
             }
             return out;
@@ -4866,6 +5019,80 @@ final class WebPage {
             cfgToggle('require-client-mod','Almin required to play',
                       modsData.requireClientMod,loadMods));
           box.appendChild(sec);
+          box.appendChild(restrictedSection());
+        }
+
+        /**
+         * Mods players are asked not to run.
+         *
+         * <p>Hidden unless the Almin client mod is required, because without it
+         * there is no mod list to check and the rule would only ever land on
+         * whoever was honest enough to be visible. <code>mods-show-restricted</code>
+         * puts it back for anyone who wants it anyway.
+         */
+        function restrictedSection(){
+          const sec=document.createElement('section');
+          sec.style.margin='0 0 13px';
+          const on=modsData.requireClientMod || modsData.showRestricted;
+          if(!on){
+            sec.innerHTML='<h2>Restricted mods</h2>'+
+              '<div class="note">Requires <b>Almin required to play</b>. Without the client '+
+              'mod there is no mod list to check, so the rule would only ever catch the '+
+              'players honest enough to be visible \u2014 which is the wrong half. '+
+              'Turn that on above, or set <code>mods-show-restricted</code> to show this '+
+              'anyway.</div>';
+            return sec;
+          }
+          const list=(modsData.restricted||'').split(',').map(x=>x.trim()).filter(Boolean);
+          sec.innerHTML='<h2>Restricted mods</h2>'+
+            '<p class="muted">Mod ids, as the loader spells them \u2014 '+
+            '<code>xaerominimap</code>, not <code>Xaero\u2019s Minimap</code>. Checked '+
+            'against what each client reports at join, which is self-reported: this is a '+
+            'house rule, not an anti-cheat.</p>'+
+            '<div class="chips" id="m-banned"></div>'+
+            '<div class="term" style="margin-top:10px">'+
+            '<input id="m-ban" placeholder="mod id to restrict">'+
+            '<button class="btn" id="m-banadd">Restrict</button></div>'+
+            '<div class="msg" id="m-banmsg"></div>';
+          setTimeout(()=>{
+            const chips=$('m-banned');
+            if(chips){
+              if(!list.length){
+                chips.innerHTML='<span class="muted" style="font-size:12.5px">'+
+                  'Nothing is restricted.</span>';
+              }
+              for(const id of list){
+                const b=document.createElement('button');
+                b.className='on';
+                b.innerHTML=esc(id)+' <b>\u00d7</b>';
+                b.title='Stop restricting '+id;
+                b.onclick=()=>setRestricted(list.filter(x=>x!==id));
+                chips.appendChild(b);
+              }
+            }
+            const add=()=>{
+              const v=($('m-ban').value||'').trim().toLowerCase();
+              if(!v) return;
+              if(list.indexOf(v)>=0){ $('m-ban').value=''; return; }
+              setRestricted(list.concat([v]));
+            };
+            $('m-banadd').onclick=add;
+            $('m-ban').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); add(); } };
+            const kick=cfgToggle('mods-restricted-kick',
+              'Disconnect players running one',modsData.restrictedKick,loadMods);
+            sec.appendChild(kick);
+          },0);
+          return sec;
+        }
+
+        async function setRestricted(ids){
+          const msg=$('m-banmsg');
+          const r=await jpost('/api/config',{key:'mods-restricted',value:ids.join(',')});
+          if(msg){
+            msg.className='msg '+(r.status===200?'ok':'err');
+            msg.textContent=r.status===200?'Saved.':((r.body&&r.body.error)||'failed');
+          }
+          loadMods();
         }
 
         function modIcon(m){

@@ -26,6 +26,7 @@ public class Almin implements ModInitializer {
         DirNet.register();
         UploadNet.register();
         ConsoleNet.register();
+        ClientProfileNet.register();
         JoinHandler.register();
         ActivityHooks.register();
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -44,6 +45,7 @@ public class Almin implements ModInitializer {
             ActivityLog.init(server);
             WorldSnapshots.init(server);
             AiInsights.init(server.getServerDirectory());
+            ClientProfiles.init(server);
             BlockTextures.init(server);
         });
         // Boot-time update check — runs after config is loaded. With auto-update
