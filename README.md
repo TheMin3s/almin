@@ -228,10 +228,13 @@ falls back to an initial, which is itself the answer.
 
 Beside it, **what they did**: one icon per kind of action with how many times
 in the corner, so a glance says "mostly breaking blocks, one death" without
-opening anything.
+opening anything. For somebody who is connected that means *this session* —
+"what have they been doing" asked about a player who is here is a question
+about now, not about last week — and it says which nothing it is when there is
+none.
 
-And **where they went**: their path, small, framed to fit whatever they
-actually did — someone who spent the day in one room and someone who walked to
+And **where they went**: their path over the ground it was walked on, framed to
+fit whatever they actually did — someone who spent the day in one room and someone who walked to
 the badlands both get a picture that fills the box, with a scale bar underneath
 saying which is which. Without the bar the two would look identical, which
 would be worse than no map at all.
@@ -546,7 +549,9 @@ and the side list together, so all three agree about what is being shown.
 A stretch of work gets a badge with the tool on it — a pickaxe for a shaft, an
 axe for felling trees, a hammer for a build, a sword for a fight, boots for a
 journey — worked out from what was actually broken, so digging through sand
-gets a shovel and digging through stone gets a pickaxe. Notable ones carry
+gets a shovel and digging through stone gets a pickaxe. Where the server has
+textures they are the game's own iron tools; where it has none they are drawn,
+which is the same fallback the ground has. Notable ones carry
 their sentence beside them, and once a model is connected the badge carries
 what the model said about it instead. Clicking one opens it.
 
@@ -559,11 +564,30 @@ clearing draws it in isometric: placed blocks solid and yellow, broken blocks
 as red outlines, because what is being shown there is an absence. Anything hit
 during it is a red burst where it happened.
 
+Blocks are drawn in the colour they actually are — the server knows, from its
+own registry and from the texture where there is one — with the yellow or red
+on the outline. Two questions, two channels: a wall of solid yellow only said
+"somebody put blocks here", which the sentence above the picture had already
+said.
+
+The ground under it is the map picture, laid flat at the lowest block in the
+scene and darkened. Flat and honestly so: the only record of the world there is
+a picture from above, so its height is not knowable and a guess at it would be
+an invention. What it does give is *where* this is — on sand, beside water, in
+the middle of a field — which is most of what "the world around it" was for.
+**Ground** turns it off.
+
 Turn it a quarter at a time to see round the back, and drag the slider to watch
-it go up in the order it actually went up. It is clamped to 64 blocks across —
-an episode can wander, and a scene covering a kilometre is a scene of nothing —
-and only what changed is in it: the world around it was never recorded, and
-drawing a guess at it would be drawing a lie.
+it go up in the order it actually went up. The block size and the framing come
+from what is in the scene, so it fits its window rather than running off the
+edge of it.
+
+An episode is cut by time and by distance from a running centre, so a player
+who dug a hole, walked thirty blocks and dug another lands both in one run —
+and two heaps thirty blocks apart drawn in one picture are two pictures. Blocks
+within a dozen of each other are one piece of work; the rest is left out, and
+the count under the picture says how much. It is clamped to 64 blocks across,
+and only what changed is in it.
 
 #### How it looks
 

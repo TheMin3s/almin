@@ -343,6 +343,8 @@ public final class WebUi {
         http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
         http.createContext("/api/ai/key", guard("/api/ai/key", ui::handleAiKey));
         http.createContext("/api/properties", guard("/api/properties", ui::handleProperties));
+        http.createContext("/api/blocks", guard("/api/blocks", ui::handleBlocks));
+        http.createContext("/api/item", guard("/api/item", ui::handleItem));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -2369,6 +2371,51 @@ public final class WebUi {
             AlminLog.info("[almin] AI key {} from the panel by {}",
                 key.isBlank() ? "cleared" : "set", clientKey(ex));
             json(ex, 200, "{\"ok\":true,\"hasKey\":" + AiInsights.hasKey() + "}");
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * What colour each block is, by the name the log records.
+     *
+     * <p>For the isometric view, which has to draw a block and knows only what
+     * the row called it. Sent once and cached hard: it is a property of the
+     * server's own registry and cannot change while it is running.
+     */
+    private void handleBlocks(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            JsonObject out = new JsonObject();
+            for (Map.Entry<String, Integer> e : BlockTextures.palette().entrySet()) {
+                out.addProperty(e.getKey(), String.format("#%06x", e.getValue() & 0xFFFFFF));
+            }
+            JsonObject root = new JsonObject();
+            root.add("blocks", out);
+            root.addProperty("textures", BlockTextures.source());
+            ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+            json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * One item texture, for the tool drawn on a sequence badge.
+     *
+     * <p>404 when this server has no textures, which the panel takes as "draw
+     * your own" rather than as a failure.
+     */
+    private void handleItem(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            byte[] png = BlockTextures.item(queryParam(ex, "name"));
+            if (png == null) { json(ex, 404, err("No such item texture.")); return; }
+            image(ex, "image/png", png);
         } catch (Throwable t) {
             fault(ex, t);
         } finally {

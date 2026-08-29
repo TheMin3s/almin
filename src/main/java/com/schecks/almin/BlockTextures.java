@@ -195,6 +195,8 @@ public final class BlockTextures {
         sources = List.of();
         SKINS.clear();
         PENDING.clear();
+        ITEMS.clear();
+        palette = null;
         any = false;
     }
 
@@ -206,6 +208,95 @@ public final class BlockTextures {
 
     /** How many blocks have a texture loaded so far. */
     public static int loaded() { return SKINS.size(); }
+
+    // ---------- what a block looks like, by the name the log wrote down ----------
+
+    private static volatile Map<String, Integer> palette;
+
+    /**
+     * Every block's colour, keyed by the name the activity log records.
+     *
+     * <p>The log stores display names — "Oak Planks", not
+     * {@code minecraft:oak_planks} — because that is what a person reading a
+     * row wants. So the reverse lookup is over display names too, which also
+     * means it comes out in whatever language the server runs in and matches
+     * the rows either way.
+     *
+     * <p>Built once and kept: it is a thousand entries and it cannot change
+     * while the server is up.
+     */
+    public static Map<String, Integer> palette() {
+        Map<String, Integer> have = palette;
+        if (have != null) return have;
+        Map<String, Integer> built = new java.util.LinkedHashMap<>();
+        try {
+            for (Block block : BuiltInRegistries.BLOCK) {
+                String name = block.getName().getString();
+                if (name.isEmpty() || built.containsKey(name)) continue;
+                built.put(name, colourFor(block));
+            }
+        } catch (Throwable t) {
+            AlminLog.warn("[almin] could not read the block palette: {}", t.toString());
+        }
+        palette = Map.copyOf(built);
+        return palette;
+    }
+
+    /**
+     * One block's colour with no world to ask.
+     *
+     * <p>The texture's average where there is one, since that is the colour
+     * the block actually is; the map palette otherwise, which is the colour
+     * the game would draw it on a map. Never the tinted mask: grass and leaves
+     * are grey files, and the palette already knows they are green.
+     */
+    private static int colourFor(Block block) {
+        int fallback = 0x7a8595;
+        try {
+            var map = block.defaultMapColor();
+            if (map != null && map != net.minecraft.world.level.material.MapColor.NONE) {
+                fallback = map.col;
+            }
+        } catch (Throwable ignored) {
+            // A block that will not say; the grey stands in.
+        }
+        if (!any) return fallback;
+        Skin skin = SKINS.get(block);
+        if (skin == null) {
+            // Not loaded yet: queue it and answer with the palette this time.
+            queue(block, fallback);
+            return fallback;
+        }
+        if (skin == NONE || skin.tinted()) return fallback;
+        return skin.average();
+    }
+
+    /**
+     * An item's texture file, for the tool on a sequence badge.
+     *
+     * <p>Same sources as the block textures and the same answer when there are
+     * none: nothing, and the panel draws its own.
+     */
+    public static byte[] item(String name) {
+        if (!any || name == null) return null;
+        if (!name.matches("[a-z0-9_]{1,48}")) return null;
+        byte[] cached = ITEMS.get(name);
+        if (cached != null) return cached.length == 0 ? null : cached;
+        byte[] png = null;
+        for (Object source : sources) {
+            try {
+                png = readFrom(source, "assets/minecraft/textures/item/" + name + ".png");
+                if (png != null) break;
+            } catch (IOException ignored) {
+                // A bad pack is not worth a log line per icon.
+            }
+        }
+        if (ITEMS.size() > 64) ITEMS.clear();
+        ITEMS.put(name, png == null ? new byte[0] : png);
+        return png;
+    }
+
+    private static final Map<String, byte[]> ITEMS = new ConcurrentHashMap<>();
 
     // ---------- the one thing the server thread calls ----------
 

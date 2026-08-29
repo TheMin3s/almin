@@ -1397,7 +1397,7 @@ final class WebPage {
           setTimeout(loadPlayers,0);
           return wrap;
         }
-        function playerRow(p,sub){
+        function playerRow(p,sub,since){
           const card=document.createElement('div'); card.className='pcard';
           const row=document.createElement('div'); row.className='row';
           row.style.alignItems='center'; row.style.gap='10px';
@@ -1439,19 +1439,31 @@ final class WebPage {
 
           const strips=document.createElement('div');
           strips.className='pstrips';
-          strips.appendChild(actionStrip(p.name));
-          strips.appendChild(pathMap(p.name));
+          strips.appendChild(actionStrip(p.name,since));
+          strips.appendChild(pathMap(p.name,since));
           card.appendChild(strips);
           return card;
         }
 
-        /** Everything this player did, one icon per kind, with how many. */
-        function actionStrip(name){
+        /**
+         * Everything this player did, one icon per kind, with how many.
+         *
+         * @param since only from this moment on, which for somebody who is
+         *              connected means this session — "what have they been
+         *              doing" asked about a player who is here is a question
+         *              about now, not about last week
+         */
+        function actionStrip(name,since){
           const box=document.createElement('div');
           box.className='pstrip acts';
-          const acts=(peopleData&&peopleData.actions||[]).filter(a=>a.player===name);
+          if(since) box.setAttribute('title','This session only');
+          const acts=(peopleData&&peopleData.actions||[])
+            .filter(a=>a.player===name && (!since || a.at>=since));
           if(!acts.length){
-            box.innerHTML='<span class="none">nothing recorded</span>';
+            // Saying which nothing it is: "nothing this session" and "nothing
+            // ever" look identical otherwise, and they mean different things.
+            box.innerHTML='<span class="none">'+
+              (since?'nothing this session':'nothing recorded')+'</span>';
             return box;
           }
           const by=new Map();
@@ -1478,17 +1490,32 @@ final class WebPage {
          * which. Without the bar the two would look identical, which would be
          * worse than no map at all.
          */
-        function pathMap(name){
+        function pathMap(name,since){
           const box=document.createElement('div');
           box.className='pstrip mini';
-          const pts=((peopleData&&peopleData.tracks)||{})[name]||[];
+          const all=((peopleData&&peopleData.tracks)||{})[name]||[];
+          const pts=since?all.filter(q=>q.at>=since):all;
           if(pts.length<2){
-            box.innerHTML='<span class="none">no path recorded</span>';
+            box.innerHTML='<span class="none">'+
+              (since?'has not moved this session':'no path recorded')+'</span>';
             return box;
           }
-          const dim=pts[pts.length-1].dim;
+          // Where they are now, unless they have only just arrived there:
+          // one step through a portal is not a path, and answering "no path
+          // recorded" for somebody with an afternoon of walking behind them
+          // because their last point is in the Nether is the wrong answer.
+          const counts={};
+          for(const q of pts) counts[q.dim]=(counts[q.dim]||0)+1;
+          let dim=pts[pts.length-1].dim;
+          if((counts[dim]||0)<2){
+            for(const d of Object.keys(counts)) if(counts[d]>(counts[dim]||0)) dim=d;
+          }
           const here=pts.filter(q=>q.dim===dim);
-          if(here.length<2){ box.innerHTML='<span class="none">no path recorded</span>'; return box; }
+          if(here.length<2){
+            box.innerHTML='<span class="none">'+
+              (since?'has not moved this session':'no path recorded')+'</span>';
+            return box;
+          }
           const xs=here.map(q=>q.x), zs=here.map(q=>q.z);
           const minX=Math.min(...xs), maxX=Math.max(...xs);
           const minZ=Math.min(...zs), maxZ=Math.max(...zs);
@@ -1510,9 +1537,27 @@ final class WebPage {
           let bar=nice[0];
           for(const v of nice) if(v<=span*0.6) bar=v;
           const barPx=bar*scale;
+          // Whatever ground there is under this path, darkened so the line is
+          // still the thing you see.
+          const id='mini'+Math.random().toString(36).slice(2,8);
+          const ground=[];
+          for(const p of shotsFor(dim,here[here.length-1].at)){
+            const x0=px(p.minX), z0=pz(p.minZ);
+            const w=px(p.minX+p.span)-x0, h=pz(p.minZ+p.span)-z0;
+            if(x0+w<0 || x0>W || z0+h<0 || z0>H) continue;
+            ground.push('<image href="/api/map?at='+p.at+'&dim='+encodeURIComponent(dim)+
+              '" x="'+x0.toFixed(1)+'" y="'+z0.toFixed(1)+'" width="'+w.toFixed(1)+
+              '" height="'+h.toFixed(1)+'" preserveAspectRatio="none" '+
+              'style="image-rendering:pixelated"/>');
+          }
           box.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" '+
             'preserveAspectRatio="xMidYMid meet">'+
+            '<defs><clipPath id="'+id+'"><rect x="0" y="0" width="'+W+'" height="'+H+
+            '"/></clipPath></defs>'+
             '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#0b0d11"/>'+
+            (ground.length?'<g clip-path="url(#'+id+')">'+ground.join('')+
+              '<rect x="0" y="0" width="'+W+'" height="'+H+
+              '" fill="#0a0c10" opacity=".46"/></g>':'')+
             '<path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="1.6" '+
             'stroke-linejoin="round" stroke-linecap="round" stroke-opacity=".9"/>'+
             '<circle cx="'+px(last.x).toFixed(1)+'" cy="'+pz(last.z).toFixed(1)+
@@ -1543,6 +1588,26 @@ final class WebPage {
           if(peopleData && Date.now()-peopleAt<15000) return;
           const r=await jget('/api/track?all=1');
           if(r.status===200){ peopleData=r.body; peopleAt=Date.now(); }
+          // The little maps want ground under them for the same reason the big
+          // one does: a line on black says where somebody walked, and a line
+          // over the world says where they went.
+          if(!shots.length){
+            const m=await jget('/api/map');
+            if(m.status===200 && m.body.shots){ shots=m.body.shots; }
+          }
+          await loadBlockColours();
+        }
+
+        // What each block looks like, and whether there are item textures to
+        // draw tools with. Asked for once; it cannot change while the server
+        // is up.
+        let blockColour=null;
+        async function loadBlockColours(){
+          if(blockColour) return;
+          const r=await jget('/api/blocks');
+          if(r.status!==200){ blockColour={}; return; }
+          blockColour=r.body.blocks||{};
+          toolTextures=!!(r.body.textures && r.body.textures!=='none');
         }
 
         async function loadPlayers(){
@@ -1557,7 +1622,12 @@ final class WebPage {
           const s1=document.createElement('section');
           s1.innerHTML='<h2>Online ('+online.length+' / '+(r.body.maxPlayers||0)+')</h2>';
           if(!online.length) s1.insertAdjacentHTML('beforeend','<div class="note">Nobody is connected.</div>');
-          for(const p of online) s1.appendChild(playerRow(p, fmtDur(p.sessionMillis)+' this session'));
+          const now=Date.now();
+          for(const p of online){
+            // What they have done since they joined, not since the log began.
+            const since=p.sessionMillis>0?now-p.sessionMillis:0;
+            s1.appendChild(playerRow(p, fmtDur(p.sessionMillis)+' this session', since));
+          }
           on.appendChild(s1);
           const hs=$('p-hist'); hs.innerHTML='';
           const s2=document.createElement('section');
@@ -1693,9 +1763,9 @@ final class WebPage {
          * two admins looking at the same map are allowed to disagree about how
          * dark the ground should be.
          */
-        const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.35, colour:'action',
+        const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.0, colour:'action',
                             faces:true, paths:true, cluster:true, overlays:true,
-                            sequences:true, refresh:10,
+                            sequences:true, refresh:10, v:2, sceneGround:true,
                             // Off by default: the map's job is to show what
                             // happened, and something that quietly removes
                             // things should be asked for rather than assumed.
@@ -1716,6 +1786,10 @@ final class WebPage {
             // to anything reading a key the saved copy predates.
             mapOpts.fade=Object.assign({},MAP_DEFAULTS.fade,was.fade||{});
             if(!Array.isArray(mapOpts.fade.cats)) mapOpts.fade.cats=MAP_DEFAULTS.fade.cats;
+            // A remembered preference is normally the last word, but a default
+            // that was simply wrong is not a preference — anyone who never
+            // touched the slider is holding a number nobody chose.
+            if(!(was.v>=2)){ mapOpts.head=MAP_DEFAULTS.head; mapOpts.v=2; }
           }
         } catch(e){ /* private mode, or someone edited it by hand */ }
         function saveMapOpts(){
@@ -2026,6 +2100,7 @@ final class WebPage {
             shots=(m.status===200 && m.body.shots)?m.body.shots:[];
             shotEvery=(m.body&&m.body.every)||0;
             shotTextures=(m.body&&m.body.textures)||'none';
+            loadBlockColours();
             if(keep){ allDim=dim; }
             else { allDim=''; cursorSet=false; win.set=false; view.set=false; }
             lastLiveLoad=Date.now();
@@ -2265,12 +2340,30 @@ final class WebPage {
           }
         }
 
+        /**
+         * The game's own item texture for a tool, where this server has any.
+         *
+         * <p>An iron pickaxe drawn by Mojang beats one drawn by me, and the
+         * textures are already here for the ground. Falls back to the drawn
+         * shape, which is what a server with no resource pack gets.
+         */
+        const TOOL_ITEM={pickaxe:'iron_pickaxe', axe:'iron_axe', shovel:'iron_shovel',
+          hoe:'iron_hoe', sword:'iron_sword', hammer:'iron_axe', chest:'', boots:'iron_boots',
+          loop:'', skull:''};
+        let toolTextures=false;
+
         /** A sequence badge: the tool on a dark disc, centred on (x, y). */
         function sequenceIcon(kind,x,y,fill,scale){
           const r=scale||1;
+          const tool=SEQUENCE_TOOL[kind]||kind;
+          const item=toolTextures?TOOL_ITEM[tool]:'';
+          const face=item
+            ? '<image href="/api/item?name='+encodeURIComponent(item)+
+              '" x="-7" y="-7" width="14" height="14" style="image-rendering:pixelated"/>'
+            : toolShape(tool,fill);
           const body='<circle cx="0" cy="0" r="9.6" fill="#0a0c10" fill-opacity=".88"/>'+
             '<circle cx="0" cy="0" r="9.6" fill="none" stroke="'+fill+'" stroke-width="1.6"/>'+
-            toolShape(SEQUENCE_TOOL[kind]||kind,fill);
+            face;
           return '<g transform="translate('+x+' '+y+') scale('+r.toFixed(3)+')">'+body+'</g>';
         }
 
@@ -2716,7 +2809,7 @@ final class WebPage {
             range('o-dim','Ground darkness',0,80,1,Math.round(mapOpts.dim*100))+
             range('o-path','Path width',1,7,0.5,mapOpts.path)+
             range('o-mark','Marker size',1,4,0.1,mapOpts.mark)+
-            range('o-head','Face size',0.7,2.4,0.05,mapOpts.head)+
+            range('o-head','Face size',0.5,2.4,0.05,mapOpts.head)+
             '<label><span>Colour marks by</span><select id="o-colour">'+
               '<option value="action"'+(mapOpts.colour==='action'?' selected':'')+
               '>what it was</option>'+
@@ -2826,15 +2919,18 @@ final class WebPage {
           const c=mapOpts.colour==='player'
             ? playerColor(items[0].player) : (ACTION_COLOR[best]||'#9aa3ae');
           const label=total>999?'999+':String(total);
-          const k=(mapOpts.mark/2.2)*unitAdjust;
-          const w=Math.max(20,10+label.length*8)*k;
-          const h=19*k;
+          // Sized against the marks, not against the panel. A mark is a disc
+          // of radius 8.4 scaled by the same factor, so a box that ignored it
+          // came out a third the size of the things it stood in for.
+          const k=mapOpts.mark*unitAdjust;
+          const h=15*k;
+          const w=Math.max(h,(5.2+label.length*5.4)*k);
           return '<g class="tcl" data-i="'+index+'" style="cursor:pointer">'+
             '<rect x="'+(x-w/2).toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+
             '" height="'+h.toFixed(1)+'" rx="'+(h/2.6).toFixed(1)+'" fill="#0a0c10" '+
-            'fill-opacity=".86" stroke="'+c+'" stroke-width="1.8"/>'+
+            'fill-opacity=".86" stroke="'+c+'" stroke-width="'+(0.85*k).toFixed(1)+'"/>'+
             '<text x="'+x.toFixed(1)+'" y="'+(y+h*0.30).toFixed(1)+'" text-anchor="middle" '+
-            'fill="'+c+'" font-size="'+(h*0.68).toFixed(1)+'" font-weight="700" '+
+            'fill="'+c+'" font-size="'+(h*0.66).toFixed(1)+'" font-weight="700" '+
             'font-family="inherit">'+label+'</text>'+
             '<title>'+items.length+' entr'+(items.length===1?'y':'ies')+', '+total+
             ' in total — click to list them</title></g>';
@@ -3356,6 +3452,11 @@ final class WebPage {
           host.addEventListener('pointerup',stop);
           host.addEventListener('pointercancel',stop);
           host.addEventListener('wheel',e=>{
+            // A panel drawn over the map has its own scrollbar, and taking the
+            // wheel off it to zoom the map underneath is not what anyone
+            // pointing at a list of forty rows meant.
+            if(e.target.closest && (e.target.closest('.clusterbox')
+              || e.target.closest('.mapopts'))) return;
             const p=at(e); if(!p) return;
             e.preventDefault();
             // Zoom about the pointer: the block under it stays under it.
@@ -3641,8 +3742,11 @@ final class WebPage {
         /**
          * Everything one stretch of work touched, as blocks.
          *
-         * <p>Clamped to a box around its centre: an episode can wander, and a
-         * scene that covers a kilometre is a scene of nothing.
+         * <p>Clamped to a box around its centre, and then to the part of it
+         * that is actually one thing: an episode is cut by time and by
+         * distance from a running centre, so a player who dug a hole and then
+         * walked thirty blocks and dug another lands both in one run. Two
+         * heaps thirty blocks apart drawn in one picture are two pictures.
          */
         function sceneOf(e){
           const acts=(allData&&allData.actions)||[];
@@ -3653,7 +3757,7 @@ final class WebPage {
             if(a.at<e.from-1000 || a.at>e.to+1000) continue;
             if(Math.abs(a.x-e.x)>half || Math.abs(a.z-e.z)>half) continue;
             if(a.action==='place'||a.action==='break'){
-              cubes.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at,
+              cubes.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at, wx:a.x, wz:a.z,
                           put:a.action==='place', what:a.detail||'', n:Math.max(1,a.count||1)});
             } else if(a.action==='attack'||a.action==='hurt'||a.action==='death'){
               marks.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at,
@@ -3661,15 +3765,82 @@ final class WebPage {
             }
           }
           if(!cubes.length && !marks.length) return null;
-          const ys=cubes.concat(marks).map(c=>c.y);
+
+          const all=cubes.length;
+          const near=largestHeap(cubes);
+          const kept=near.length?near:cubes;
+          const dropped=all-kept.length;
+
+          const ys=kept.concat(marks).map(c=>c.y);
           const minY=Math.min(...ys), maxY=Math.max(...ys);
-          cubes.sort((a,b)=>a.at-b.at);
+          kept.sort((a,b)=>a.at-b.at);
           marks.sort((a,b)=>a.at-b.at);
-          const kept=cubes.slice(0,SCENE_CUBES);
-          // Opens finished rather than empty: the question is what is there,
-          // and the replay is for afterwards.
-          return {ep:e, cubes:kept, marks:marks,
-                  minY:minY, maxY:maxY, turn:0, upto:Math.max(1,kept.length), timer:null};
+          const inside=marks.filter(m=>kept.some(c=>Math.abs(c.x-m.x)<=SCENE_GAP
+            && Math.abs(c.z-m.z)<=SCENE_GAP));
+          const use=kept.slice(0,SCENE_CUBES);
+          return {ep:e, cubes:use, marks:inside.length?inside:marks,
+                  minY:minY, maxY:maxY, turn:0, upto:Math.max(1,use.length),
+                  dropped:dropped, timer:null};
+        }
+
+        /**
+         * How far apart two blocks can be and still be the same piece of work.
+         *
+         * <p>A dozen blocks: far enough that the two halves of one building
+         * stay together, near enough that a hole somebody dug on the way to
+         * another hole is a second picture rather than a corner of the first.
+         */
+        const SCENE_GAP=12;
+
+        /**
+         * The heap the episode is actually about.
+         *
+         * <p>Single-link clustering with a real distance test — the grid is
+         * only there so this does not compare every block to every other one.
+         * The group containing the middle wins, since that is where the
+         * episode said the work was; failing that, the biggest.
+         */
+        function largestHeap(cubes){
+          if(cubes.length<2) return cubes;
+          const cell=SCENE_GAP;
+          const bins=new Map();
+          cubes.forEach((c,i)=>{
+            const key=Math.floor(c.x/cell)+','+Math.floor(c.y/cell)+','+Math.floor(c.z/cell);
+            if(!bins.has(key)) bins.set(key,[]);
+            bins.get(key).push(i);
+          });
+          const owner=cubes.map((_,i)=>i);
+          const find=i=>{ while(owner[i]!==i){ owner[i]=owner[owner[i]]; i=owner[i]; } return i; };
+          const join=(a,b)=>{ const ra=find(a), rb=find(b); if(ra!==rb) owner[rb]=ra; };
+          cubes.forEach((c,i)=>{
+            const gx=Math.floor(c.x/cell), gy=Math.floor(c.y/cell), gz=Math.floor(c.z/cell);
+            for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) for(let dz=-1;dz<=1;dz++){
+              const near=bins.get((gx+dx)+','+(gy+dy)+','+(gz+dz));
+              if(!near) continue;
+              for(const j of near){
+                if(j<=i) continue;
+                const o=cubes[j];
+                if(Math.abs(o.x-c.x)<=SCENE_GAP && Math.abs(o.y-c.y)<=SCENE_GAP
+                   && Math.abs(o.z-c.z)<=SCENE_GAP) join(i,j);
+              }
+            }
+          });
+          const groups=new Map();
+          cubes.forEach((c,i)=>{
+            const root=find(i);
+            if(!groups.has(root)) groups.set(root,[]);
+            groups.get(root).push(c);
+          });
+          if(groups.size<2) return cubes;
+          // The middle is where the episode said the work was.
+          let best=null, bestScore=-1;
+          for(const g of groups.values()){
+            let near=Infinity;
+            for(const c of g) near=Math.min(near,Math.abs(c.x)+Math.abs(c.z));
+            const score=g.length*100-near;
+            if(score>bestScore){ bestScore=score; best=g; }
+          }
+          return best||cubes;
         }
 
         function openScene(e){
@@ -3685,22 +3856,30 @@ final class WebPage {
                 '<button class="btn" id="sc-left">⟲</button>'+
                 '<button class="btn" id="sc-right">⟳</button>'+
                 '<button class="btn go" id="sc-play">Replay</button>'+
+                '<button class="btn" id="sc-ground">Ground</button>'+
                 '<input type="range" id="sc-at" min="1" max="'+
                   Math.max(1,built.cubes.length)+'" value="'+
                   Math.max(1,built.cubes.length)+'">'+
                 '<span class="muted num" id="sc-count"></span>'+
               '</div>'+
               '<div class="scenekey">'+
-                '<span><i style="background:#ffcf4d"></i>placed</span>'+
-                '<span><i style="background:#ff5a5a"></i>broken</span>'+
+                '<span><i style="border:2px solid #ffd34d;background:#6b5a2a"></i>placed</span>'+
+                '<span><i style="border:2px solid #ff5a5a;background:transparent"></i>broken</span>'+
                 (built.marks.length?'<span><i style="background:#ff3b3b"></i>something was hit</span>':'')+
-                '<span class="muted">Only what changed — the world around it was never recorded.</span>'+
+                '<span class="muted">Blocks are drawn in their own colours. The ground is '+
+                'the map picture, laid flat at the lowest block \u2014 its height was never '+
+                'recorded, so it is where this happened rather than what it looked like.'+
+                '</span>'+
               '</div>';
             setTimeout(()=>{
               $('sc-left').onclick=()=>{ scene.turn=(scene.turn+3)%4; paintScene(); };
               $('sc-right').onclick=()=>{ scene.turn=(scene.turn+1)%4; paintScene(); };
               $('sc-at').oninput=()=>{ stopScene(); scene.upto=+$('sc-at').value; paintScene(); };
               $('sc-play').onclick=toggleScene;
+              const g=$('sc-ground');
+              g.className='btn'+(mapOpts.sceneGround?' on':'');
+              g.onclick=()=>{ mapOpts.sceneGround=!mapOpts.sceneGround; saveMapOpts();
+                g.className='btn'+(mapOpts.sceneGround?' on':''); paintScene(); };
               paintScene();
             },0);
           },{onClose:()=>{ stopScene(); scene=null; }});
@@ -3734,13 +3913,34 @@ final class WebPage {
          * this projection means by x + z + y. Every cube is three faces — the
          * top full brightness, the two sides darker — which is all it takes
          * for a stack of them to read as solid.
+         *
+         * <p>The block size and the framing come from what is actually in the
+         * scene rather than from a guess, so a scene never runs off the edge
+         * of its own window.
          */
         function paintScene(){
           const box=$('sc-box'); if(!box || !scene) return;
-          const S=Math.max(6,Math.min(26,900/Math.max(12,spread(scene))));
+          const W=760, H=420;
           const shown=scene.cubes.slice(0,scene.upto);
           const upTo=shown.length?shown[shown.length-1].at:scene.ep.to;
           const marks=scene.marks.filter(m=>m.at<=upTo);
+          const all=shown.concat(marks);
+          if(!all.length){ box.innerHTML=''; return; }
+
+          // Where everything lands at one unit per block, so the scale can be
+          // chosen to fit rather than hoped at.
+          const lo=[1e9,1e9], hi=[-1e9,-1e9];
+          for(const c of all){
+            const r=turned(c,scene.turn);
+            const ix=(r.x-r.z)/2, iy=(r.x+r.z)/4-(c.y-scene.minY)/2;
+            lo[0]=Math.min(lo[0],ix-0.5); hi[0]=Math.max(hi[0],ix+0.5);
+            lo[1]=Math.min(lo[1],iy);     hi[1]=Math.max(hi[1],iy+1);
+          }
+          const pad=1.6;
+          const S=Math.max(3,Math.min(26,
+            Math.min(W/((hi[0]-lo[0])+pad), H/((hi[1]-lo[1])+pad))));
+          // Centre what there is inside the window.
+          const tx=-((lo[0]+hi[0])/2)*S, ty=-((lo[1]+hi[1])/2)*S;
 
           const items=[];
           for(const c of shown){
@@ -3753,27 +3953,64 @@ final class WebPage {
           }
           items.sort((a,b)=>a.key-b.key);
 
-          const W=760, H=420;
           box.innerHTML='<svg viewBox="'+(-W/2)+' '+(-H/2)+' '+W+' '+H+
             '" width="100%" height="'+H+'" role="img" '+
             'aria-label="The blocks this stretch of work changed">'+
-            items.map(i=>i.svg).join('')+'</svg>';
+            '<g transform="translate('+tx.toFixed(1)+' '+ty.toFixed(1)+')">'+
+            groundPlane(S)+items.map(i=>i.svg).join('')+'</g></svg>';
+
           const count=$('sc-count');
           if(count){
             let put=0, took=0;
             for(const c of shown){ if(c.put) put+=c.n; else took+=c.n; }
-            count.textContent=put+' placed · '+took+' broken'+
-              (scene.cubes.length>=SCENE_CUBES?' · showing the first '+SCENE_CUBES:'');
+            count.textContent=put+' placed \u00b7 '+took+' broken'+
+              (scene.dropped>0?' \u00b7 '+scene.dropped+' elsewhere left out':'')+
+              (scene.cubes.length>=SCENE_CUBES?' \u00b7 first '+SCENE_CUBES+' only':'');
           }
         }
 
-        /** How far the scene reaches, for picking a block size that fits. */
-        function spread(sc){
-          let lo=999, hi=-999;
-          for(const c of sc.cubes){
-            lo=Math.min(lo,c.x,c.z); hi=Math.max(hi,c.x,c.z);
+        /**
+         * The ground around it, from the map picture, darkened.
+         *
+         * <p>Flat, at the lowest block in the scene, and honestly so: the only
+         * record of the world here is a picture from above, so its height is
+         * not knowable and a guess at it would be an invention. What it does
+         * give is where this is — on sand, beside water, in the middle of a
+         * field — which is most of what "the world around it" was for.
+         *
+         * <p>Drawn with a matrix rather than by sampling pixels, because the
+         * projection of a flat plane is linear: an image whose pixels are
+         * blocks maps onto the isometric parallelogram exactly.
+         */
+        function groundPlane(S){
+          if(!scene || !mapOpts.sceneGround) return '';
+          const e=scene.ep;
+          const half=SCENE_MAX/2;
+          const out=[];
+          for(const p of shotsFor(e.dim,e.to)){
+            // Only the pictures that overlap the box this scene is about.
+            if(p.minX>e.x+half || p.minX+p.span<e.x-half) continue;
+            if(p.minZ>e.z+half || p.minZ+p.span<e.z-half) continue;
+            // One image pixel is one block, which is what the matrix is
+            // written in; a coarser picture is stretched by the same matrix.
+            const a=S/2, b=S/4, c=-S/2, d=S/4;
+            const rx=p.minX-e.x, rz=p.minZ-e.z;
+            const ex=(rx-rz)*S/2, fy=(rx+rz)*S/4;
+            out.push('<image href="/api/map?at='+p.at+'&dim='+encodeURIComponent(e.dim)+
+              '" width="'+p.span+'" height="'+p.span+'" preserveAspectRatio="none" '+
+              'style="image-rendering:pixelated" transform="matrix('+
+              a.toFixed(4)+' '+b.toFixed(4)+' '+c.toFixed(4)+' '+d.toFixed(4)+' '+
+              ex.toFixed(2)+' '+fy.toFixed(2)+')"/>');
           }
-          return Math.max(hi-lo, sc.maxY-sc.minY, 8);
+          if(!out.length) return '';
+          const corner=(x,z)=>((x-z)*S/2).toFixed(1)+','+((x+z)*S/4).toFixed(1);
+          const foot=[corner(-half,-half),corner(half,-half),
+                      corner(half,half),corner(-half,half)].join(' ');
+          // Clipped to the scene's own footprint and pushed well back, so it
+          // is context rather than the subject.
+          return '<defs><clipPath id="scfoot"><polygon points="'+foot+'"/></clipPath></defs>'+
+            '<g clip-path="url(#scfoot)"><g opacity=".55">'+out.join('')+'</g>'+
+            '<polygon points="'+foot+'" fill="#05070a" opacity=".5"/></g>';
         }
 
         /** Quarter turns about the centre, so you can see round the back. */
@@ -3789,6 +4026,15 @@ final class WebPage {
         function isoX(x,z,S){ return (x-z)*(S/2); }
         function isoY(x,y,z,S){ return (x+z)*(S/4)-y*(S/2); }
 
+        /**
+         * One block.
+         *
+         * <p>Filled with the colour the block actually is — the server knows,
+         * from its own registry and from the texture where there is one — and
+         * outlined in yellow or red for what happened to it. Two questions,
+         * two channels: a wall of solid yellow said only "somebody put blocks
+         * here", which the sentence above the picture had already said.
+         */
         function cube(x,y,z,S,c){
           const ox=isoX(x,z,S), oy=isoY(x,y,z,S);
           const half=S/2, quarter=S/4;
@@ -3797,26 +4043,51 @@ final class WebPage {
           const right=[[ox,oy+half],[ox+half,oy+quarter],[ox+half,oy+quarter+half],[ox,oy+half+half]];
           const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
           const title='<title>'+esc((c.put?'placed ':'broke ')+(c.what||'a block')+
-            (c.n>1?' ×'+c.n:'')+' at y '+c.y)+'</title>';
+            (c.n>1?' \u00d7'+c.n:'')+' at y '+c.y)+'</title>';
+          const base=blockRgb(c.what);
+          const edge=c.put?'#ffd34d':'#ff5a5a';
+          const line=Math.max(0.35,S*0.045);
           if(c.put){
-            // Placed: solid, and yellow, because that is the thing that is
-            // there now that was not before.
             return '<g>'+
-              '<polygon points="'+pts(top)+'" fill="#ffdd7a" stroke="#7a5c10" stroke-width=".6"/>'+
-              '<polygon points="'+pts(left)+'" fill="#d8a92e" stroke="#7a5c10" stroke-width=".6"/>'+
-              '<polygon points="'+pts(right)+'" fill="#a97f18" stroke="#7a5c10" stroke-width=".6"/>'+
+              '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.12)+'" stroke="'+edge+
+              '" stroke-opacity=".85" stroke-width="'+line.toFixed(2)+'"/>'+
+              '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.78)+'" stroke="'+edge+
+              '" stroke-opacity=".5" stroke-width="'+(line*0.7).toFixed(2)+'"/>'+
+              '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.58)+'" stroke="'+edge+
+              '" stroke-opacity=".5" stroke-width="'+(line*0.7).toFixed(2)+'"/>'+
               title+'</g>';
           }
-          // Broken: an outline, because what is being shown is an absence. A
-          // solid red cube would say a red block is there.
+          // Broken: the block it was, ghosted, inside a red outline. A solid
+          // cube would say a block is there, and the point is that one is not.
           return '<g>'+
-            '<polygon points="'+pts(top)+'" fill="#ff5a5a" fill-opacity=".16" '+
-            'stroke="#ff5a5a" stroke-width=".9"/>'+
-            '<polygon points="'+pts(left)+'" fill="#ff5a5a" fill-opacity=".08" '+
-            'stroke="#ff5a5a" stroke-opacity=".7" stroke-width=".7"/>'+
-            '<polygon points="'+pts(right)+'" fill="#ff5a5a" fill-opacity=".05" '+
-            'stroke="#ff5a5a" stroke-opacity=".7" stroke-width=".7"/>'+
+            '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.05)+'" fill-opacity=".26" '+
+            'stroke="'+edge+'" stroke-width="'+(line*1.1).toFixed(2)+'"/>'+
+            '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.7)+'" fill-opacity=".16" '+
+            'stroke="'+edge+'" stroke-opacity=".6" stroke-width="'+(line*0.8).toFixed(2)+'"/>'+
+            '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.55)+'" fill-opacity=".12" '+
+            'stroke="'+edge+'" stroke-opacity=".6" stroke-width="'+(line*0.8).toFixed(2)+'"/>'+
             title+'</g>';
+        }
+
+        /** The colour of a block by the name the log wrote down. */
+        function blockRgb(name){
+          const known=blockColour && blockColour[name];
+          if(known) return known;
+          // Nothing to go on — a modded block, or textures the server has not
+          // got. A stable colour from the name still tells two materials
+          // apart, which is the job.
+          if(!name) return '#8a929c';
+          return 'hsl('+nameHue(name)+' 34% 58%)';
+        }
+
+        /** Brightens or darkens a colour for one face of a cube. */
+        function shadeHex(colour,k){
+          const m=/^#([0-9a-f]{6})$/i.exec(colour);
+          if(!m) return colour;
+          const v=parseInt(m[1],16);
+          const cl=x=>Math.max(0,Math.min(255,Math.round(x)));
+          return '#'+[cl(((v>>16)&255)*k),cl(((v>>8)&255)*k),cl((v&255)*k)]
+            .map(x=>x.toString(16).padStart(2,'0')).join('');
         }
 
         /** Somebody hit something here. */
