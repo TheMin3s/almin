@@ -340,6 +340,8 @@ public final class WebUi {
         http.createContext("/api/track", guard("/api/track", ui::handleTrack));
         http.createContext("/api/map", guard("/api/map", ui::handleMap));
         http.createContext("/api/head", guard("/api/head", ui::handleHead));
+        http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
+        http.createContext("/api/ai/key", guard("/api/ai/key", ui::handleAiKey));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -1938,6 +1940,17 @@ public final class WebUi {
     private static final int ACTIVITY_ROWS = 500;
 
     /**
+     * Rows behind the map and the episode pass.
+     *
+     * <p>More than the list gets, because the two are read differently: a list
+     * is scrolled and five hundred is already more than anyone reads, while
+     * the map is a picture of a period and five hundred rows of a busy evening
+     * is an hour of it. Marks are clustered when they crowd, so the extra rows
+     * cost drawing time rather than legibility.
+     */
+    private static final int MAP_ROWS = 2500;
+
+    /**
      * The activity log: what ordinary players did.
      *
      * <p>Behind the admin login like everything else here, which is the point —
@@ -2148,7 +2161,7 @@ public final class WebUi {
         }
 
         JsonArray actions = new JsonArray();
-        for (ActivityLog.Entry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+        for (ActivityLog.Entry e : ActivityLog.recent(MAP_ROWS)) {
             if (e.dim() == null || e.dim().isEmpty()) continue;
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
@@ -2192,8 +2205,173 @@ public final class WebUi {
         root.addProperty("afkSeconds", AlminConfig.get().activityAfkSeconds);
         root.addProperty("from", from == Long.MAX_VALUE ? 0 : from);
         root.addProperty("to", to);
+        // The clock, not the last thing that was recorded. Live mode follows
+        // this: on a quiet server the newest row can be an hour old, and a
+        // cursor pinned to it would say the map was showing an hour ago.
+        root.addProperty("now", System.currentTimeMillis());
         root.add("admins", adminPolicyJson());
         return root;
+    }
+
+    // ---------- routes: what it all meant ----------
+
+    /**
+     * Episodes, and a summary of them if a model is configured.
+     *
+     * <p>GET always answers, model or no model: the episodes are worked out
+     * here from the log and cost nothing, and they are most of the value. The
+     * summary is whatever the model last said, which may be nothing.
+     *
+     * <p>POST asks the model now. That is the only thing on this endpoint that
+     * leaves the machine, and it happens on this thread — a web thread, never
+     * the server thread, because it waits on a network round trip that can
+     * take a minute.
+     */
+    private void handleInsights(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            boolean run = "POST".equals(ex.getRequestMethod());
+
+            List<ActivityLog.Entry> rows = ActivityLog.recent(MAP_ROWS);
+            List<Episodes.Episode> episodes = Episodes.of(rows);
+            episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
+
+            JsonObject root = new JsonObject();
+            root.add("episodes", episodesJson(episodes));
+            root.add("ai", aiStatusJson());
+
+            AiInsights.Report report;
+            if (run) {
+                AlminConfig cfg = AlminConfig.get();
+                if (!cfg.aiEnabled) {
+                    json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
+                    return;
+                }
+                long from = Long.MAX_VALUE, to = 0;
+                for (ActivityLog.Entry e : rows) {
+                    from = Math.min(from, e.at());
+                    to = Math.max(to, e.at());
+                }
+                List<ActivityLog.Entry> chat = new java.util.ArrayList<>();
+                for (int i = rows.size() - 1; i >= 0; i--) {
+                    if ("chat".equals(rows.get(i).action())) chat.add(rows.get(i));
+                }
+                int online = serverRunning
+                    ? onServer(() -> server.getPlayerCount(), 0) : 0;
+                report = AiInsights.summarise(episodes, chat,
+                    from == Long.MAX_VALUE ? to : from, to, online, true);
+            } else {
+                report = AiInsights.cached();
+            }
+            if (report != null) root.add("report", reportJson(report));
+            json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Episodes and movement on one list, most notable first. */
+    private static List<Episodes.Episode> merge(List<Episodes.Episode> a,
+                                                List<Episodes.Episode> b) {
+        List<Episodes.Episode> out = new java.util.ArrayList<>(a);
+        out.addAll(b);
+        out.sort(java.util.Comparator.comparingInt(Episodes.Episode::weight).reversed()
+            .thenComparing(java.util.Comparator.comparingLong(Episodes.Episode::to).reversed()));
+        return out;
+    }
+
+    private static JsonArray episodesJson(List<Episodes.Episode> episodes) {
+        JsonArray arr = new JsonArray();
+        for (Episodes.Episode e : episodes) {
+            JsonObject o = new JsonObject();
+            o.addProperty("kind", e.kind());
+            o.addProperty("headline", e.headline());
+            o.addProperty("player", e.player());
+            o.addProperty("mask", maskOf(e.uuid()));
+            o.addProperty("uuid", e.uuid());
+            o.addProperty("dim", e.dim());
+            o.addProperty("from", e.from());
+            o.addProperty("to", e.to());
+            o.addProperty("x", e.x());
+            o.addProperty("y", e.y());
+            o.addProperty("z", e.z());
+            o.addProperty("events", e.events());
+            o.addProperty("weight", e.weight());
+            arr.add(o);
+        }
+        return arr;
+    }
+
+    private static JsonObject reportJson(AiInsights.Report r) {
+        JsonObject o = new JsonObject();
+        o.addProperty("generated", r.generated());
+        o.addProperty("summary", r.summary());
+        o.addProperty("model", r.model());
+        o.addProperty("provider", r.provider());
+        o.addProperty("error", r.error() == null ? "" : r.error());
+        JsonArray moments = new JsonArray();
+        for (AiInsights.Moment m : r.moments()) {
+            JsonObject j = new JsonObject();
+            j.addProperty("at", m.at());
+            j.addProperty("label", m.label());
+            j.addProperty("why", m.why());
+            j.addProperty("player", m.player());
+            j.addProperty("dim", m.dim());
+            j.addProperty("x", m.x());
+            j.addProperty("y", m.y());
+            j.addProperty("z", m.z());
+            j.addProperty("weight", m.weight());
+            moments.add(j);
+        }
+        o.add("moments", moments);
+        return o;
+    }
+
+    /**
+     * What is configured, and what turning it on would mean.
+     *
+     * <p>The key itself is never in here — only whether there is one.
+     */
+    private static JsonObject aiStatusJson() {
+        AlminConfig cfg = AlminConfig.get();
+        JsonObject o = new JsonObject();
+        o.addProperty("enabled", cfg.aiEnabled);
+        o.addProperty("provider", cfg.aiProvider);
+        o.addProperty("model", cfg.aiModel);
+        o.addProperty("baseUrl", cfg.aiBaseUrl);
+        o.addProperty("sendChat", cfg.aiSendChat);
+        o.addProperty("autoMinutes", cfg.aiAutoMinutes);
+        o.addProperty("hasKey", AiInsights.hasKey());
+        o.addProperty("problem", AiInsights.problem());
+        return o;
+    }
+
+    /**
+     * Sets or clears the API key.
+     *
+     * <p>Secure sessions only, like the admin password: this is a credential
+     * going over the wire, and everything else about it is pointless if that
+     * part is in the clear.
+     */
+    private void handleAiKey(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject body = readBody(ex);
+            String key = body.has("key") && !body.get("key").isJsonNull()
+                ? body.get("key").getAsString() : "";
+            boolean ok = AiInsights.setKey(key);
+            if (!ok) { json(ex, 500, err("Could not write the key file.")); return; }
+            AlminLog.info("[almin] AI key {} from the panel by {}",
+                key.isBlank() ? "cleared" : "set", clientKey(ex));
+            json(ex, 200, "{\"ok\":true,\"hasKey\":" + AiInsights.hasKey() + "}");
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
     }
 
     /**

@@ -88,7 +88,27 @@ public final class WebFiles {
     public static Path resolveUnder(Path root, String rel) {
         Path base = root.toAbsolutePath().normalize();
         Path target = base.resolve(rel == null ? "" : rel).toAbsolutePath().normalize();
-        return target.startsWith(base) ? target : null;
+        if (!target.startsWith(base)) return null;
+        return secret(base, target) ? null : target;
+    }
+
+    /**
+     * Files the browser will not open, even for an admin who is allowed to
+     * open everything else.
+     *
+     * <p>Only one so far: the AI provider's API key. It is a credential, and
+     * the browser both displays a file's contents and downloads it — so
+     * "readable by an admin" here means "in a browser tab, in a proxy log, and
+     * in whatever they paste into a bug report". Refusing it by path is a
+     * cheap way to make sure the only route to it is the box that sets it.
+     *
+     * <p>Returning null from the resolver rather than checking in each caller
+     * is deliberate: read, download, rename and delete all go through here, so
+     * there is no route that forgot.
+     */
+    static boolean secret(Path base, Path target) {
+        return target.equals(base.resolve("config").resolve("almin")
+            .resolve(AiInsights.keyFileName()));
     }
 
     /**
@@ -135,8 +155,12 @@ public final class WebFiles {
         // one simply reports -1 and the panel says nothing about its contents.
         long folders = paths.stream().filter(Files::isDirectory).count();
         boolean countChildren = folders <= MAX_COUNTED_DIRS;
+        Path base = root(server);
         for (Path p : paths) {
             if (entries.size() >= MAX_LIST_ENTRIES) break;
+            // Not listed either: a file the browser refuses to open should not
+            // be sitting in the listing offering itself.
+            if (secret(base, p.toAbsolutePath().normalize())) continue;
             boolean dir = Files.isDirectory(p);
             long size = -1;
             long modified = 0;

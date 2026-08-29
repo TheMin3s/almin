@@ -120,10 +120,12 @@ public final class AlminConfig {
      */
     public boolean activityIncludeAdmins = false;
     /**
-     * How long an activity row is kept, in minutes. A day by default — this is
-     * data about named people, so it expires rather than accumulating.
+     * How long an activity row is kept, in minutes. Five days by default —
+     * long enough that "what happened over the weekend" is still answerable,
+     * short enough that this stays a working record rather than an archive.
+     * It is data about named people, so it expires rather than accumulating.
      */
-    public int activityRetentionMinutes = 1440;
+    public int activityRetentionMinutes = 7200;
     /** Ceiling on the log, oldest dropped first, so a busy server can't grow it forever. */
     public int activityMaxEntries = 20000;
     /**
@@ -158,8 +160,15 @@ public final class AlminConfig {
      * {@link #mapRadius} and {@link #mapBlocksPerPixel}.
      */
     public int mapSnapshotSeconds = 30;
-    /** How many pictures are kept before the oldest are deleted. */
-    public int mapSnapshotKeep = 40;
+    /**
+     * How many pictures are kept before the oldest are deleted.
+     *
+     * <p>Two hours' worth at the default interval. It used to be a quarter of
+     * that, back when every picture was a whole copy of the ground; now that
+     * consecutive pictures are stored as the difference between them, most of
+     * them cost a few kilobytes and keeping the afternoon is affordable.
+     */
+    public int mapSnapshotKeep = 240;
     /**
      * Blocks per pixel. 1 is a pixel per block, and the default: the map is
      * something people zoom into, and a picture that goes soft the moment you
@@ -169,6 +178,39 @@ public final class AlminConfig {
     public int mapBlocksPerPixel = 1;
     /** Blocks either side of the players the picture covers. */
     public int mapRadius = 192;
+    /**
+     * Read the activity log with a language model, so the map comes with a
+     * paragraph saying what happened rather than four thousand rows.
+     *
+     * <p>Off by default and deliberately so: turning it on sends what players
+     * did — names, places, and optionally what they said — to whichever
+     * service {@link #aiProvider} names. That is a decision about other
+     * people's data, so it is one an admin has to make on purpose.
+     *
+     * <p>The pattern-finding underneath it ({@link Episodes}) is local, always
+     * runs, and needs none of this. The model writes prose over the top of it.
+     */
+    public boolean aiEnabled = false;
+    /**
+     * Which service: {@code anthropic}, {@code openai}, or {@code local} for
+     * anything speaking the OpenAI chat API on an address you give — Ollama,
+     * llama.cpp's server, LM Studio. {@code local} is how you run a small
+     * model on the same machine and have nothing leave it.
+     */
+    public String aiProvider = "local";
+    /** Model name, as that service spells it. */
+    public String aiModel = "qwen2.5:3b";
+    /** Base URL for {@code local} (and for an OpenAI-compatible gateway). */
+    public String aiBaseUrl = "http://127.0.0.1:11434/v1";
+    /**
+     * Include what people said in what is sent to the model.
+     *
+     * <p>Separate from the rest because it is different in kind: coordinates
+     * are a record of a game, and chat is a record of a conversation.
+     */
+    public boolean aiSendChat = true;
+    /** Minutes between unattended summaries. 0 = only when someone asks. */
+    public int aiAutoMinutes = 0;
     /**
      * Show player faces in the panel's player and activity lists.
      *
@@ -283,7 +325,7 @@ public final class AlminConfig {
             c -> c.activityLog, (c, v) -> c.activityLog = (Boolean) v),
         boolKey("activity-include-admins", "Record admins and trusted UUIDs as well as ordinary players",
             c -> c.activityIncludeAdmins, (c, v) -> c.activityIncludeAdmins = (Boolean) v),
-        intKey("activity-retention-minutes", "How long an activity row is kept before it is deleted", 5, 10080,
+        intKey("activity-retention-minutes", "How long an activity row is kept before it is deleted (5 days by default)", 5, 43200,
             c -> c.activityRetentionMinutes, (c, v) -> c.activityRetentionMinutes = (Integer) v),
         intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 50000,
             c -> c.activityMaxEntries, (c, v) -> c.activityMaxEntries = (Integer) v),
@@ -306,8 +348,30 @@ public final class AlminConfig {
         intKey("map-radius", "Blocks either side of the players each picture covers", 32, 512,
             c -> c.mapRadius, (c, v) -> c.mapRadius = (Integer) v),
         boolKey("web-player-heads", "Show player faces in the panel (looks skins up from Mojang for players who are not online)",
-            c -> c.webPlayerHeads, (c, v) -> c.webPlayerHeads = (Boolean) v)
+            c -> c.webPlayerHeads, (c, v) -> c.webPlayerHeads = (Boolean) v),
+        boolKey("ai-enabled", "Let a language model summarise the activity log (sends player activity to the chosen service)",
+            c -> c.aiEnabled, (c, v) -> c.aiEnabled = (Boolean) v),
+        textKey("ai-provider", "anthropic, openai, or local (anything speaking the OpenAI chat API at ai-base-url)",
+            c -> c.aiProvider, (c, v) -> c.aiProvider = (String) v),
+        textKey("ai-model", "Model name as that service spells it",
+            c -> c.aiModel, (c, v) -> c.aiModel = (String) v),
+        textKey("ai-base-url", "Base URL for the local/compatible provider, e.g. http://127.0.0.1:11434/v1",
+            c -> c.aiBaseUrl, (c, v) -> c.aiBaseUrl = (String) v),
+        boolKey("ai-send-chat", "Include what players said in what is sent to the model",
+            c -> c.aiSendChat, (c, v) -> c.aiSendChat = (Boolean) v),
+        intKey("ai-auto-minutes", "Minutes between unattended summaries (0 = only when asked)", 0, 1440,
+            c -> c.aiAutoMinutes, (c, v) -> c.aiAutoMinutes = (Integer) v)
     );
+
+    /**
+     * Bumped when a default changes in a way that should reach servers that
+     * are already running. Stored so the change happens once rather than every
+     * time the file is read, and so a value someone chose on purpose is only
+     * ever overwritten if it is still sitting on the old default.
+     */
+    private static final int CONFIG_VERSION = 1;
+    /** Version of the defaults this file was last written against. */
+    public int configVersion = 0;
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */
     public Set<String> dirWritableRootsAsSet() {
@@ -354,6 +418,28 @@ public final class AlminConfig {
             // the usual suspects, fixed once so bookmarks keep working.
             cfg.webUiPort = 8100 + new SecureRandom().nextInt(900);
         }
+        migrate(cfg);
+    }
+
+    /**
+     * Carries a changed default onto a server that already has a config file.
+     *
+     * <p>Every key is written to disk on first run, so a new default would
+     * otherwise only ever reach a brand-new install — the setting on every
+     * existing server is already pinned to whatever the default was the day it
+     * started. A value is only moved if it is still exactly the old default,
+     * so anything anyone chose deliberately is left alone.
+     */
+    private static void migrate(AlminConfig cfg) {
+        if (cfg.configVersion >= CONFIG_VERSION) {
+            cfg.configVersion = CONFIG_VERSION;
+            return;
+        }
+        // v1: the activity log now keeps five days rather than one.
+        if (cfg.configVersion < 1 && cfg.activityRetentionMinutes == 1440) {
+            cfg.activityRetentionMinutes = 7200;
+        }
+        cfg.configVersion = CONFIG_VERSION;
     }
 
     /** Re-read the file from disk (for /almin config reload). Returns true on success. */
@@ -375,6 +461,13 @@ public final class AlminConfig {
         try {
             String json = Files.readString(path, StandardCharsets.UTF_8);
             JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
+            // Not a setting, so not in KEYS: it records which set of defaults
+            // this file was written against. Absent means "before there were
+            // versions", which is what {@link #migrate} expects.
+            if (obj.has("config-version")) {
+                try { cfg.configVersion = obj.get("config-version").getAsInt(); }
+                catch (Exception ignoredVersion) { /* treat as unversioned */ }
+            }
             for (Key k : KEYS) {
                 if (!obj.has(k.name)) continue;
                 try {
@@ -401,6 +494,7 @@ public final class AlminConfig {
         try {
             Files.createDirectories(path.getParent());
             JsonObject obj = new JsonObject();
+            obj.addProperty("config-version", cfg.configVersion);
             for (Key k : KEYS) {
                 Object v = k.getter.apply(cfg);
                 switch (k.type) {

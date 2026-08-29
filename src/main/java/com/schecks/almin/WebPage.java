@@ -176,6 +176,61 @@ final class WebPage {
           .sideact .tm{color:var(--mute);font-size:11px;margin-left:auto}
           .sideact .dt{color:var(--dim);word-break:break-word}
           .sideact.say .dt{color:var(--ink)}
+          .live{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+                border:1px solid #d7484a;border-radius:8px;color:#ff8f90;
+                font-size:12.5px;font-weight:700;letter-spacing:.6px}
+          .live i{width:8px;height:8px;border-radius:50%;background:#e5484d;
+                  animation:pulse 1.8s ease-in-out infinite}
+          @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+          @media(prefers-reduced-motion:reduce){.live i{animation:none}}
+          /* The settings that live beside the map rather than in the config tab. */
+          .mapopts{position:absolute;right:50px;top:12px;width:236px;z-index:4;
+                   background:rgba(11,13,17,.96);border:1px solid var(--line);
+                   border-radius:10px;padding:11px 12px;font-size:12.5px;
+                   box-shadow:0 12px 32px rgba(0,0,0,.5)}
+          .mapopts h4{margin:0 0 9px;font-size:10.5px;text-transform:uppercase;
+                      letter-spacing:.9px;color:var(--brand)}
+          .mapopts label{display:flex;align-items:center;gap:10px;margin:8px 0;color:var(--dim)}
+          .mapopts label span{flex:1;min-width:0;line-height:1.35}
+          /* Inputs are full-width everywhere else on the page; here they sit
+             beside their label, so each one is told its own size. */
+          .mapopts input[type=range]{width:92px;flex:none;padding:0;accent-color:var(--brand)}
+          .mapopts input[type=checkbox]{width:15px;height:15px;flex:none;padding:0;
+                                        accent-color:var(--brand)}
+          .mapopts select{width:104px;flex:none;padding:3px 6px;font-size:12px}
+          .mapopts .row{display:flex;gap:6px;margin-top:10px}
+          .mapopts .row .btn{flex:1;padding:4px 8px;font-size:12px}
+          /* What a crowd of marks turns into when the map is zoomed out. */
+          .clusterbox{position:absolute;z-index:5;max-width:330px;max-height:280px;
+                      overflow:auto;background:rgba(11,13,17,.97);border:1px solid var(--line);
+                      border-radius:10px;padding:9px 11px;font-size:12.5px;
+                      box-shadow:0 12px 32px rgba(0,0,0,.5)}
+          .clusterbox h4{margin:0 0 7px;font-size:11px;color:var(--brand);
+                         text-transform:uppercase;letter-spacing:.8px}
+          .clusterbox .cl{display:flex;gap:7px;align-items:baseline;padding:3px 0;
+                          border-bottom:1px solid rgba(255,255,255,.05)}
+          .clusterbox .cl:last-child{border-bottom:0}
+          .clusterbox .cl .nm{font-weight:650}
+          .clusterbox .cl .xn{color:var(--brand);font-variant-numeric:tabular-nums}
+          .clusterbox .cl .dt{color:var(--dim);word-break:break-word}
+          /* Episodes: what the rows meant, and what the model made of them. */
+          .episode{display:grid;grid-template-columns:19px 1fr auto;gap:9px;
+                   align-items:baseline;padding:7px 2px;font-size:13px;cursor:pointer;
+                   border-bottom:1px solid rgba(255,255,255,.05)}
+          .episode:last-child{border-bottom:0}
+          .episode:hover{background:var(--card2)}
+          .episode .kind{display:inline-block;padding:1px 7px;border-radius:999px;
+                         font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+                         border:1px solid var(--line);color:var(--dim);margin-right:7px}
+          .episode .tm{color:var(--mute);font-size:11.5px;white-space:nowrap}
+          .summary{background:var(--card2);border:1px solid var(--line);border-radius:10px;
+                   padding:12px 14px;line-height:1.55;margin:10px 0}
+          .moment{display:flex;gap:9px;align-items:baseline;padding:7px 2px;cursor:pointer;
+                  border-bottom:1px solid rgba(255,255,255,.05)}
+          .moment:last-child{border-bottom:0}
+          .moment:hover{background:var(--card2)}
+          .moment .lb{font-weight:650}
+          .moment .wy{color:var(--dim)}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
                   border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
                   color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
@@ -1285,11 +1340,12 @@ final class WebPage {
                 '<div id="t-map"><div class="note">loading…</div></div>'+
                 '<div class="timeline" id="t-line"></div>'+
                 '<div class="tlbar">'+
+                  '<span class="live" id="t-livepill"><i></i>LIVE</span>'+
                   '<button class="btn go" id="t-play">Play</button>'+
                   '<span class="speed" id="t-speed"></span>'+
                   '<span class="muted num" id="t-rate"></span>'+
                   '<button class="btn" id="t-skip">Skip quiet time</button>'+
-                  '<button class="btn" id="t-zoomout">Whole period</button>'+
+                  '<button class="btn" id="t-golive">Back to live</button>'+
                   '<span class="spacer"></span>'+
                   '<span class="muted" id="t-dims"></span>'+
                 '</div>'+
@@ -1297,6 +1353,13 @@ final class WebPage {
               '</div>'+
               '<aside class="mapside" id="t-side"></aside>'+
             '</div></section>'+
+            '<section id="t-insights">'+
+              '<div class="bartitle"><h2>What happened</h2>'+
+              '<span class="spacer"></span>'+
+              '<button class="btn" id="i-run">Summarise</button></div>'+
+              '<div id="i-ai"></div>'+
+              '<div id="i-eps"><div class="note">reading the log…</div></div>'+
+            '</section>'+
             '<div id="a-admins" class="note" style="margin:12px 0"></div>'+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
             '<input id="a-filter" placeholder="filter by player, action, detail or place" '+
@@ -1312,11 +1375,14 @@ final class WebPage {
             '<div class="act" id="a-rows" style="margin-top:12px"><div class="note">loading…</div></div>'+
             '<div class="msg" id="a-msg"></div>';
           setTimeout(()=>{
-            loadActivity(); loadTrackList(); loadAll();
-            $('a-refresh').onclick=()=>{ loadActivity(); loadAll(); loadTrack($('a-who').value); };
+            loadActivity(); loadTrackList(); loadAll(); loadInsights();
+            $('a-refresh').onclick=()=>{ loadActivity(); loadAll(); loadInsights();
+              loadTrack($('a-who').value); };
             $('t-play').onclick=togglePlay;
             $('t-skip').onclick=()=>{ skipGaps=!skipGaps; paintAll(); };
-            $('t-zoomout').onclick=()=>{ win.set=false; paintAll(); };
+            $('t-golive').onclick=goLive;
+            $('t-livepill').onclick=()=>{ $('t-line').scrollIntoView({block:'nearest'}); };
+            $('i-run').onclick=()=>runSummary(true);
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
@@ -1326,6 +1392,16 @@ final class WebPage {
           return wrap;
         }
 
+        """;
+
+    /**
+     * The map: everyone on one clock, and what the marks on it meant.
+     *
+     * <p>Its own piece for the same reason as the others — the 64KB ceiling on
+     * one string constant — and it is the piece that grows, so it starts on
+     * its own rather than being cut out of PART2 again later.
+     */
+    private static final String PARTMAP = """
         // ---- everyone, on one clock ----
         // The per-player map answers "where has this person been". This answers
         // the question you actually start with — "what happened here, and who
@@ -1342,11 +1418,37 @@ final class WebPage {
         let win={from:0, to:0, set:false};
 
         let cursorAt=0, cursorSet=false;
+
+        // Live is where the map starts, because "what is happening" is the
+        // question you open it with; "what happened at four o'clock" is the
+        // one you come to second. Touching the timeline drops out of it, and
+        // the playback controls only appear once you have.
+        let live=true;
+
+        /**
+         * How the map is drawn, as opposed to what it draws.
+         *
+         * <p>Kept here and in localStorage rather than in config.json: these
+         * are about one person's eyes on one screen, not about the server, and
+         * two admins looking at the same map are allowed to disagree about how
+         * dark the ground should be.
+         */
+        const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, colour:'action',
+                            faces:true, paths:true, cluster:true, overlays:true};
+        let mapOpts=Object.assign({},MAP_DEFAULTS);
+        let optsOpen=false;
+        try {
+          const saved=localStorage.getItem('almin.map');
+          if(saved) mapOpts=Object.assign({},MAP_DEFAULTS,JSON.parse(saved));
+        } catch(e){ /* private mode, or someone edited it by hand */ }
+        function saveMapOpts(){
+          try { localStorage.setItem('almin.map',JSON.stringify(mapOpts)); }
+          catch(e){ /* not being able to remember is not a reason to fail */ }
+        }
         // A minute of recorded time per second: real time is available but
         // watching a day at 1x would take a day.
         let playSpeed=60, skipGaps=true;
         let focusPlayer='';
-        let showOverlays=true;
 
         // Playback speed is a real multiple of recorded time: at 1x a second
         // on screen is a second that was lived. It used to mean "the visible
@@ -1382,17 +1484,49 @@ final class WebPage {
         // a grid. Listed once; the browser picks which one matches the cursor.
         let shots=[], shotEvery=0;
 
-        async function loadAll(){
+        /**
+         * Fetches the period.
+         *
+         * @param keep true to leave the framing alone — where the map is
+         *             looking, which slice of the timeline is open, which
+         *             player is focused. Live mode refreshes on a timer, and a
+         *             refresh that reset the view every ten seconds would make
+         *             the map impossible to look at.
+         */
+        let liveLoading=false;
+        async function loadAll(keep){
           const box=$('t-map'); if(!box) return;
-          const r=await jget('/api/track?all=1');
-          if(r.status!==200){ box.innerHTML='<div class="note">unavailable</div>'; return; }
-          allData=r.body; allDim='';
-          showAdmins(r.body.admins);
-          const m=await jget('/api/map');
-          shots=(m.status===200 && m.body.shots)?m.body.shots:[];
-          shotEvery=(m.body&&m.body.every)||0;
-          cursorSet=false; win.set=false; view.set=false;
-          paintAll();
+          if(liveLoading) return;
+          liveLoading=true;
+          try {
+            const r=await jget('/api/track?all=1');
+            if(r.status!==200){
+              if(!keep) box.innerHTML='<div class="note">unavailable</div>';
+              return;
+            }
+            const dim=allDim;
+            allData=r.body;
+            showAdmins(r.body.admins);
+            const m=await jget('/api/map');
+            shots=(m.status===200 && m.body.shots)?m.body.shots:[];
+            shotEvery=(m.body&&m.body.every)||0;
+            if(keep){ allDim=dim; }
+            else { allDim=''; cursorSet=false; win.set=false; view.set=false; }
+            lastLiveLoad=Date.now();
+            paintAll();
+          } finally { liveLoading=false; }
+        }
+
+        // Live refreshes on its own clock rather than on the panel's three
+        // seconds: the period is a couple of thousand rows, and asking for it
+        // twenty times a minute would be rude to a server that is also running
+        // a game.
+        const LIVE_EVERY=10000;
+        let lastLiveLoad=0;
+        function liveTick(){
+          if(!live || tab!=='activity' || document.hidden) return;
+          if(Date.now()-lastLiveLoad < LIVE_EVERY) return;
+          loadAll(true);
         }
 
         // The newest picture taken at or before the cursor — what the ground
@@ -1422,6 +1556,9 @@ final class WebPage {
           for(const n of Object.keys(allData.tracks||{}))
             for(const p of allData.tracks[n]) at.push(p.at);
           for(const a of (allData.actions||[])) at.push(a.at);
+          // Now counts as a moment, so a server that emptied an hour ago shows
+          // that hour as quiet rather than as the edge of the record.
+          if(allData.now) at.push(allData.now);
           if(at.length<2) return [];
           at.sort((x,y)=>x-y);
           const gaps=[];
@@ -1519,6 +1656,7 @@ final class WebPage {
         function togglePlay(){
           if(playTimer){ stopPlay(); return; }
           const b=$('t-play'); if(!b) return;
+          live=false;
           b.textContent='Pause'; b.className='btn on';
           const gaps=quietGaps();
           // Advance by the time that actually passed, not by the interval we
@@ -1590,12 +1728,18 @@ final class WebPage {
                 'style="padding:3px 9px;font-size:12px;margin-left:6px">'+esc(d)+'</button>').join('')
             : esc(allDim);
 
-          const from=allData.from||0, to=allData.to||from+1;
-          if(!cursorSet){ cursorAt=to; cursorSet=true; }
+          const from=allData.from||0;
+          // The period runs to the clock, not to the last thing anyone did. On
+          // a quiet server those are an hour apart, and a timeline that stopped
+          // at the last row would say the map was showing an hour ago.
+          const to=Math.max(allData.to||from+1, allData.now||0);
+          if(live){ cursorAt=to; cursorSet=true; }
+          else if(!cursorSet){ cursorAt=to; cursorSet=true; }
           cursorAt=Math.max(from,Math.min(to,cursorAt));
           const cursor=cursorAt;
           const windowMs=Math.max(1,(to-from)*MARKER_WINDOW);
-          $('t-at').textContent=fmtAgo(cursor)+(cursor>=to-1000?' (now)':'');
+          $('t-at').textContent=live?'live'
+            :fmtAgo(cursor)+(cursor>=to-1000?' (now)':'');
 
           const inDim=p=>p.dim===allDim;
           const mine=a=>!focusPlayer || a.player===focusPlayer;
@@ -1635,7 +1779,7 @@ final class WebPage {
           const W=1000, H=Math.round(W*0.60);
           const side=$('t-side'), layout=$('t-layout');
           const wide=layout ? layout.clientWidth>=900 : false;
-          const sidebar=wide && showOverlays;
+          const sidebar=wide && mapOpts.overlays;
           if(layout) layout.className='maplayout'+(sidebar?' side':'');
           if(side) side.style.display=sidebar?'':'none';
           // With a panel beside the map, dead centre is not the middle of what
@@ -1682,7 +1826,8 @@ final class WebPage {
               // A thin scrim over the ground. The terrain is the background,
               // not the subject: muting it a little is what lets a path and a
               // handful of marks read as the thing on top of it.
-              '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#0a0c10" opacity=".22"/>'
+              '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#0a0c10" opacity="'+
+              mapOpts.dim.toFixed(2)+'"/>'
             : '';
 
           const heads=[];
@@ -1696,13 +1841,21 @@ final class WebPage {
             // The whole path faintly, so you can see where to scrub to; the
             // travelled part solid on top of it, over a dark casing so a pale
             // line does not disappear where it crosses sand.
-            let out='<path d="'+d(full)+'" fill="none" stroke="'+c+'" stroke-width="1.8" '+
-              'stroke-opacity=".16" stroke-linejoin="round" stroke-linecap="round"/>';
+            const wide=mapOpts.path;
+            let out=mapOpts.paths
+              ? '<path d="'+d(full)+'" fill="none" stroke="'+c+'" stroke-width="'+
+                (wide*0.7).toFixed(1)+'" stroke-opacity=".16" stroke-linejoin="round" '+
+                'stroke-linecap="round"/>'
+              : '';
             if(upto.length){
-              out+='<path d="'+d(upto)+'" fill="none" stroke="#0a0c10" stroke-width="5" '+
-                'stroke-opacity=".45" stroke-linejoin="round" stroke-linecap="round"/>'+
-                '<path d="'+d(upto)+'" fill="none" stroke="'+c+'" stroke-width="2.6" '+
-                'stroke-opacity=".95" stroke-linejoin="round" stroke-linecap="round"/>';
+              if(mapOpts.paths){
+                out+='<path d="'+d(upto)+'" fill="none" stroke="#0a0c10" stroke-width="'+
+                  (wide+2.4).toFixed(1)+'" stroke-opacity=".45" stroke-linejoin="round" '+
+                  'stroke-linecap="round"/>'+
+                  '<path d="'+d(upto)+'" fill="none" stroke="'+c+'" stroke-width="'+
+                  wide.toFixed(1)+'" stroke-opacity=".95" stroke-linejoin="round" '+
+                  'stroke-linecap="round"/>';
+              }
               // Where they were at the cursor, drawn as their own face —
               // square, because a Minecraft head is. The player's colour is
               // the frame around it, and stays visible if the face never
@@ -1712,7 +1865,7 @@ final class WebPage {
               let head='<rect x="'+(hx-R).toFixed(1)+'" y="'+(hy-R).toFixed(1)+
                 '" width="'+(R*2)+'" height="'+(R*2)+'" rx="2.5" fill="'+c+
                 '" stroke="#0a0c10" stroke-width="2.5"/>';
-              if(headsOn && ids[n]){
+              if(headsOn && mapOpts.faces && ids[n]){
                 head+='<image href="/api/head?uuid='+encodeURIComponent(ids[n])+
                   '&name='+encodeURIComponent(n)+'" x="'+(hx-R+3).toFixed(1)+
                   '" y="'+(hy-R+3).toFixed(1)+'" width="'+(R*2-6)+'" height="'+(R*2-6)+
@@ -1724,34 +1877,65 @@ final class WebPage {
             return out;
           }).join('');
 
-          const dots=shownActs.map((a,i)=>{
-            // Recent is bright, older stays visible. Never to zero: a mark you
-            // cannot see is the same as one that is not drawn.
-            const age=Math.min(1,(cursor-a.at)/windowMs);
-            // Recent stands out, but the floor is high: over a long period
-            // almost everything is "old", and fading those to nothing would
-            // empty the map of the very marks it exists to show.
-            const fade=Math.max(0.55,0.98-age*0.43);
-            return '<g class="tmk" data-i="'+i+'" opacity="'+fade.toFixed(2)+'">'+
-              marker(a.action,+sx(a.x).toFixed(1),+sz(a.z).toFixed(1),
-                ACTION_COLOR[a.action]||'#9aa3ae',MARK_SCALE*(age>0.99?0.75:1))+'</g>';
-          }).join('');
+          // Marks that land on the same patch of screen become one box with a
+          // number on it. Binning is in screen pixels rather than in blocks,
+          // which is what makes it a zoom control: the same evening is forty
+          // separate marks close up and four boxes from far away, without
+          // anything being hidden.
+          const CELL=26;
+          const bins=new Map();
+          for(const a of shownActs){
+            const px=sx(a.x), py=sz(a.z);
+            // Nothing off the edge of the map is drawn at all. With a couple
+            // of thousand rows in hand that is most of the work skipped on a
+            // zoomed-in view.
+            if(px<-40||px>W+40||py<-40||py>H+40) continue;
+            const key=Math.round(px/CELL)+':'+Math.round(py/CELL);
+            let b=bins.get(key);
+            if(!b){ b={sx:0,sy:0,items:[]}; bins.set(key,b); }
+            b.items.push(a); b.sx+=px; b.sy+=py;
+          }
+          const drawn=[], groups=[], dotSvg=[], clusterSvg=[];
+          const colourOf=a=>mapOpts.colour==='player'
+            ? playerColor(a.player) : (ACTION_COLOR[a.action]||'#9aa3ae');
+          for(const b of bins.values()){
+            if(!mapOpts.cluster || b.items.length<2){
+              for(const a of b.items){
+                // Recent is bright, older stays visible. Never to zero: a mark
+                // you cannot see is the same as one that is not drawn.
+                const age=Math.min(1,(cursor-a.at)/windowMs);
+                // Recent stands out, but the floor is high: over a long period
+                // almost everything is "old", and fading those to nothing
+                // would empty the map of the very marks it exists to show.
+                const fade=Math.max(0.55,0.98-age*0.43);
+                dotSvg.push('<g class="tmk" data-i="'+drawn.length+'" opacity="'+
+                  fade.toFixed(2)+'">'+
+                  marker(a.action,+sx(a.x).toFixed(1),+sz(a.z).toFixed(1),
+                    colourOf(a),mapOpts.mark*(age>0.99?0.75:1))+'</g>');
+                drawn.push(a);
+              }
+            } else {
+              const cx=b.sx/b.items.length, cy=b.sy/b.items.length;
+              clusterSvg.push(clusterMark(cx,cy,b.items,groups.length,colourOf));
+              groups.push({x:cx,y:cy,items:b.items});
+            }
+          }
+          const dots=dotSvg.join('')+clusterSvg.join('');
 
           box.innerHTML='<div class="mapwrap">'+
             '<svg id="t-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
             'role="img" aria-label="Where everyone was and what they did">'+
             backing+groundImage+grid.join('')+lines+dots+heads.join('')+'</svg>'+
             '<div class="maptip" id="t-tip"></div>'+
-            (showOverlays?'<div class="onlinebar" id="t-online"></div>':'')+
+            (mapOpts.overlays?'<div class="onlinebar" id="t-online"></div>':'')+
             '<div class="mapbtns">'+
               '<button id="t-in" title="Zoom in">+</button>'+
               '<button id="t-out" title="Zoom out">−</button>'+
               '<button id="t-home" title="Fit everything in view">⌂</button>'+
+              '<button id="t-cog" title="How the map looks">'+ICON.cog+'</button>'+
             '</div>'+
-            '<div class="mapbtns bottom">'+
-              '<button id="t-cog" title="'+(showOverlays?'Hide the overlays':'Show the overlays')+
-              '">'+ICON.cog+'</button>'+
-            '</div></div>';
+            (optsOpen?mapOptionsHtml():'')+
+            '</div>';
 
           paintOnline(online,ids);
           paintLegend(shownNames,shownActs,span,shot);
@@ -1759,8 +1943,177 @@ final class WebPage {
           paintSide(acts.filter(a=>mine(a)));
           wireMapGestures();
           wireMapButtons();
-          wireMarkers(box,shownActs,W,H);
+          wireMarkers(box,drawn,W,H);
+          wireClusters(box,groups);
+          wireMapOptions();
           wireDims();
+        }
+
+        /**
+         * The panel of fine adjustments, beside the map rather than in the
+         * settings tab.
+         *
+         * <p>These are the things you change while looking at the thing they
+         * change — is the ground too bright to see the marks, is the path too
+         * thin to follow — and a round trip to another tab to try a value is
+         * how a setting ends up never being touched.
+         */
+        function mapOptionsHtml(){
+          const range=(id,label,min,max,step,val)=>
+            '<label><span>'+label+'</span><input type="range" id="'+id+'" min="'+min+
+            '" max="'+max+'" step="'+step+'" value="'+val+'"></label>';
+          const check=(id,label,on)=>
+            '<label><span>'+label+'</span><input type="checkbox" id="'+id+'"'+
+            (on?' checked':'')+'></label>';
+          return '<div class="mapopts" id="t-opts">'+
+            '<h4>How the map looks</h4>'+
+            range('o-dim','Ground darkness',0,80,1,Math.round(mapOpts.dim*100))+
+            range('o-path','Path width',1,7,0.5,mapOpts.path)+
+            range('o-mark','Marker size',1,4,0.1,mapOpts.mark)+
+            '<label><span>Colour marks by</span><select id="o-colour">'+
+              '<option value="action"'+(mapOpts.colour==='action'?' selected':'')+
+              '>what it was</option>'+
+              '<option value="player"'+(mapOpts.colour==='player'?' selected':'')+
+              '>who did it</option>'+
+            '</select></label>'+
+            check('o-faces','Player faces',mapOpts.faces)+
+            check('o-paths','Paths',mapOpts.paths)+
+            check('o-cluster','Group crowded marks',mapOpts.cluster)+
+            check('o-overlays','Side panel and player bar',mapOpts.overlays)+
+            '<div class="row"><button class="btn" id="o-reset">Reset</button>'+
+            '<button class="btn" id="o-close">Done</button></div>'+
+            '</div>';
+        }
+
+        function wireMapOptions(){
+          if(!optsOpen) return;
+          const set=(id,ev,fn)=>{ const el=$(id); if(el) el[ev]=()=>{ fn(el); saveMapOpts();
+            schedulePaint(); }; };
+          set('o-dim','oninput',el=>mapOpts.dim=(+el.value)/100);
+          set('o-path','oninput',el=>mapOpts.path=+el.value);
+          set('o-mark','oninput',el=>mapOpts.mark=+el.value);
+          set('o-colour','onchange',el=>mapOpts.colour=el.value);
+          set('o-faces','onchange',el=>mapOpts.faces=el.checked);
+          set('o-paths','onchange',el=>mapOpts.paths=el.checked);
+          set('o-cluster','onchange',el=>mapOpts.cluster=el.checked);
+          set('o-overlays','onchange',el=>mapOpts.overlays=el.checked);
+          const reset=$('o-reset');
+          if(reset) reset.onclick=()=>{ mapOpts=Object.assign({},MAP_DEFAULTS);
+            saveMapOpts(); paintAll(); };
+          const close=$('o-close');
+          if(close) close.onclick=()=>{ optsOpen=false; paintAll(); };
+        }
+
+        /**
+         * A crowd of marks, as one box with a number on it.
+         *
+         * <p>Sized by how much is inside, but only just — a box that grew with
+         * its count would be a bar chart lying on a map, and the number is
+         * already the number.
+         */
+        function clusterMark(x,y,items,index,colourOf){
+          let total=0;
+          const seen={};
+          let best='', most=0;
+          for(const a of items){
+            const n=Math.max(1,a.count||1);
+            total+=n;
+            seen[a.action]=(seen[a.action]||0)+n;
+            if(seen[a.action]>most){ most=seen[a.action]; best=a.action; }
+          }
+          const c=mapOpts.colour==='player'
+            ? playerColor(items[0].player) : (ACTION_COLOR[best]||'#9aa3ae');
+          const label=total>999?'999+':String(total);
+          const w=Math.max(20,10+label.length*8)*(mapOpts.mark/2.2);
+          const h=19*(mapOpts.mark/2.2);
+          return '<g class="tcl" data-i="'+index+'" style="cursor:pointer">'+
+            '<rect x="'+(x-w/2).toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+
+            '" height="'+h.toFixed(1)+'" rx="'+(h/2.6).toFixed(1)+'" fill="#0a0c10" '+
+            'fill-opacity=".86" stroke="'+c+'" stroke-width="1.8"/>'+
+            '<text x="'+x.toFixed(1)+'" y="'+(y+h*0.30).toFixed(1)+'" text-anchor="middle" '+
+            'fill="'+c+'" font-size="'+(h*0.68).toFixed(1)+'" font-weight="700" '+
+            'font-family="inherit">'+label+'</text>'+
+            '<title>'+items.length+' entr'+(items.length===1?'y':'ies')+', '+total+
+            ' in total — click to list them</title></g>';
+        }
+
+        /**
+         * What is inside one of those boxes.
+         *
+         * <p>Identical things are folded with a count rather than repeated:
+         * fifty rows of "broke Stone" is one line saying so, which is both
+         * shorter and more informative than fifty lines.
+         */
+        function clusterList(items){
+          const by=new Map();
+          for(const a of items){
+            const key=a.player+'\u0000'+a.action+'\u0000'+(a.detail||'');
+            const have=by.get(key);
+            const n=Math.max(1,a.count||1);
+            if(have){ have.n+=n; have.at=Math.max(have.at,a.at); }
+            else by.set(key,{a:a,n:n,at:a.at});
+          }
+          return [...by.values()].sort((p,q)=>q.n-p.n||q.at-p.at);
+        }
+
+        function closeCluster(){
+          const box=$('t-cluster'); if(box) box.remove();
+        }
+
+        function wireClusters(box,groups){
+          box.querySelectorAll('.tcl').forEach(el=>{
+            el.onclick=ev=>{
+              ev.stopPropagation();
+              const g=groups[+el.getAttribute('data-i')];
+              if(g) showCluster(box,g);
+            };
+          });
+          const svg=$('t-svg');
+          if(svg) svg.addEventListener('pointerdown',closeCluster,{once:true});
+        }
+
+        function showCluster(box,g){
+          closeCluster();
+          const svg=$('t-svg'); if(!svg) return;
+          // Into the wrapper, which is the positioned ancestor. Hung off the
+          // outer box instead, an absolutely-positioned panel resolves against
+          // whatever further up the page happens to be positioned — which put
+          // it over the section heading rather than over the mark.
+          const wrap=box.querySelector('.mapwrap')||box;
+          const r=svg.getBoundingClientRect(), b=wrap.getBoundingClientRect();
+          // The SVG letterboxes inside its box; undo that or the panel lands
+          // somewhere near the mark rather than on it.
+          const scale=Math.min(r.width/proj.W,r.height/proj.H);
+          const ox=(r.width-proj.W*scale)/2, oy=(r.height-proj.H*scale)/2;
+          const el=document.createElement('div');
+          el.className='clusterbox';
+          el.id='t-cluster';
+          const rows=clusterList(g.items);
+          let total=0;
+          for(const row of rows) total+=row.n;
+          el.innerHTML='<h4>'+total+' here · '+esc(g.items[0].dim)+'</h4>';
+          for(const row of rows){
+            const a=row.a;
+            const line=document.createElement('div');
+            line.className='cl';
+            line.innerHTML='<span class="nm">'+esc(a.mask||a.player)+'</span>'+
+              '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+esc(a.action)+
+              '</span>'+(row.n>1?'<span class="xn">×'+row.n+'</span>':'')+
+              (a.detail?'<span class="dt">'+esc(a.detail)+'</span>':'')+
+              '<span class="tm" style="margin-left:auto;color:var(--mute)">'+
+              esc(fmtAgo(row.at).replace(' ago',''))+'</span>';
+            line.style.cursor='pointer';
+            line.onclick=()=>{ cursorAt=row.at; cursorSet=true; live=false; stopPlay();
+              closeCluster(); paintAll(); };
+            el.appendChild(line);
+          }
+          wrap.appendChild(el);
+          // Kept inside the map: a panel half off the right-hand edge is a
+          // panel you cannot read.
+          const px=r.left-b.left+ox+g.x*scale, py=r.top-b.top+oy+g.y*scale;
+          const wide=el.offsetWidth||300, high=el.offsetHeight||200;
+          el.style.left=Math.max(6,Math.min(wrap.clientWidth-wide-6,px+14))+'px';
+          el.style.top=Math.max(6,Math.min(wrap.clientHeight-high-6,py-14))+'px';
         }
 
         /** Who is on right now, greyed if they have stopped moving. */
@@ -1830,7 +2183,7 @@ final class WebPage {
               (a.detail?'<div class="dt">'+esc(a.detail)+'</div>':'');
             row.appendChild(body);
             // Clicking a row takes the map to it: the moment and the place.
-            row.onclick=()=>{ cursorAt=a.at; cursorSet=true; allDim=a.dim;
+            row.onclick=()=>{ cursorAt=a.at; cursorSet=true; live=false; allDim=a.dim;
               view.cx=a.x; view.cz=a.z; view.set=true; stopPlay(); paintAll(); };
             side.appendChild(row);
           }
@@ -1869,6 +2222,19 @@ final class WebPage {
           sv+='<rect class="ovwin" x="'+ovx(win.from).toFixed(1)+'" y="0" width="'+
             Math.max(3,ovx(win.to)-ovx(win.from)).toFixed(1)+'" height="'+OV+
             '" fill="#ffab33" fill-opacity=".26" stroke="#ffab33" stroke-width="1"/>';
+          // Whatever the model thought was worth a look, on the strip that
+          // covers the whole period — so "there was a fight at some point" is
+          // answerable without reading anything.
+          if(aiReport && aiReport.moments){
+            for(const m of aiReport.moments){
+              if(!m.at || m.at<from || m.at>to) continue;
+              const x=ovx(m.at);
+              sv+='<path d="M'+x.toFixed(1)+' 1L'+(x+4).toFixed(1)+' '+(OV/2)+'L'+
+                x.toFixed(1)+' '+(OV-1)+'L'+(x-4).toFixed(1)+' '+(OV/2)+'Z" '+
+                'fill="#ff8f90" stroke="#0b0d11" stroke-width="1"><title>'+
+                esc(m.label)+'</title></path>';
+            }
+          }
 
           const y0=OV+GAP;
           sv+='<rect x="0" y="'+y0+'" width="'+W+'" height="'+MAIN+'" fill="#151922"/>';
@@ -1919,10 +2285,37 @@ final class WebPage {
           tl={W:W,OV:OV,GAP:GAP,MAIN:MAIN,from:from,to:to};
           wireTimeline();
           paintSpeed();
+          paintBar();
+        }
+
+        /**
+         * The row under the timeline, which is two different rows.
+         *
+         * <p>Live, there is nothing to control — no speed, no direction, no
+         * position — so the controls for those are not there, and the only
+         * thing worth saying is that this is now. Touch the timeline and they
+         * come back, because now there is something to control.
+         */
+        function paintBar(){
+          const show=(id,on)=>{ const el=$(id); if(el) el.style.display=on?'':'none'; };
+          show('t-livepill',live);
+          show('t-play',!live);
+          show('t-speed',!live);
+          show('t-rate',!live);
+          show('t-skip',!live);
+          show('t-golive',!live);
           const skip=$('t-skip');
           if(skip){ skip.className='btn'+(skipGaps?' on':'');
             skip.title=skipGaps?'Playback jumps over time nobody was on'
                                :'Playback runs through quiet time in real proportion'; }
+        }
+
+        /** Back to following the clock. Also puts the whole period back in view. */
+        function goLive(){
+          live=true; stopPlay(); cursorSet=false; win.set=false;
+          closeCluster();
+          if(allData) paintAll();
+          loadAll(true);
         }
 
         function paintSpeed(){
@@ -1980,7 +2373,8 @@ final class WebPage {
           };
           const setCursor=x=>{
             cursorAt=win.from+(x/tl.W)*(win.to-win.from);
-            cursorSet=true; stopPlay(); schedulePaint();
+            // Touching the timeline is what "bring the timestamp back" means.
+            cursorSet=true; live=false; stopPlay(); schedulePaint();
           };
           const centreWindow=x=>{
             const w=win.to-win.from;
@@ -2090,7 +2484,7 @@ final class WebPage {
           if(inb) inb.onclick=()=>zoom(1/1.5);
           if(outb) outb.onclick=()=>zoom(1.5);
           if(home) home.onclick=()=>{ view.set=false; paintAll(); };
-          if(cog) cog.onclick=()=>{ showOverlays=!showOverlays; paintAll(); };
+          if(cog) cog.onclick=()=>{ optsOpen=!optsOpen; paintAll(); };
           const svg=$('t-svg');
           if(svg) svg.querySelectorAll('.thead').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
@@ -2122,6 +2516,177 @@ final class WebPage {
           const host=$('t-dims'); if(!host) return;
           host.querySelectorAll('[data-tdim]').forEach(b=>
             b.onclick=()=>{ allDim=b.getAttribute('data-tdim'); paintAll(); });
+        }
+
+        """;
+
+    /**
+     * What the log meant, and the rest of the activity tab.
+     *
+     * <p>Split from PARTMAP at the 64KB ceiling on one string constant, on the
+     * boundary between drawing the map and everything around it.
+     */
+    private static final String PARTINSIGHT = """
+        // ---- what it all meant ----
+        // Two layers, and the lower one is the one that always works. Episodes
+        // are worked out on the server from the log itself — no model, no
+        // network, no key — and are most of the value: "dug a shaft from y 64
+        // down to y 11" is a sentence the log never contained. The summary on
+        // top of them is optional and off by default.
+        let episodes=[], aiStatus=null, aiReport=null, summarising=false;
+
+        async function loadInsights(){
+          const box=$('i-eps'); if(!box) return;
+          const r=await jget('/api/insights');
+          if(r.status!==200){ box.innerHTML='<div class="note">unavailable</div>'; return; }
+          episodes=r.body.episodes||[];
+          aiStatus=r.body.ai||null;
+          aiReport=r.body.report||null;
+          paintInsights();
+        }
+
+        async function runSummary(force){
+          if(summarising) return;
+          summarising=true;
+          paintInsights();
+          try {
+            const r=await jpost('/api/insights',{});
+            if(r.status===200){
+              episodes=r.body.episodes||episodes;
+              aiStatus=r.body.ai||aiStatus;
+              aiReport=r.body.report||null;
+            } else {
+              aiReport={error:(r.body&&r.body.error)||'failed',moments:[],summary:''};
+            }
+          } finally {
+            summarising=false;
+            paintInsights();
+            // Moments show up as marks on the timeline, so it needs redrawing.
+            if(allData) paintTimeline();
+          }
+        }
+
+        function paintInsights(){
+          paintAiBox();
+          const box=$('i-eps'); if(!box) return;
+          box.innerHTML='';
+          if(!episodes.length){
+            box.innerHTML='<div class="note">Nothing has happened yet, or the activity '+
+              'log is off.</div>';
+            return;
+          }
+          const head=document.createElement('p');
+          head.className='muted';
+          head.style.margin='4px 0 8px';
+          head.textContent=episodes.length+' thing'+(episodes.length===1?'':'s')+
+            ' worked out from the log — click one to take the map there.';
+          box.appendChild(head);
+          for(const e of episodes.slice(0,40)){
+            const row=document.createElement('div');
+            row.className='episode';
+            row.appendChild(avatar(e.player,e.uuid,'sm'));
+            const body=document.createElement('div');
+            body.innerHTML='<span class="kind">'+esc(e.kind)+'</span>'+
+              '<span class="nm" style="font-weight:650">'+esc(e.mask||e.player)+'</span> '+
+              esc(e.headline);
+            row.appendChild(body);
+            const when=document.createElement('span');
+            when.className='tm';
+            when.textContent=fmtAgo(e.to);
+            row.appendChild(when);
+            row.onclick=()=>jumpTo(e.to,e.dim,e.x,e.z);
+            box.appendChild(row);
+          }
+        }
+
+        /** Takes the map and the timeline to one moment and place. */
+        function jumpTo(at,dim,x,z){
+          if(!allData) return;
+          live=false; stopPlay();
+          cursorAt=at; cursorSet=true;
+          if(dim) allDim=dim;
+          if(x!==undefined && z!==undefined && (x||z)){
+            view.cx=x; view.cz=z; view.span=Math.min(view.span||160,160); view.set=true;
+          }
+          paintAll();
+          const map=$('t-map');
+          if(map) map.scrollIntoView({block:'center',behavior:'smooth'});
+        }
+
+        /**
+         * The summary box: what the model said, or why there is nothing there.
+         *
+         * <p>The "why" cases matter more than the summary does. Off by default
+         * is the right default, and an admin who has just pressed Summarise
+         * needs to be told which of "not switched on", "no key", "no address"
+         * and "the service said no" they are looking at.
+         */
+        function paintAiBox(){
+          const box=$('i-ai'), run=$('i-run'); if(!box) return;
+          const on=aiStatus && aiStatus.enabled;
+          if(run){
+            run.disabled=summarising || !on;
+            run.textContent=summarising?'Thinking…':'Summarise';
+            run.title=on?'Ask the model to read the episodes below'
+                        :'Turn on ai-enabled in Settings first';
+          }
+          if(!on){
+            box.innerHTML='<div class="note">'+
+              '<b>Summaries are off.</b> Almin can hand the list below to a language '+
+              'model and get a paragraph back saying what the session was about. '+
+              'Turn on <code>ai-enabled</code> in Settings — that page also says '+
+              'exactly what gets sent, and to whom.</div>';
+            return;
+          }
+          const trouble=aiStatus.problem||'';
+          const where=aiStatus.provider==='local'
+            ? 'a model on this machine ('+esc(aiStatus.baseUrl||'')+')'
+            : esc(aiStatus.provider);
+          let html='<p class="muted" style="margin:2px 0 8px">Using '+
+            '<code>'+esc(aiStatus.model||'?')+'</code> via '+where+
+            (aiStatus.sendChat?' · chat included':' · chat withheld')+
+            (aiStatus.autoMinutes>0?' · refreshed every '+aiStatus.autoMinutes+' min':'')+
+            '</p>';
+          if(trouble){
+            html+='<div class="msg err">'+esc(trouble)+'</div>';
+            box.innerHTML=html; return;
+          }
+          if(aiReport && aiReport.error){
+            html+='<div class="msg err">'+esc(aiReport.error)+'</div>';
+            box.innerHTML=html; return;
+          }
+          if(!aiReport){
+            html+='<div class="note">Nothing summarised yet. Press Summarise.</div>';
+            box.innerHTML=html; return;
+          }
+          if(aiReport.summary){
+            html+='<div class="summary">'+esc(aiReport.summary)+'</div>';
+          }
+          const moments=aiReport.moments||[];
+          if(moments.length){
+            html+='<h3 style="font-size:11px;text-transform:uppercase;letter-spacing:.9px;'+
+              'color:var(--brand);margin:14px 0 4px">Worth a look</h3><div id="i-moments">'+
+              '</div>';
+          }
+          html+='<p class="muted" style="margin-top:10px;font-size:11.5px">'+
+            'Written by a model from the list below — it can be wrong, and it is not '+
+            'evidence of anything. '+esc(fmtAgo(aiReport.generated))+'.</p>';
+          box.innerHTML=html;
+
+          const list=$('i-moments');
+          if(list){
+            for(const m of moments){
+              const row=document.createElement('div');
+              row.className='moment';
+              row.innerHTML='<span class="lb">'+esc(m.label)+'</span>'+
+                (m.player?'<span class="muted">'+esc(m.player)+'</span>':'')+
+                (m.why?'<span class="wy">'+esc(m.why)+'</span>':'')+
+                '<span class="tm" style="margin-left:auto;color:var(--mute)">'+
+                esc(fmtAgo(m.at))+'</span>';
+              row.onclick=()=>jumpTo(m.at,m.dim,m.x,m.z);
+              list.appendChild(row);
+            }
+          }
         }
 
         // ---- who is recorded ----
@@ -2352,6 +2917,18 @@ final class WebPage {
             'the running server, so it matches however this server was actually launched — '+
             'set <code>web-start-command</code> only if you want something else.</p>'+
             '<div id="s-relaunch" class="note">…</div></section>'+
+            '<section><h2>Reading the log with a model</h2>'+
+            '<p class="muted">Almin works out what happened on its own — trees felled, '+
+            'shafts dug, fights, someone pacing the same twenty blocks for ten minutes — '+
+            'and that costs nothing and never leaves this machine. A language model can '+
+            'read that list and write a paragraph over it.</p>'+
+            '<div id="s-ai" class="note">…</div>'+
+            '<div class="term" style="margin-top:10px">'+
+            '<input id="s-aikey" type="password" autocomplete="off" '+
+            'placeholder="API key (not needed for a local model)">'+
+            '<button class="btn" id="s-aikeygo">Save</button>'+
+            '<button class="btn" id="s-aikeyclr">Forget</button></div>'+
+            '<div class="msg" id="s-aimsg"></div></section>'+
             '<section><h2>Settings</h2>'+
             '<p class="muted">Written to <code>config/almin/config.json</code> as you change them, '+
             'and live immediately.</p>'+
@@ -2359,7 +2936,9 @@ final class WebPage {
             '<button class="btn" id="s-reload" style="margin-top:12px">Reload from disk</button>'+
             '<div class="msg" id="s-msg"></div></section>';
           setTimeout(()=>{
-            loadConfig(); loadUpdate(); showRelaunch();
+            loadConfig(); loadUpdate(); showRelaunch(); showAi();
+            $('s-aikeygo').onclick=()=>saveAiKey($('s-aikey').value);
+            $('s-aikeyclr').onclick=()=>saveAiKey('');
             $('s-pwgo').onclick=setPassword;
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
@@ -2382,6 +2961,50 @@ final class WebPage {
             (relaunchError?'<br><span class="state crit">Last attempt failed</span> '+
               esc(relaunchError):'');
         }
+        /**
+         * What turning this on would actually do, in words, before it is on.
+         *
+         * <p>The switch sends other people's activity to a company. Whoever
+         * flips it should be told that in the place where they flip it, not in
+         * a README, and told which company.
+         */
+        async function showAi(){
+          const box=$('s-ai'); if(!box) return;
+          const r=await jget('/api/insights');
+          const a=(r.status===200 && r.body.ai)?r.body.ai:null;
+          if(!a){ box.textContent='unavailable'; return; }
+          const local=a.provider==='local';
+          const leaves=local
+            ? '<span class="state good">Stays on this machine</span> Almin will talk to '+
+              '<code>'+esc(a.baseUrl||'?')+'</code> and nothing goes to anyone else. '+
+              'Point it at Ollama, llama.cpp or LM Studio; a 3B model is enough for this.'
+            : '<span class="state warn">Leaves this machine</span> Player names, what they '+
+              'did and where, and '+(a.sendChat?'<b>what they said in chat</b>':'not their chat')+
+              ', are sent to <b>'+esc(a.provider)+'</b> each time a summary is made. '+
+              'That is a decision about other people\u2019s data.';
+          box.innerHTML=(a.enabled
+              ? '<span class="state good">On</span>'
+              : '<span class="state">Off</span> Set <code>ai-enabled</code> below to turn it on.')+
+            '<div style="margin-top:8px">'+leaves+'</div>'+
+            '<div class="muted" style="margin-top:8px">Provider <code>'+esc(a.provider)+
+            '</code> · model <code>'+esc(a.model||'not set')+'</code> · '+
+            (a.hasKey?'key saved':'no key saved')+
+            (a.autoMinutes>0?' · summarised on its own every '+a.autoMinutes+' min'
+                            :' · only when asked')+'</div>'+
+            (a.problem?'<div class="msg err" style="margin-top:8px">'+esc(a.problem)+'</div>':'');
+        }
+
+        async function saveAiKey(value){
+          const msg=$('s-aimsg');
+          const r=await jpost('/api/ai/key',{key:value});
+          msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent=r.status===200
+            ? (value?'Key saved. It is kept outside config.json and the file browser will '+
+                     'not open it.':'Key forgotten.')
+            : ((r.body&&r.body.error)||'failed');
+          if(r.status===200){ $('s-aikey').value=''; showAi(); }
+        }
+
         async function setPassword(){
           const msg=$('s-pwmsg'), v=$('s-pw').value;
           if(v.length<8){ msg.className='msg err'; msg.textContent='Use at least 8 characters.'; return; }
@@ -3123,7 +3746,7 @@ final class WebPage {
           if(tab==='dash') updateMetrics();
           else if(tab==='term') loadConsole();
           else if(tab==='players') loadPlayers();
-          else if(tab==='activity') loadActivity();   // the map only reloads on demand
+          else if(tab==='activity'){ loadActivity(); liveTick(); }
         }
         $('logout').onclick=async()=>{ await jpost('/api/logout',{}); authed=false; tab='dash'; last=null; render(); };
         (async()=>{ await refreshOnce(); render(); poll(); setInterval(poll,3000); })();
@@ -3140,5 +3763,5 @@ final class WebPage {
      * constant. The split points follow the page's own sections so that a
      * piece is a readable unit and not an arbitrary cut.
      */
-    static final String HTML = String.join("", PART1, PARTFILES, PART2, PART3);
+    static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTINSIGHT, PART3);
 }

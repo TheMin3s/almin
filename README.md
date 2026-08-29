@@ -365,14 +365,23 @@ admins` on its own reports which of the two is deciding. The Activity tab in
 both UIs has the same two controls, and says which one is in force.
 
 **Rows expire.** This is data about named people, so it has a deliberate shelf
-life rather than accumulating: a day by default, from memory and from
-`config/almin/activity.log` alike.
+life rather than accumulating: five days by default, from memory and from
+`config/almin/activity.log` alike. Five is long enough that "what happened over
+the weekend" is still answerable and short enough that this stays a working
+record rather than an archive; `activity-retention-minutes` moves it anywhere
+from five minutes to thirty days.
+
+A server that was already running gets the new default too. Every setting is
+written to `config.json` on first start, so a changed default would otherwise
+only ever reach a fresh install — the file carries a version, and the one
+change to five days is applied once, and only where the value is still sitting
+on the old one-day default.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `activity-log` | `true` | record at all |
 | `activity-include-admins` | `false` | record ops and trusted UUIDs too |
-| `activity-retention-minutes` | `1440` | how long a row survives — 5 minutes to 7 days |
+| `activity-retention-minutes` | `7200` | how long a row survives — 5 minutes to 30 days |
 | `activity-max-entries` | `20000` | ceiling on the log; oldest rows drop first |
 | `activity-blocks` | `true` | blocks placed, blocks broken, blocks used |
 | `activity-combat` | `true` | damage taken, hits landed, deaths |
@@ -432,15 +441,44 @@ ticks and the side list all drop everyone else. Click again to get them back.
 On a wide enough screen a panel opens beside the map with what happened, chat
 included, newest at the cursor first. Clicking a line takes the map to that
 moment and that place. Above the map, a strip shows who is online now, with
-anyone who has stopped moving greyed out. The cog in the bottom corner hides
-both.
+anyone who has stopped moving greyed out.
+
+**Marks that crowd become one box with a number on it.** Zoom out over an
+evening's mining and forty overlapping shapes are four boxes; zoom in and they
+separate again, because the grouping is by distance on screen rather than by
+distance in the world. Clicking a box lists what is inside it, and identical
+things fold with a count — fifty rows of "broke Stone" is one line saying
+`break ×50`, which is both shorter and more informative than fifty lines.
+Clicking one of those lines takes the timeline to it.
+
+#### How it looks
+
+The cog in the top corner opens the adjustments that are about your eyes rather
+than about the server, and they are there rather than in Settings because they
+are the things you change *while looking at the thing they change*: ground
+darkness, path width, marker size, whether marks are coloured by what they were
+or by who did them, and whether faces, paths, grouping and the side panels are
+drawn at all. They are remembered in the browser, so two admins looking at the
+same map are allowed to disagree about how dark the ground should be.
 
 #### The timeline
 
 Two strips. The thin one on top is the whole period with the visible slice
 marked; the one below is that slice, drawn large. Scroll it to zoom about the
-pointer, drag it to scrub, and drag the top strip to move the window. **Whole
-period** puts it back.
+pointer, drag it to scrub, and drag the top strip to move the window. **Back to
+live** puts the whole period back in view.
+
+**It opens live.** "What is happening" is the question you arrive with;
+"what happened at four o'clock" is the one you come to second. So the cursor
+follows the clock, the bar under the timeline says `LIVE` where Play usually is,
+and the playback controls are not there — live, there is no speed, no direction
+and no position to set. Touch the timeline and they all come back, along with
+**Back to live**. The map refreshes itself every ten seconds while live, keeping
+wherever you have panned and zoomed to.
+
+The period runs to the clock rather than to the last thing anyone did. On a
+quiet server those are an hour apart, and a timeline that stopped at the last
+row would say the map was showing an hour ago.
 
 Stretches when nobody was on are hatched and labelled, and **Skip quiet time**
 makes playback jump over them — an empty map is not worth watching in real
@@ -464,10 +502,20 @@ The web map is drawn over a picture of the actual ground, and that picture
 changes with the timeline — scrub forward and a build appears.
 
 Almin takes them itself, on a timer: a top-down raster of the loaded area
-around whoever is playing, the same idea as a vanilla map — each column's top
-block in its map colour, shaded by whether the ground rises or falls going
-north. They are kept with a timestamp, and the map shows the newest one taken
-at or before wherever the cursor is.
+around whoever is playing. They are kept with a timestamp, and the map shows
+the newest one taken at or before wherever the cursor is.
+
+It is the same idea as a vanilla map but shaded the way the web world maps are.
+Vanilla gives every block one flat colour out of a small palette and picks
+between three brightnesses, which is why a vanilla map reads as blotches: a
+beach and a desert are the same yellow, and a hillside only shows at all if it
+happens to face north. Here relief comes from the slope in both directions, so
+a hill is a hill whichever way it faces; water is darkened and blued by how
+deep it is, so a coastline and a shelf are visible; and every block carries a
+fixed grain, so sand looks grainy, planks look like planks and grass is patchy
+rather than a single green. The grain is a function of the position, so the
+same column is the same pixel in every picture and nothing crawls between
+them.
 
 Only chunks the server already has loaded are drawn; anything else stays
 transparent. Generating terrain in order to photograph it would be an enormous
@@ -479,10 +527,27 @@ so it is deliberately bounded; encoding the PNG and writing it happen on a
 daemon thread afterwards, where they cost nothing. One snapshot is taken at a
 time, so a slow disk delays the next rather than queueing up.
 
+**Only what changed is stored.** The ground barely changes, so writing all of it
+again every half minute was writing the same picture over and over. Capture
+windows are aligned to a 64-block grid, so a player wandering around produces
+pictures of exactly the same square — and each one is then filed as the
+difference from the last whole picture, which on a world standing still is a few
+hundred changed pixels out of a hundred and fifty thousand. Differences are
+always against the whole picture rather than against the one before them, so
+reading any snapshot costs two files and never a chain of forty; a fresh whole
+one is taken when the window moves, when half the map has changed, or every half
+hour. A whole picture something depends on is never deleted before the things
+that depend on it. What leaves all this is an ordinary PNG — nothing downstream
+knows differences exist.
+
+That is what makes keeping two hours of them affordable, which matters now that
+the log itself keeps five days: without it, `map-snapshot-keep` at 40 was twenty
+minutes of ground under a five-day timeline.
+
 | Setting | Default | Meaning |
 |---|---|---|
 | `map-snapshot-seconds` | `30` | how often a picture is taken; `0` leaves the map a grid |
-| `map-snapshot-keep` | `40` | how many are kept before the oldest are deleted |
+| `map-snapshot-keep` | `240` | how many are kept before the oldest are deleted — two hours at the default interval |
 | `map-blocks-per-pixel` | `1` | detail; `1` is a pixel per block, `2` is four times cheaper |
 | `map-radius` | `192` | blocks either side of the players each picture covers |
 
@@ -514,6 +579,98 @@ containers and deaths.
 
 `/almin op activity clear` (or **Clear log** in either UI) deletes the whole
 thing immediately, from memory and disk. There is no export.
+
+### What it all meant
+
+The log records events: `break Oak Log at 214,71,-88`, four hundred times.
+Nobody reads that, and reading it is not how anyone finds out what happened.
+What happened is "someone cleared the trees behind spawn" — and that sentence
+is not in the log. It is in the *shape* of the log: which blocks, over what
+ground, in what order, how tall, how long it took.
+
+Under the map, **What happened** shows that shape. Rows are cut into runs — one
+player, one place, no long pause — and each run is classified by its geometry
+and its materials:
+
+| Looks like | Comes out as |
+|---|---|
+| logs in a narrow column, three or more high | *Chopped down about 4 trees* |
+| one column of breaks going down | *Dug a shaft from y 64 down to y 11* |
+| a long line two blocks high | *Tunnelled 120 blocks east-west at y 11* |
+| placements inside a box with height | *Built something 14 across and 6 high, mostly Oak Planks* |
+| placements all at one level | *Laid 60 blocks flat of Stone Bricks — a floor or a path* |
+| swings and hits traded in one spot | *Traded blows with Steve* |
+| twenty breaks over flat ground | *Cleared 18×14 of ground at y 71* |
+| a death anywhere in the run | the game's own death message |
+
+Two more come from the paths rather than the rows, because walking is not an
+event and a player who spent twenty minutes going somewhere leaves no trace in
+the log at all: *Travelled 640 blocks* — and, when someone walks a long way
+without getting anywhere, *Back and forth around 90,12 — 620 blocks walked
+without leaving 18 blocks, over 7 minutes*.
+
+All of this is worked out on the server from the log itself. No model, no
+network, no key, nothing configured — click any line and the map goes to that
+moment and place.
+
+Block names arrive from the game already translated, so the material rules read
+English. On a server running in another language they simply miss and
+classification falls back to geometry: a shaft is still a shaft, but "chopped
+down a tree" becomes "broke 40 blocks". Nothing here knows intent either — a
+hole is a hole whether it was a mine or a grief.
+
+#### Handing that to a model
+
+**Off by default.** With `ai-enabled` on, **Summarise** hands the list above to
+a language model and gets back a paragraph saying what the session was about,
+plus up to five moments worth looking at. Those are marked on the timeline and
+listed under the summary, and clicking one takes the map there.
+
+The model is given the episodes, not the log — forty sentences rather than four
+thousand rows. That is deliberate twice over. Counting coordinates is the thing
+a loop is best at and a model is worst at, so it is done first; and a prompt of
+forty sentences fits in a 3B model running on the same machine, which is the
+difference between this being a feature every server can use and a feature with
+a bill attached.
+
+A moment's coordinates come from the episode it names, never from the model —
+asking it to copy numbers back is asking it to invent them. If it answers with
+prose instead of JSON, the prose becomes the summary rather than an error.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ai-enabled` | `false` | let a model summarise at all |
+| `ai-provider` | `local` | `local`, `anthropic`, or `openai` |
+| `ai-model` | `qwen2.5:3b` | model name, as that service spells it |
+| `ai-base-url` | `http://127.0.0.1:11434/v1` | where `local` lives |
+| `ai-send-chat` | `true` | include what players said |
+| `ai-auto-minutes` | `0` | summarise unattended every N minutes; `0` is only when asked |
+
+`local` means anything speaking the OpenAI chat API at `ai-base-url` — Ollama,
+llama.cpp's server, LM Studio — and it is the default because it is the only
+option where nothing leaves the machine. Almin does not ship an inference
+engine; running a small model is `ollama pull qwen2.5:3b` and pointing this at
+it.
+
+**What leaves the machine, if you pick a hosted provider.** Player names, what
+they did, where they did it, and — unless `ai-send-chat` is off — what they
+said in chat. That is a decision about other people's data, which is why this
+is off until someone turns it on, and why the Settings tab says it in those
+words next to the switch. `ai-send-chat` is separate from the rest because it
+is different in kind: coordinates are a record of a game, chat is a record of a
+conversation.
+
+The API key is set in the panel or by writing `config/almin/ai-key`. It is
+deliberately **not** in `config.json`: that file is served by the panel's own
+file browser and rewritten whenever a setting changes, and a credential in it
+would end up in every copy anyone pasted into a bug report. The browser refuses
+to open or list `ai-key` at all, and on a POSIX host the file is written
+`0600`.
+
+Nothing is sent until somebody presses **Summarise**, or sets
+`ai-auto-minutes`. Even then an unattended run is skipped when nothing has been
+recorded since the last one — re-summarising an unchanged log is spending money
+to be told the same thing.
 
 ## Advertising mods to players
 
