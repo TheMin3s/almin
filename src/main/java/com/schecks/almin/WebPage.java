@@ -220,7 +220,7 @@ final class WebPage {
           .clusterbox .cl .xn{color:var(--brand);font-variant-numeric:tabular-nums}
           .clusterbox .cl .dt{color:var(--dim);word-break:break-word}
           /* Episodes: what the rows meant, and what the model made of them. */
-          .episode{display:grid;grid-template-columns:19px 1fr auto;gap:9px;
+          .episode{display:grid;grid-template-columns:19px 1fr auto auto;gap:9px;
                    align-items:baseline;padding:7px 2px;font-size:13px;cursor:pointer;
                    border-bottom:1px solid rgba(255,255,255,.05)}
           .episode:last-child{border-bottom:0}
@@ -268,6 +268,67 @@ final class WebPage {
                                   .fullmap .legend{right:14px}
                                   .fullmap.side .mapbtns{right:12px}
                                   .fullmap.side .onlinebar{right:64px}}
+          /* One player in the players list: the row, who they look like, and
+             the two little pictures of what they have been up to. */
+          .pcard{border-bottom:1px solid rgba(255,255,255,.06);padding:4px 0 12px}
+          .pcard:last-child{border-bottom:0}
+          .wearing{display:flex;align-items:center;gap:8px;margin:2px 0 0 46px;
+                   font-size:12.5px;padding:5px 9px;border:1px solid var(--line);
+                   border-radius:8px;background:var(--card2);width:max-content;max-width:100%}
+          .wearing .face{width:20px;height:20px;border-radius:4px}
+          .pstrips{display:flex;gap:12px;flex-wrap:wrap;margin:9px 0 0 46px;align-items:flex-start}
+          .pstrip{background:var(--card2);border:1px solid var(--line);border-radius:9px;
+                  padding:7px 9px;position:relative}
+          .pstrip .none{color:var(--mute);font-size:12px}
+          .acts{display:flex;gap:15px 16px;flex-wrap:wrap;align-items:center;
+                max-width:min(520px,100%);padding:9px 11px 11px}
+          .acell{position:relative;display:inline-flex;line-height:0}
+          .acell i{position:absolute;right:-8px;bottom:-7px;font-style:normal;
+                   font-size:9px;font-weight:700;background:#0b0d11;color:var(--brand);
+                   border:1px solid var(--line);border-radius:999px;padding:1px 4px;
+                   line-height:1.15;font-variant-numeric:tabular-nums}
+          .mini{padding:5px;width:162px}
+          .mini svg{display:block;border-radius:6px}
+          .mini button.go{position:absolute;right:8px;top:8px;width:22px;height:22px;
+                          padding:0;display:flex;align-items:center;justify-content:center;
+                          background:rgba(11,13,17,.86);border:1px solid var(--line);
+                          border-radius:6px;color:var(--ink);cursor:pointer}
+          .mini button.go:hover{border-color:var(--brand);color:var(--brand)}
+          .mini button.go svg{width:13px;height:13px}
+          /* Which kinds of thing the map is showing, when it is not all of them. */
+          .filterbox{margin-top:10px;background:var(--card2);border:1px solid var(--line);
+                     border-radius:11px;padding:11px 13px}
+          .fhead{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:13px}
+          .fhead .btn{padding:4px 10px;font-size:12px}
+          .fhead .btn:last-child{margin-left:0}
+          .fhead .muted{margin-right:auto}
+          .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+          .fcat h5{margin:0 0 5px;font-size:10.5px;text-transform:uppercase;
+                   letter-spacing:.9px;color:var(--brand)}
+          .fline{display:flex;align-items:center;gap:7px;font-size:12.5px;padding:2px 0;
+                 color:var(--dim);cursor:pointer}
+          .fline:hover{color:var(--ink)}
+          .fline input{width:14px;height:14px;flex:none;padding:0;accent-color:var(--brand)}
+          .fline span{flex:1;min-width:0;display:flex;align-items:center;gap:5px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .fline i{font-style:normal;color:var(--mute);font-size:11px;
+                   font-variant-numeric:tabular-nums}
+          .fmore{background:none;border:0;color:var(--mute);font:inherit;font-size:11.5px;
+                 cursor:pointer;padding:1px 0 3px 21px}
+          .fmore:hover{color:var(--brand)}
+          .fsub{margin:0 0 6px 21px;padding-left:8px;border-left:1px solid var(--line);
+                max-height:190px;overflow:auto}
+          /* What a stretch of work built, in isometric. */
+          .scene{background:#0b0d11;border:1px solid var(--line);border-radius:10px;
+                 overflow:hidden}
+          .scene svg{display:block}
+          .scenebar{display:flex;gap:9px;align-items:center;margin-top:10px;flex-wrap:wrap}
+          .scenebar .btn{padding:5px 11px;font-size:12.5px}
+          .scenebar input[type=range]{flex:1;min-width:140px;accent-color:var(--brand);padding:0}
+          .scenekey{display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:12px;
+                    color:var(--dim);align-items:center}
+          .scenekey i{display:inline-block;width:10px;height:10px;border-radius:2px;
+                      margin-right:5px;vertical-align:-1px}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
                   border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
                   color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
@@ -465,17 +526,25 @@ final class WebPage {
          * for a player whose skin the server could not find, so the fallback
          * is the common path and not an error case.
          */
-        function avatar(name,uuid,size){
+        /**
+         * A player's face, or their initial if there isn't one to be had.
+         *
+         * @param byName ask by name alone, with no UUID — which is the only
+         *               thing a mask gives you, since a mask is a display name
+         *               somebody typed and may name any account or none
+         */
+        function avatar(name,uuid,size,byName){
           const cls='face'+(size?' '+size:'');
           const letter=((name||'?').trim().charAt(0)||'?').toUpperCase();
           const stand=()=>{ const s=document.createElement('span'); s.className=cls;
             s.textContent=letter; s.style.background='hsl('+nameHue(name)+' 45% 62%)';
             s.title=name||''; return s; };
-          if(!headsOn || !uuid) return stand();
+          if(!headsOn || (!uuid && !byName)) return stand();
           const img=document.createElement('img'); img.className=cls;
           img.alt=''; img.loading='lazy'; img.title=name||'';
-          img.src='/api/head?uuid='+encodeURIComponent(uuid)+
-                  '&name='+encodeURIComponent(name||'');
+          img.src=uuid
+            ? '/api/head?uuid='+encodeURIComponent(uuid)+'&name='+encodeURIComponent(name||'')
+            : '/api/head?name='+encodeURIComponent(name||'');
           img.onerror=()=>{ if(img.parentNode) img.parentNode.replaceChild(stand(),img); };
           return img;
         }
@@ -1305,6 +1374,7 @@ final class WebPage {
           return wrap;
         }
         function playerRow(p,sub){
+          const card=document.createElement('div'); card.className='pcard';
           const row=document.createElement('div'); row.className='row';
           row.style.alignItems='center'; row.style.gap='10px';
           row.appendChild(avatar(p.name,p.uuid,'lg'));
@@ -1312,8 +1382,6 @@ final class WebPage {
           // Real name first and always: an admin screen that showed only the
           // mask would be the one place the mask was not supposed to work.
           left.innerHTML='<b style="color:var(--ink)">'+esc(p.name)+'</b>'+
-            (p.mask?' <span class="muted">appears to players as</span> '+
-              '<span style="color:var(--brand)">'+esc(p.mask)+'</span>':'')+
             '<br><span class="muted" style="font-size:12px">'+esc(sub)+'</span>';
           const set=document.createElement('button'); set.className='btn';
           set.textContent=p.mask?'Change mask':'Set mask'; set.style.marginLeft='auto';
@@ -1321,13 +1389,141 @@ final class WebPage {
             if(v===null) return;
             const t=v.trim();
             sendMask(p.name, t, t===''); };
-          row.append(left,set);
+          const see=document.createElement('button'); see.className='btn';
+          see.textContent='Activity';
+          see.title='Open this player on the activity map';
+          see.onclick=()=>openInActivity(p.name);
+          row.append(left,see,set);
           if(p.mask){ const c=document.createElement('button'); c.className='btn danger'; c.textContent='Clear';
             c.onclick=()=>sendMask(p.name,'',true); row.appendChild(c); }
-          return row;
+          card.appendChild(row);
+
+          // The account they are wearing, as its own small row. A mask is
+          // another player's name as far as everyone else is concerned, and
+          // the useful question — "who does this look like" — is answered by
+          // the face rather than by the string.
+          if(p.mask){
+            const worn=document.createElement('div');
+            worn.className='wearing';
+            worn.appendChild(avatar(p.mask,'','sm',true));
+            const t=document.createElement('span');
+            t.innerHTML='<span class="muted">appears to players as</span> '+
+              '<b style="color:var(--brand)">'+esc(p.mask)+'</b>';
+            worn.appendChild(t);
+            card.appendChild(worn);
+          }
+
+          const strips=document.createElement('div');
+          strips.className='pstrips';
+          strips.appendChild(actionStrip(p.name));
+          strips.appendChild(pathMap(p.name));
+          card.appendChild(strips);
+          return card;
         }
+
+        /** Everything this player did, one icon per kind, with how many. */
+        function actionStrip(name){
+          const box=document.createElement('div');
+          box.className='pstrip acts';
+          const acts=(peopleData&&peopleData.actions||[]).filter(a=>a.player===name);
+          if(!acts.length){
+            box.innerHTML='<span class="none">nothing recorded</span>';
+            return box;
+          }
+          const by=new Map();
+          for(const a of acts) by.set(a.action,(by.get(a.action)||0)+Math.max(1,a.count||1));
+          const order=[...by.entries()].sort((x,y)=>y[1]-x[1]);
+          for(const [action,n] of order){
+            const cell=document.createElement('span');
+            cell.className='acell';
+            cell.title=n+' × '+action;
+            cell.innerHTML='<svg viewBox="-11 -11 22 22" width="22" height="22">'+
+              marker(action,0,0,ACTION_COLOR[action]||'#9aa3ae',1.15)+'</svg>'+
+              '<i>'+(n>999?'999+':n)+'</i>';
+            box.appendChild(cell);
+          }
+          return box;
+        }
+
+        /**
+         * Where this player went, small.
+         *
+         * <p>Its own framing rather than the big map's: someone who spent the
+         * day in one room and someone who walked to the badlands both get a
+         * picture that fills the box, and the bar underneath says which is
+         * which. Without the bar the two would look identical, which would be
+         * worse than no map at all.
+         */
+        function pathMap(name){
+          const box=document.createElement('div');
+          box.className='pstrip mini';
+          const pts=((peopleData&&peopleData.tracks)||{})[name]||[];
+          if(pts.length<2){
+            box.innerHTML='<span class="none">no path recorded</span>';
+            return box;
+          }
+          const dim=pts[pts.length-1].dim;
+          const here=pts.filter(q=>q.dim===dim);
+          if(here.length<2){ box.innerHTML='<span class="none">no path recorded</span>'; return box; }
+          const xs=here.map(q=>q.x), zs=here.map(q=>q.z);
+          const minX=Math.min(...xs), maxX=Math.max(...xs);
+          const minZ=Math.min(...zs), maxZ=Math.max(...zs);
+          const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2;
+          const W=150, H=84;
+          // Fitted on both axes, not one: scaling everything by the wider of
+          // the two put a tall path off the top of a box that is not square.
+          const scale=Math.min(W/(Math.max(maxX-minX,16)*1.15),
+                               H/(Math.max(maxZ-minZ,16)*1.15));
+          const span=W/scale;
+          const px=v=>(v-cx)*scale+W/2;
+          const pz=v=>(v-cz)*scale+H/2;
+          const c=playerColor(name);
+          const d=here.map((q,i)=>(i?'L':'M')+px(q.x).toFixed(1)+' '+pz(q.z).toFixed(1)).join(' ');
+          const last=here[here.length-1];
+          // A round number of blocks, drawn to scale, so "how zoomed out is
+          // this" has an answer you can read rather than infer.
+          const nice=[8,16,32,64,128,256,512,1024,2048,4096];
+          let bar=nice[0];
+          for(const v of nice) if(v<=span*0.6) bar=v;
+          const barPx=bar*scale;
+          box.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" '+
+            'preserveAspectRatio="xMidYMid meet">'+
+            '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#0b0d11"/>'+
+            '<path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="1.6" '+
+            'stroke-linejoin="round" stroke-linecap="round" stroke-opacity=".9"/>'+
+            '<circle cx="'+px(last.x).toFixed(1)+'" cy="'+pz(last.z).toFixed(1)+
+            '" r="2.6" fill="'+c+'" stroke="#0a0c10" stroke-width="1"/>'+
+            '<line x1="6" y1="'+(H-7)+'" x2="'+(6+barPx).toFixed(1)+'" y2="'+(H-7)+
+            '" stroke="#9aa3ae" stroke-width="1.4"/>'+
+            '<line x1="6" y1="'+(H-10)+'" x2="6" y2="'+(H-4)+'" stroke="#9aa3ae" stroke-width="1.4"/>'+
+            '<line x1="'+(6+barPx).toFixed(1)+'" y1="'+(H-10)+'" x2="'+(6+barPx).toFixed(1)+
+            '" y2="'+(H-4)+'" stroke="#9aa3ae" stroke-width="1.4"/>'+
+            '<text x="'+(10+barPx).toFixed(1)+'" y="'+(H-4)+'" fill="#9aa3ae" '+
+            'font-size="9">'+bar+' blocks</text>'+
+            '<text x="6" y="11" fill="#5b6472" font-size="9">'+esc(dim)+'</text>'+
+            '</svg><button class="go" title="Open on the activity map">'+ICON.globe+'</button>';
+          box.querySelector('button').onclick=()=>openInActivity(name);
+          return box;
+        }
+
+        /** Takes the activity tab to one player, from anywhere else. */
+        function openInActivity(name){
+          focusPlayer=name;
+          tab='activity';
+          render();
+        }
+        // Paths and actions for the players list, fetched once for the whole
+        // page rather than once per row. It is the same payload the map uses.
+        let peopleData=null, peopleAt=0;
+        async function loadPeople(){
+          if(peopleData && Date.now()-peopleAt<15000) return;
+          const r=await jget('/api/track?all=1');
+          if(r.status===200){ peopleData=r.body; peopleAt=Date.now(); }
+        }
+
         async function loadPlayers(){
           const on=$('p-online'); if(!on) return;
+          await loadPeople();
           const r=await jget('/api/players');
           if(r.status!==200){ on.innerHTML='<section><div class="note">'+
             esc(r.body.error||'unavailable')+'</div></section>'; return; }
@@ -1381,11 +1577,13 @@ final class WebPage {
                   '<button class="btn go" id="t-play">Play</button>'+
                   '<span class="speed" id="t-speed"></span>'+
                   '<span class="muted num" id="t-rate"></span>'+
+                  '<button class="btn" id="t-filter">Filter</button>'+
                   '<button class="btn" id="t-skip">Skip quiet time</button>'+
                   '<button class="btn" id="t-golive">Back to live</button>'+
                   '<span class="spacer"></span>'+
                   '<span class="muted" id="t-dims"></span>'+
                 '</div>'+
+                '<div id="t-filters"></div>'+
                 '<div class="legend" id="t-legend"></div>'+
               '</div>'+
               '<aside class="mapside" id="t-side"></aside>'+
@@ -1418,6 +1616,7 @@ final class WebPage {
             $('t-play').onclick=togglePlay;
             $('t-skip').onclick=()=>{ skipGaps=!skipGaps; paintAll(); };
             $('t-golive').onclick=goLive;
+            $('t-filter').onclick=()=>{ filterOpen=!filterOpen; paintFilters(); paintAll(); };
             $('t-livepill').onclick=()=>{ $('t-line').scrollIntoView({block:'nearest'}); };
             $('i-run').onclick=()=>runSummary(true);
             $('a-clear').onclick=clearActivity;
@@ -1470,8 +1669,9 @@ final class WebPage {
          * two admins looking at the same map are allowed to disagree about how
          * dark the ground should be.
          */
-        const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, colour:'action',
-                            faces:true, paths:true, cluster:true, overlays:true};
+        const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.35, colour:'action',
+                            faces:true, paths:true, cluster:true, overlays:true,
+                            sequences:true};
         let mapOpts=Object.assign({},MAP_DEFAULTS);
         let optsOpen=false;
         // The map, given the whole window, with everything else floating over
@@ -1512,6 +1712,212 @@ final class WebPage {
         // Markers were sized for a map you looked at whole. Now that it zooms,
         // they are the thing you are looking for, so they are drawn larger.
         const MARK_SCALE=2.2;
+
+        /**
+         * What is being shown, when that is not everything.
+         *
+         * <p>Three independent restrictions, because they answer different
+         * questions: which kinds of thing ("show me breaks"), which particular
+         * thing ("show me breaks of Oak Log"), and which kind of stretch
+         * ("show me the fights"). Empty means no restriction, so the common
+         * case costs nothing and the control starts out saying "everything".
+         */
+        let filt={acts:new Set(), items:new Set(), kinds:new Set()};
+        let filterOpen=false, filterOpenAct='';
+
+        const CATEGORIES=[
+          {name:'The world', acts:['place','break','use']},
+          {name:'Fighting', acts:['attack','hurt','death']},
+          {name:'Talking', acts:['chat','command']},
+          {name:'Coming and going', acts:['join','leave','respawn','afk','mask']},
+          {name:'Things', acts:['item','interact','container']}];
+
+        /** Actions that have a thing attached worth listing one by one. */
+        const DETAILED=new Set(['place','break','use','attack','interact','item']);
+
+        function filtering(){
+          return filt.acts.size>0 || filt.items.size>0 || filt.kinds.size>0;
+        }
+        function clearFilter(){
+          filt={acts:new Set(), items:new Set(), kinds:new Set()};
+        }
+
+        /**
+         * Whether one row survives the filter.
+         *
+         * <p>Ticking a kind shows that kind; ticking a particular thing under
+         * it narrows to that thing. A kind with nothing ticked under it is not
+         * narrowed, so "break" and "break: Oak Log" mean what they look like
+         * they mean.
+         */
+        function passes(a){
+          if(filt.acts.size && !filt.acts.has(a.action)) return false;
+          if(filt.items.size){
+            let narrowed=false;
+            for(const key of filt.items){
+              if(key.slice(0,key.indexOf('\u0000'))===a.action){ narrowed=true; break; }
+            }
+            if(narrowed && !filt.items.has(a.action+'\u0000'+(a.detail||''))) return false;
+          }
+          if(filt.kinds.size && !inChosenSequence(a)) return false;
+          return true;
+        }
+
+        /**
+         * Whether a row happened during a stretch of a chosen kind.
+         *
+         * <p>Episodes carry their player and their window, so this is the
+         * honest reading of "show me the fights": everything that player did
+         * while the fight was going on, rather than only the swings.
+         */
+        function inChosenSequence(a){
+          for(const e of episodes){
+            if(!filt.kinds.has(e.kind)) continue;
+            if(e.player!==a.player) continue;
+            if(a.at>=e.from-1000 && a.at<=e.to+1000) return true;
+          }
+          return false;
+        }
+
+        /** The filter panel, drawn under the map when it is open. */
+        function paintFilters(){
+          const host=$('t-filters'); if(!host) return;
+          const button=$('t-filter');
+          if(button){
+            const n=filt.acts.size+filt.items.size+filt.kinds.size;
+            button.className='btn'+(filtering()?' on':'');
+            button.textContent=filtering()?'Filter ('+n+')':'Filter';
+          }
+          if(!filterOpen){ host.innerHTML=''; return; }
+
+          const acts=(allData&&allData.actions)||[];
+          const counts=new Map(), details=new Map();
+          for(const a of acts){
+            const n=Math.max(1,a.count||1);
+            counts.set(a.action,(counts.get(a.action)||0)+n);
+            if(!DETAILED.has(a.action) || !a.detail) continue;
+            if(!details.has(a.action)) details.set(a.action,new Map());
+            const d=details.get(a.action);
+            d.set(a.detail,(d.get(a.detail)||0)+n);
+          }
+          const kinds=new Map();
+          for(const e of episodes) kinds.set(e.kind,(kinds.get(e.kind)||0)+1);
+
+          const box=document.createElement('div');
+          box.className='filterbox';
+          const head=document.createElement('div');
+          head.className='fhead';
+          head.innerHTML='<b>Show</b>'+
+            (filtering()?'<span class="muted">everything ticked</span>'
+                        :'<span class="muted">everything</span>');
+          const clear=document.createElement('button');
+          clear.className='btn'; clear.textContent='Everything';
+          clear.disabled=!filtering();
+          clear.onclick=()=>{ clearFilter(); paintFilters(); paintAll(); };
+          head.appendChild(clear);
+          const shut=document.createElement('button');
+          shut.className='btn'; shut.textContent='Done';
+          shut.onclick=()=>{ filterOpen=false; paintFilters(); };
+          head.appendChild(shut);
+          box.appendChild(head);
+
+          const grid=document.createElement('div');
+          grid.className='fgrid';
+          for(const cat of CATEGORIES){
+            const present=cat.acts.filter(a=>counts.has(a));
+            if(!present.length) continue;
+            const col=document.createElement('div');
+            col.className='fcat';
+            col.innerHTML='<h5>'+esc(cat.name)+'</h5>';
+            for(const action of present){
+              col.appendChild(filterRow(action,counts.get(action),details.get(action)));
+            }
+            grid.appendChild(col);
+          }
+          if(kinds.size){
+            const col=document.createElement('div');
+            col.className='fcat';
+            col.innerHTML='<h5>Sequences</h5>';
+            for(const [kind,n] of [...kinds.entries()].sort((a,b)=>b[1]-a[1])){
+              const line=document.createElement('label');
+              line.className='fline';
+              const cb=document.createElement('input');
+              cb.type='checkbox'; cb.checked=filt.kinds.has(kind);
+              cb.onchange=()=>{ cb.checked?filt.kinds.add(kind):filt.kinds.delete(kind);
+                paintFilters(); paintAll(); };
+              const t=document.createElement('span');
+              t.innerHTML='<svg viewBox="-11 -11 22 22" width="17" height="17">'+
+                sequenceIcon(kind,0,0,SEQUENCE_COLOR[kind]||'#ffab33',1)+'</svg> '+esc(kind);
+              const c=document.createElement('i'); c.textContent=n;
+              line.append(cb,t,c);
+              col.appendChild(line);
+            }
+            grid.appendChild(col);
+          }
+          box.appendChild(grid);
+          host.innerHTML='';
+          host.appendChild(box);
+        }
+
+        /** One action, with the things it was done to folded underneath it. */
+        function filterRow(action,count,detailMap){
+          const wrap=document.createElement('div');
+          const line=document.createElement('label');
+          line.className='fline';
+          const cb=document.createElement('input');
+          cb.type='checkbox'; cb.checked=filt.acts.has(action);
+          cb.onchange=()=>{
+            if(cb.checked) filt.acts.add(action);
+            else {
+              filt.acts.delete(action);
+              // Unticking the kind drops the things under it, or the map would
+              // go on hiding rows for a reason that is no longer on screen.
+              for(const key of [...filt.items]) {
+                if(key.slice(0,key.indexOf('\u0000'))===action) filt.items.delete(key);
+              }
+            }
+            paintFilters(); paintAll();
+          };
+          const t=document.createElement('span');
+          t.innerHTML='<svg viewBox="-11 -11 22 22" width="17" height="17">'+
+            marker(action,0,0,ACTION_COLOR[action]||'#9aa3ae',1)+'</svg> '+esc(action);
+          const c=document.createElement('i'); c.textContent=count;
+          line.append(cb,t,c);
+          wrap.appendChild(line);
+
+          if(detailMap && detailMap.size>1){
+            const more=document.createElement('button');
+            more.className='fmore';
+            more.textContent=(filterOpenAct===action?'▾ ':'▸ ')+detailMap.size+' kinds';
+            more.onclick=()=>{ filterOpenAct=filterOpenAct===action?'':action; paintFilters(); };
+            wrap.appendChild(more);
+            if(filterOpenAct===action){
+              const sub=document.createElement('div');
+              sub.className='fsub';
+              const rows=[...detailMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,40);
+              for(const [detail,n] of rows){
+                const key=action+'\u0000'+detail;
+                const l=document.createElement('label');
+                l.className='fline';
+                const box=document.createElement('input');
+                box.type='checkbox'; box.checked=filt.items.has(key);
+                box.onchange=()=>{ box.checked?filt.items.add(key):filt.items.delete(key);
+                  paintFilters(); paintAll(); };
+                const label=document.createElement('span'); label.textContent=detail;
+                const num=document.createElement('i'); num.textContent=n;
+                l.append(box,label,num);
+                sub.appendChild(l);
+              }
+              if(detailMap.size>40){
+                sub.insertAdjacentHTML('beforeend',
+                  '<div class="muted" style="font-size:11px;padding:3px 0">'+
+                  (detailMap.size-40)+' more not listed</div>');
+              }
+              wrap.appendChild(sub);
+            }
+          }
+          return wrap;
+        }
 
         // Stable per-player colour: the same person is the same colour every
         // time the map is drawn, without keeping a palette in sync with a
@@ -1583,6 +1989,37 @@ final class WebPage {
             if(s.at<=at && (!best || s.at>best.at)) best=s;
           }
           return best||earliest;
+        }
+
+        /**
+         * Every patch of ground anybody has a picture of, as it last looked.
+         *
+         * <p>Pictures are taken of wherever people are, and windows are
+         * aligned to a grid, so a server that has been played on for a week
+         * has pictures of a dozen different places rather than a dozen
+         * pictures of one. Showing only the one that matches the cursor threw
+         * all the others away: walk away from your base and the map went blank
+         * behind you, when the ground there had not changed and Almin had a
+         * perfectly good picture of it.
+         *
+         * <p>So: one picture per patch — the newest taken at or before the
+         * cursor, and the earliest there is for a patch first seen later —
+         * oldest first, so a fresher picture of the same patch draws on top.
+         */
+        function shotsFor(dim,at){
+          const byPatch=new Map();
+          for(const s of shots){
+            if(s.dim!==dim) continue;
+            const key=s.minX+'@'+s.minZ+'@'+s.span;
+            const have=byPatch.get(key);
+            if(!have){ byPatch.set(key,s); continue; }
+            // Prefer the newest at or before the cursor; failing that, the
+            // earliest there is, so a patch first seen later still shows.
+            const haveOk=have.at<=at, sOk=s.at<=at;
+            if(sOk && (!haveOk || s.at>have.at)) byPatch.set(key,s);
+            else if(!sOk && !haveOk && s.at<have.at) byPatch.set(key,s);
+          }
+          return [...byPatch.values()].sort((a,b)=>a.at-b.at);
         }
 
         /**
@@ -1689,6 +2126,85 @@ final class WebPage {
         }
 
 
+        """;
+
+    /**
+     * Sequence badges, the filter, and the rest of the map's furniture.
+     *
+     * <p>Another piece for the same reason as the others: one string constant
+     * cannot exceed 64KB, and the map's own piece reached it again.
+     */
+    private static final String PARTSEQ = """
+        // ---- sequences, as one mark each ----
+        // A stretch of work is a thing that happened, and forty identical
+        // marks are not a picture of it. One badge with the tool on it says
+        // "somebody was digging here" from across the map.
+        const SEQUENCE_COLOR={fight:'#ff6b6b', pvp:'#ff4d4f', death:'#ff9a9a',
+          tree:'#7bd88f', shaft:'#8fd8ff', tunnel:'#8fd8ff', mine:'#a9b4c2',
+          dig:'#c9a227', clear:'#ffab33', build:'#ffd479', farm:'#9ade7b',
+          loot:'#d6a8ff', travel:'#9fd0ff', pace:'#ffc14d', busy:'#9aa3ae',
+          about:'#7a8595'};
+
+        /**
+         * One tool, drawn.
+         *
+         * <p>Same reasoning as the action shapes: drawn rather than fetched,
+         * because the panel has to work on a server with no way out to the
+         * internet and an icon set would be another thing to ship and license.
+         */
+        function toolShape(tool,c){
+          const li=(x1,y1,x2,y2,w)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+
+            '" stroke="'+c+'" stroke-width="'+(w||1.9)+'" stroke-linecap="round"/>';
+          switch(tool){
+            // A blade and a crossguard.
+            case 'sword':   return li(-3.6,3.6,3.4,-3.4,2.2)+li(-4.6,4.6,-3.2,3.2,2.6)+
+                                   li(-1.2,-4.6,1.4,-2,1.8);
+            // A haft with a curved head.
+            case 'pickaxe': return li(-4.2,4.2,3.4,-3.4,1.9)+
+                                   '<path d="M-1 -4.6q4.4 -2.2 7.2 1.2" fill="none" stroke="'+c+
+                                   '" stroke-width="1.9" stroke-linecap="round"/>';
+            case 'axe':     return li(-4.2,4.2,2.4,-2.4,1.9)+
+                                   '<path d="M1.2 -4.4q4.6 0.4 4.2 4.6q-3 0.6 -4.8 -1.6z" fill="'+c+
+                                   '" stroke="'+c+'" stroke-width="1"/>';
+            case 'shovel':  return li(-4.2,4.2,2.2,-2.2,1.9)+
+                                   '<path d="M1.6 -4.8l3.6 3.6l-2 2l-3.6 -3.6z" fill="'+c+'"/>';
+            case 'hoe':     return li(-4.2,4.2,2.6,-2.6,1.9)+li(1,-4.4,5.4,-4.4,2)+
+                                   li(5.4,-4.4,5.4,-1.6,2);
+            // A hammer: a haft and a heavy head.
+            case 'hammer':  return li(-3.6,4.4,1.4,-0.6,1.9)+
+                                   '<rect x="0.4" y="-5.4" width="6.4" height="4.4" rx="1" fill="'+
+                                   c+'"/>';
+            case 'chest':   return '<rect x="-5" y="-3.6" width="10" height="7.6" rx="1" fill="'+c+
+                                   '"/><path d="M-5 -0.6h10" stroke="#0b0d11" stroke-width="1.3"/>'+
+                                   '<rect x="-1.1" y="-1.8" width="2.2" height="3" fill="#0b0d11"/>';
+            case 'boots':   return '<path d="M-3.4 -4.6v6.4h6.8v2.6h-9.6v-9z" fill="'+c+'"/>';
+            case 'loop':    return '<path d="M4.4 -1.2a4.8 4.8 0 1 1 -1.6 -3.2" fill="none" '+
+                                   'stroke="'+c+'" stroke-width="2" stroke-linecap="round"/>'+
+                                   '<path d="M2 -5.4l1.6 1.4l-1.8 1.4z" fill="'+c+'"/>';
+            case 'skull':   return '<circle cx="0" cy="-0.6" r="4.4" fill="'+c+'"/>'+
+                                   '<path d="M-2.2 4h4.4" stroke="'+c+'" stroke-width="2" '+
+                                   'stroke-linecap="round"/>'+
+                                   '<circle cx="-1.6" cy="-1" r="1.2" fill="#0b0d11"/>'+
+                                   '<circle cx="1.6" cy="-1" r="1.2" fill="#0b0d11"/>';
+            default:        return '<circle cx="0" cy="0" r="3.6" fill="'+c+'"/>';
+          }
+        }
+
+        /** A sequence badge: the tool on a dark disc, centred on (x, y). */
+        function sequenceIcon(kind,x,y,fill,scale){
+          const r=scale||1;
+          const body='<circle cx="0" cy="0" r="9.6" fill="#0a0c10" fill-opacity=".88"/>'+
+            '<circle cx="0" cy="0" r="9.6" fill="none" stroke="'+fill+'" stroke-width="1.6"/>'+
+            toolShape(SEQUENCE_TOOL[kind]||kind,fill);
+          return '<g transform="translate('+x+' '+y+') scale('+r.toFixed(3)+')">'+body+'</g>';
+        }
+
+        /** Which tool stands for a kind, when the server has not said. */
+        const SEQUENCE_TOOL={fight:'sword', pvp:'sword', death:'skull', tree:'axe',
+          shaft:'pickaxe', tunnel:'pickaxe', mine:'pickaxe', dig:'pickaxe',
+          clear:'shovel', build:'hammer', farm:'hoe', loot:'chest',
+          travel:'boots', pace:'loop', busy:'chest', about:'loop'};
+
         function stopPlay(){
           if(playTimer){ clearInterval(playTimer); playTimer=null; }
           const b=$('t-play'); if(b){ b.textContent='Play'; b.className='btn go'; }
@@ -1734,6 +2250,27 @@ final class WebPage {
         // gesture handlers live on the containers, which outlive a repaint,
         // so they cannot close over the numbers — they read them from here.
         let proj={W:1000,H:600,span:400,anchorX:500};
+
+        /**
+         * Marker sizes, corrected for how large the map is being drawn.
+         *
+         * <p>One is the size everything was drawn at when the map was a panel
+         * on a page; fullscreen makes a viewBox unit about half again as big,
+         * so without this a mark that read well in the panel filled a
+         * building. Clamped, because a very small or very tall map should not
+         * make the marks unreadable in the other direction.
+         */
+        let unitAdjust=1;
+        const REFERENCE_PX_PER_UNIT=1.1;
+        function measureUnit(box){
+          const svg=box.querySelector('svg');
+          if(!svg) return;
+          const r=svg.getBoundingClientRect();
+          if(!r.width || !r.height) return;
+          const perUnit=Math.min(r.width/proj.W, r.height/proj.H);
+          if(!perUnit) return;
+          unitAdjust=Math.max(0.55,Math.min(1.6,REFERENCE_PX_PER_UNIT/perUnit));
+        }
         function worldX(px){ return view.cx+((px-proj.anchorX)/proj.W)*proj.span; }
         function worldZ(py){ return view.cz+((py-proj.H/2)/proj.W)*proj.span; }
 
@@ -1746,6 +2283,12 @@ final class WebPage {
 
         function paintAll(){
           const box=$('t-map'); if(!box || !allData) return;
+          // How big a viewBox unit currently is on screen, measured from the
+          // map that is still there. Markers are sized in viewBox units, so
+          // without this they grow with the window — which is why everything
+          // ballooned the moment the map went fullscreen. Taken before the
+          // rebuild, because after it there is nothing to measure.
+          measureUnit(box);
           const tracks=allData.tracks||{}, acts=allData.actions||[];
           const ids=allData.ids||{}, online=allData.online||[];
           const names=Object.keys(tracks);
@@ -1786,13 +2329,19 @@ final class WebPage {
             ? (stale>120000?'live · nothing since '+fmtAgo(to):'live')
             : fmtAgo(cursor)+(cursor>=to-1000?' (latest)':'');
 
+          // Not below three sampling intervals: with samples a few minutes
+          // apart — a thinned track, or a server with a long
+          // activity-track-seconds — the gap to the last one exceeds the AFK
+          // threshold for everybody all the time, and a map where nobody is
+          // ever moving says nothing.
+          const afkSecs=Math.max(allData.afkSeconds||0,(allData.trackSeconds||0)*3);
           const inDim=p=>p.dim===allDim;
           const mine=a=>!focusPlayer || a.player===focusPlayer;
           // Everything that had happened by the cursor, not just the last
           // moment of it. A narrow window looks tidy and is useless: scrub to
           // a quiet minute and the map goes blank, which says nothing about
           // where anything happened. Age is carried by fading instead.
-          const shownActs=acts.filter(a=>inDim(a) && a.at<=cursor && mine(a));
+          const shownActs=acts.filter(a=>inDim(a) && a.at<=cursor && mine(a) && passes(a));
           const shownNames=names.filter(n=>!focusPlayer || n===focusPlayer);
 
           const whole=[].concat(...shownNames.map(n=>tracks[n].filter(inDim)))
@@ -1852,13 +2401,33 @@ final class WebPage {
             '<rect width="12" height="12" fill="#12161d"/>'+
             '<rect width="6" height="12" fill="#161b23"/></pattern>'+
             '<clipPath id="mapclip"><rect x="0" y="0" width="'+W+'" height="'+H+
-            '"/></clipPath></defs>'+
+            '"/></clipPath>'+
+            // Drains the colour out of a face without hiding it.
+            '<filter id="grey"><feColorMatrix type="saturate" values="0"/></filter>'+
+            '</defs>'+
             '<rect x="'+(-2*W)+'" y="'+(-2*H)+'" width="'+(5*W)+'" height="'+(5*H)+
             '" fill="url(#unknown)"/>';
-          // Only where there is no picture. Over terrain a grid is four lines
-          // that mean nothing crossing something that does.
+          // The ground as it was at the cursor. Nearest-neighbour scaling, so
+          // it reads as blocks rather than as a blur.
+          // Every patch there is a picture of, not only the one under the
+          // cursor — and only the ones that would land on screen.
+          const patches=[];
+          for(const p of shotsFor(allDim,cursor)){
+            const x0=sx(p.minX), z0=sz(p.minZ);
+            const w=sx(p.minX+p.span)-x0, h=sz(p.minZ+p.span)-z0;
+            if(x0+w<-4 || x0>W+4 || z0+h<-4 || z0>H+4) continue;
+            // Addressed by the picture's own timestamp, not the cursor's:
+            // during playback the cursor changes every frame, and that URL
+            // would be a fresh request each time instead of a cache hit.
+            patches.push('<image href="/api/map?at='+p.at+'&dim='+encodeURIComponent(allDim)+
+              '" x="'+x0.toFixed(1)+'" y="'+z0.toFixed(1)+'" width="'+w.toFixed(1)+
+              '" height="'+h.toFixed(1)+
+              '" preserveAspectRatio="none" style="image-rendering:pixelated"/>');
+          }
+          // Only where there is no picture at all. Over terrain a grid is four
+          // lines that mean nothing crossing something that does.
           const grid=[];
-          if(!shot){
+          if(!patches.length){
             for(let g=0;g<=4;g++){
               grid.push('<line x1="'+(W/4)*g+'" y1="0" x2="'+(W/4)*g+'" y2="'+H+
                 '" stroke="#1b1f27"/>');
@@ -1867,17 +2436,8 @@ final class WebPage {
             }
           }
 
-          // The ground as it was at the cursor. Nearest-neighbour scaling, so
-          // it reads as blocks rather than as a blur.
-          const groundImage=shot
-            // Addressed by the picture's own timestamp, not the cursor's:
-            // during playback the cursor changes every frame, and that URL
-            // would be a fresh request each time instead of a cache hit.
-            ? '<image href="/api/map?at='+shot.at+'&dim='+encodeURIComponent(allDim)+
-              '" x="'+sx(shot.minX).toFixed(1)+'" y="'+sz(shot.minZ).toFixed(1)+
-              '" width="'+(sx(shot.minX+shot.span)-sx(shot.minX)).toFixed(1)+
-              '" height="'+(sz(shot.minZ+shot.span)-sz(shot.minZ)).toFixed(1)+
-              '" preserveAspectRatio="none" style="image-rendering:pixelated"/>'+
+          const groundImage=patches.length
+            ? patches.join('')+
               // A thin scrim over the ground. The terrain is the background,
               // not the subject: muting it a little is what lets a path and a
               // handful of marks read as the thing on top of it.
@@ -1916,18 +2476,37 @@ final class WebPage {
               // the frame around it, and stays visible if the face never
               // loads or is turned off.
               const last=upto[upto.length-1];
-              const hx=sx(last.x), hy=sz(last.z), R=13;
+              // Nobody is sampled while they stand still, so the gap between
+              // the cursor and their last sample is exactly how long they have
+              // not moved — which is what AFK means, and it stays true when
+              // you scrub back rather than only describing right now.
+              const stillFor=cursor-last.at;
+              const away=afkSecs>0 && stillFor>afkSecs*1000;
+              const hx=sx(last.x), hy=sz(last.z);
+              // Faces are sized on their own: they are what you look for on
+              // the map, and tying them to the marker size meant making them
+              // readable made everything else shout.
+              const R=13*mapOpts.head*unitAdjust;
+              const frame=away?'#5b6472':c;
               let head='<rect x="'+(hx-R).toFixed(1)+'" y="'+(hy-R).toFixed(1)+
-                '" width="'+(R*2)+'" height="'+(R*2)+'" rx="2.5" fill="'+c+
-                '" stroke="#0a0c10" stroke-width="2.5"/>';
+                '" width="'+(R*2).toFixed(1)+'" height="'+(R*2).toFixed(1)+
+                '" rx="'+(R*0.19).toFixed(1)+'" fill="'+frame+
+                '" stroke="#0a0c10" stroke-width="'+(2.5*unitAdjust).toFixed(1)+'"/>';
               if(headsOn && mapOpts.faces && ids[n]){
+                const inset=R*0.23;
                 head+='<image href="/api/head?uuid='+encodeURIComponent(ids[n])+
-                  '&name='+encodeURIComponent(n)+'" x="'+(hx-R+3).toFixed(1)+
-                  '" y="'+(hy-R+3).toFixed(1)+'" width="'+(R*2-6)+'" height="'+(R*2-6)+
-                  '" style="image-rendering:pixelated"/>';
+                  '&name='+encodeURIComponent(n)+'" x="'+(hx-R+inset).toFixed(1)+
+                  '" y="'+(hy-R+inset).toFixed(1)+'" width="'+((R-inset)*2).toFixed(1)+
+                  '" height="'+((R-inset)*2).toFixed(1)+
+                  '" style="image-rendering:pixelated"'+
+                  // Greyed rather than hidden: where they are still matters,
+                  // it is only that they are not doing anything there.
+                  (away?' filter="url(#grey)" opacity=".72"':'')+'/>';
               }
-              heads.push('<g class="thead" data-who="'+esc(n)+'" style="cursor:pointer">'+
-                head+'<title>'+esc(n)+'</title></g>');
+              heads.push('<g class="thead'+(away?' afk':'')+'" data-who="'+esc(n)+
+                '" style="cursor:pointer">'+head+'<title>'+esc(n)+
+                (away?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):'')+
+                '</title></g>');
             }
             return out;
           }).join('');
@@ -1966,7 +2545,7 @@ final class WebPage {
                 dotSvg.push('<g class="tmk" data-i="'+drawn.length+'" opacity="'+
                   fade.toFixed(2)+'">'+
                   marker(a.action,+sx(a.x).toFixed(1),+sz(a.z).toFixed(1),
-                    colourOf(a),mapOpts.mark*(age>0.99?0.75:1))+'</g>');
+                    colourOf(a),mapOpts.mark*unitAdjust*(age>0.99?0.75:1))+'</g>');
                 drawn.push(a);
               }
             } else {
@@ -1977,11 +2556,34 @@ final class WebPage {
           }
           const dots=dotSvg.join('')+clusterSvg.join('');
 
+          // One badge per stretch of work, over the marks that make it up. The
+          // notable ones get their sentence beside them; labelling all of them
+          // would bury the map under its own commentary.
+          const seqs=[], seqShown=[];
+          if(mapOpts.sequences){
+            for(const e of episodes){
+              if(e.dim!==allDim) continue;
+              if(focusPlayer && e.player!==focusPlayer) continue;
+              if(filt.kinds.size && !filt.kinds.has(e.kind)) continue;
+              if(e.from>cursor) continue;
+              const ex=sx(e.x), ey=sz(e.z);
+              if(ex<-40||ex>W+40||ey<-40||ey>H+40) continue;
+              const c=SEQUENCE_COLOR[e.kind]||'#ffab33';
+              const note=momentFor(e);
+              const label=(e.weight>=40||note)?(note?note.label:e.headline):'';
+              seqs.push('<g class="tsq" data-i="'+seqShown.length+'" style="cursor:pointer">'+
+                sequenceIcon(e.kind,+ex.toFixed(1),+ey.toFixed(1),c,1.05*unitAdjust)+
+                (label?labelBox(ex,ey,label,c,note?note.why:''):'')+
+                '<title>'+esc(e.player+' — '+e.headline)+'</title></g>');
+              seqShown.push(e);
+            }
+          }
+
           box.innerHTML='<div class="mapwrap">'+
             '<svg id="t-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
             'role="img" aria-label="Where everyone was and what they did">'+
             backing+'<g clip-path="url(#mapclip)">'+
-            groundImage+grid.join('')+lines+dots+heads.join('')+'</g></svg>'+
+            groundImage+grid.join('')+lines+dots+seqs.join('')+heads.join('')+'</g></svg>'+
             '<div class="maptip" id="t-tip"></div>'+
             (mapOpts.overlays?'<div class="onlinebar" id="t-online"></div>':'')+
             '<div class="mapbtns">'+
@@ -1998,14 +2600,16 @@ final class WebPage {
           paintOnline(online,ids);
           paintLegend(shownNames,shownActs,span,shot);
           paintTimeline();
-          paintSide(acts.filter(a=>mine(a)));
+          paintSide(acts.filter(a=>mine(a) && passes(a)));
           wireMapGestures();
           wireMapButtons();
           wireMarkers(box,drawn,W,H);
           wireClusters(box,groups);
+          wireSequences(box,seqShown);
           wireMapOptions();
           wireDims();
           drawCluster();
+          paintFilters();
         }
 
         /**
@@ -2029,6 +2633,7 @@ final class WebPage {
             range('o-dim','Ground darkness',0,80,1,Math.round(mapOpts.dim*100))+
             range('o-path','Path width',1,7,0.5,mapOpts.path)+
             range('o-mark','Marker size',1,4,0.1,mapOpts.mark)+
+            range('o-head','Face size',0.7,2.4,0.05,mapOpts.head)+
             '<label><span>Colour marks by</span><select id="o-colour">'+
               '<option value="action"'+(mapOpts.colour==='action'?' selected':'')+
               '>what it was</option>'+
@@ -2038,6 +2643,7 @@ final class WebPage {
             check('o-faces','Player faces',mapOpts.faces)+
             check('o-paths','Paths',mapOpts.paths)+
             check('o-cluster','Group crowded marks',mapOpts.cluster)+
+            check('o-seq','Sequence badges',mapOpts.sequences)+
             check('o-overlays','Side panel and player bar',mapOpts.overlays)+
             '<div class="row"><button class="btn" id="o-reset">Reset</button>'+
             '<button class="btn" id="o-close">Done</button></div>'+
@@ -2051,10 +2657,12 @@ final class WebPage {
           set('o-dim','oninput',el=>mapOpts.dim=(+el.value)/100);
           set('o-path','oninput',el=>mapOpts.path=+el.value);
           set('o-mark','oninput',el=>mapOpts.mark=+el.value);
+          set('o-head','oninput',el=>mapOpts.head=+el.value);
           set('o-colour','onchange',el=>mapOpts.colour=el.value);
           set('o-faces','onchange',el=>mapOpts.faces=el.checked);
           set('o-paths','onchange',el=>mapOpts.paths=el.checked);
           set('o-cluster','onchange',el=>mapOpts.cluster=el.checked);
+          set('o-seq','onchange',el=>mapOpts.sequences=el.checked);
           set('o-overlays','onchange',el=>mapOpts.overlays=el.checked);
           const reset=$('o-reset');
           if(reset) reset.onclick=()=>{ mapOpts=Object.assign({},MAP_DEFAULTS);
@@ -2083,8 +2691,9 @@ final class WebPage {
           const c=mapOpts.colour==='player'
             ? playerColor(items[0].player) : (ACTION_COLOR[best]||'#9aa3ae');
           const label=total>999?'999+':String(total);
-          const w=Math.max(20,10+label.length*8)*(mapOpts.mark/2.2);
-          const h=19*(mapOpts.mark/2.2);
+          const k=(mapOpts.mark/2.2)*unitAdjust;
+          const w=Math.max(20,10+label.length*8)*k;
+          const h=19*k;
           return '<g class="tcl" data-i="'+index+'" style="cursor:pointer">'+
             '<rect x="'+(x-w/2).toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+
             '" height="'+h.toFixed(1)+'" rx="'+(h/2.6).toFixed(1)+'" fill="#0a0c10" '+
@@ -2209,6 +2818,54 @@ final class WebPage {
           const wide=el.offsetWidth||300, high=el.offsetHeight||200;
           el.style.left=Math.max(6,Math.min(wrap.clientWidth-wide-6,px+14))+'px';
           el.style.top=Math.max(6,Math.min(wrap.clientHeight-high-6,py-14))+'px';
+        }
+
+        /**
+         * The label beside a sequence badge.
+         *
+         * <p>Drawn as SVG rather than as an HTML overlay so it pans and zooms
+         * with the thing it is labelling, and sits on its own dark plate so a
+         * sentence over grass is still a sentence.
+         */
+        function labelBox(x,y,text,c,why){
+          const line=text.length>46?text.slice(0,45)+'…':text;
+          const second=why?(why.length>52?why.slice(0,51)+'…':why):'';
+          const w=Math.max(line.length,second.length)*4.9+16;
+          const h=second?30:19;
+          // Flipped to the left when there is no room on the right.
+          const right=x+14+w<proj.W-6;
+          const bx=right?x+13:x-13-w;
+          const by=y-h/2;
+          return '<g class="sqlabel" pointer-events="none">'+
+            '<rect x="'+bx.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+w.toFixed(1)+
+            '" height="'+h+'" rx="4" fill="#0a0c10" fill-opacity=".84" stroke="'+c+
+            '" stroke-opacity=".5" stroke-width="1"/>'+
+            '<text x="'+(bx+8).toFixed(1)+'" y="'+(by+(second?12:13.5)).toFixed(1)+
+            '" fill="#e7ecf3" font-size="10.5" font-weight="600">'+esc(line)+'</text>'+
+            (second?'<text x="'+(bx+8).toFixed(1)+'" y="'+(by+24).toFixed(1)+
+              '" fill="#9aa3ae" font-size="9.5">'+esc(second)+'</text>':'')+
+            '</g>';
+        }
+
+        /** The model's note about this stretch, if it made one. */
+        function momentFor(e){
+          if(!aiReport || !aiReport.moments) return null;
+          for(const m of aiReport.moments){
+            if(Math.abs(m.at-e.to)<=1000 && (!m.player||m.player===e.player)) return m;
+          }
+          return null;
+        }
+
+        function wireSequences(box,shown){
+          box.querySelectorAll('.tsq').forEach(el=>{
+            el.onclick=ev=>{ ev.stopPropagation();
+              const e=shown[+el.getAttribute('data-i')];
+              if(!e) return;
+              // A stretch with a shape opens as one; anything else takes the
+              // map to it, which is all there is to show.
+              if(hasShape(e)) openScene(e); else jumpTo(e.to,e.dim,e.x,e.z);
+            };
+          });
         }
 
         /** Who is on right now, greyed if they have stopped moving. */
@@ -2355,6 +3012,7 @@ final class WebPage {
           for(const a of (allData.actions||[])){
             if(a.dim!==allDim) continue;
             if(focusPlayer && a.player!==focusPlayer) continue;
+            if(!passes(a)) continue;
             const x=mx(a.at);
             if(x<-2||x>W+2) continue;
             sv+='<line x1="'+x.toFixed(1)+'" y1="'+(y0+MAIN-20)+'" x2="'+x.toFixed(1)+
@@ -2726,6 +3384,14 @@ final class WebPage {
             when.textContent=fmtAgo(e.to);
             row.appendChild(when);
             row.onclick=()=>jumpTo(e.to,e.dim,e.x,e.z);
+            if(hasShape(e)){
+              const look=document.createElement('button');
+              look.className='btn'; look.textContent='3D';
+              look.style.padding='2px 8px'; look.style.fontSize='11.5px';
+              look.title='Draw the blocks this changed';
+              look.onclick=ev=>{ ev.stopPropagation(); openScene(e); };
+              row.appendChild(look);
+            }
             box.appendChild(row);
           }
         }
@@ -2818,6 +3484,214 @@ final class WebPage {
               list.appendChild(row);
             }
           }
+        }
+
+        // ---- what a stretch of work actually built ----
+        // The map answers "where"; a top-down mark cannot answer "what shape".
+        // The log knows every block that went down and every one that came up,
+        // with its height, so the shape is recoverable — not the world around
+        // it, which was never recorded, but the part somebody changed, which
+        // is the part in question.
+        const SCENE_MAX=64;          // blocks across, as asked
+        const SCENE_CUBES=4000;      // beyond this it is a wall of cubes anyway
+        let scene=null;
+
+        /** Whether this stretch has enough shape in it to be worth drawing. */
+        function hasShape(e){
+          return e && e.events>=8 &&
+            ['build','shaft','tunnel','mine','dig','clear','tree','farm'].includes(e.kind);
+        }
+
+        /**
+         * Everything one stretch of work touched, as blocks.
+         *
+         * <p>Clamped to a box around its centre: an episode can wander, and a
+         * scene that covers a kilometre is a scene of nothing.
+         */
+        function sceneOf(e){
+          const acts=(allData&&allData.actions)||[];
+          const half=SCENE_MAX/2;
+          const cubes=[], marks=[];
+          for(const a of acts){
+            if(a.player!==e.player || a.dim!==e.dim) continue;
+            if(a.at<e.from-1000 || a.at>e.to+1000) continue;
+            if(Math.abs(a.x-e.x)>half || Math.abs(a.z-e.z)>half) continue;
+            if(a.action==='place'||a.action==='break'){
+              cubes.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at,
+                          put:a.action==='place', what:a.detail||'', n:Math.max(1,a.count||1)});
+            } else if(a.action==='attack'||a.action==='hurt'||a.action==='death'){
+              marks.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at,
+                          kind:a.action, what:a.detail||''});
+            }
+          }
+          if(!cubes.length && !marks.length) return null;
+          const ys=cubes.concat(marks).map(c=>c.y);
+          const minY=Math.min(...ys), maxY=Math.max(...ys);
+          cubes.sort((a,b)=>a.at-b.at);
+          marks.sort((a,b)=>a.at-b.at);
+          const kept=cubes.slice(0,SCENE_CUBES);
+          // Opens finished rather than empty: the question is what is there,
+          // and the replay is for afterwards.
+          return {ep:e, cubes:kept, marks:marks,
+                  minY:minY, maxY:maxY, turn:0, upto:Math.max(1,kept.length), timer:null};
+        }
+
+        function openScene(e){
+          const built=sceneOf(e);
+          if(!built){ return; }
+          scene=built;
+          modal('What was built here', body=>{
+            body.innerHTML='<p class="muted" style="margin:0 0 10px">'+
+              esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+' '+e.x+','+e.y+','+e.z+
+              '</p>'+
+              '<div class="scene" id="sc-box"></div>'+
+              '<div class="scenebar">'+
+                '<button class="btn" id="sc-left">⟲</button>'+
+                '<button class="btn" id="sc-right">⟳</button>'+
+                '<button class="btn go" id="sc-play">Replay</button>'+
+                '<input type="range" id="sc-at" min="1" max="'+
+                  Math.max(1,built.cubes.length)+'" value="'+
+                  Math.max(1,built.cubes.length)+'">'+
+                '<span class="muted num" id="sc-count"></span>'+
+              '</div>'+
+              '<div class="scenekey">'+
+                '<span><i style="background:#ffcf4d"></i>placed</span>'+
+                '<span><i style="background:#ff5a5a"></i>broken</span>'+
+                (built.marks.length?'<span><i style="background:#ff3b3b"></i>something was hit</span>':'')+
+                '<span class="muted">Only what changed — the world around it was never recorded.</span>'+
+              '</div>';
+            setTimeout(()=>{
+              $('sc-left').onclick=()=>{ scene.turn=(scene.turn+3)%4; paintScene(); };
+              $('sc-right').onclick=()=>{ scene.turn=(scene.turn+1)%4; paintScene(); };
+              $('sc-at').oninput=()=>{ stopScene(); scene.upto=+$('sc-at').value; paintScene(); };
+              $('sc-play').onclick=toggleScene;
+              paintScene();
+            },0);
+          },{onClose:()=>{ stopScene(); scene=null; }});
+        }
+
+        function stopScene(){
+          if(scene && scene.timer){ clearInterval(scene.timer); scene.timer=null; }
+          const b=$('sc-play'); if(b){ b.textContent='Replay'; b.className='btn go'; }
+        }
+
+        /** Puts it up one block at a time, in the order it actually happened. */
+        function toggleScene(){
+          if(!scene) return;
+          if(scene.timer){ stopScene(); return; }
+          const b=$('sc-play'); if(b){ b.textContent='Pause'; b.className='btn on'; }
+          if(scene.upto>=scene.cubes.length) scene.upto=1;
+          const step=Math.max(1,Math.round(scene.cubes.length/120));
+          scene.timer=setInterval(()=>{
+            if(!scene){ return; }
+            scene.upto=Math.min(scene.cubes.length,scene.upto+step);
+            const at=$('sc-at'); if(at) at.value=scene.upto;
+            paintScene();
+            if(scene.upto>=scene.cubes.length) stopScene();
+          },60);
+        }
+
+        /**
+         * The scene, in two-to-one isometric.
+         *
+         * <p>Painter's algorithm: cubes are drawn back to front, which for
+         * this projection means by x + z + y. Every cube is three faces — the
+         * top full brightness, the two sides darker — which is all it takes
+         * for a stack of them to read as solid.
+         */
+        function paintScene(){
+          const box=$('sc-box'); if(!box || !scene) return;
+          const S=Math.max(6,Math.min(26,900/Math.max(12,spread(scene))));
+          const shown=scene.cubes.slice(0,scene.upto);
+          const upTo=shown.length?shown[shown.length-1].at:scene.ep.to;
+          const marks=scene.marks.filter(m=>m.at<=upTo);
+
+          const items=[];
+          for(const c of shown){
+            const r=turned(c,scene.turn);
+            items.push({key:r.x+r.z+c.y*0.5, svg:cube(r.x,c.y-scene.minY,r.z,S,c)});
+          }
+          for(const m of marks){
+            const r=turned(m,scene.turn);
+            items.push({key:r.x+r.z+m.y*0.5+0.4, svg:hitMark(r.x,m.y-scene.minY,r.z,S,m)});
+          }
+          items.sort((a,b)=>a.key-b.key);
+
+          const W=760, H=420;
+          box.innerHTML='<svg viewBox="'+(-W/2)+' '+(-H/2)+' '+W+' '+H+
+            '" width="100%" height="'+H+'" role="img" '+
+            'aria-label="The blocks this stretch of work changed">'+
+            items.map(i=>i.svg).join('')+'</svg>';
+          const count=$('sc-count');
+          if(count){
+            let put=0, took=0;
+            for(const c of shown){ if(c.put) put+=c.n; else took+=c.n; }
+            count.textContent=put+' placed · '+took+' broken'+
+              (scene.cubes.length>=SCENE_CUBES?' · showing the first '+SCENE_CUBES:'');
+          }
+        }
+
+        /** How far the scene reaches, for picking a block size that fits. */
+        function spread(sc){
+          let lo=999, hi=-999;
+          for(const c of sc.cubes){
+            lo=Math.min(lo,c.x,c.z); hi=Math.max(hi,c.x,c.z);
+          }
+          return Math.max(hi-lo, sc.maxY-sc.minY, 8);
+        }
+
+        /** Quarter turns about the centre, so you can see round the back. */
+        function turned(c,turn){
+          switch(turn&3){
+            case 1:  return {x:-c.z, z:c.x};
+            case 2:  return {x:-c.x, z:-c.z};
+            case 3:  return {x:c.z,  z:-c.x};
+            default: return {x:c.x,  z:c.z};
+          }
+        }
+
+        function isoX(x,z,S){ return (x-z)*(S/2); }
+        function isoY(x,y,z,S){ return (x+z)*(S/4)-y*(S/2); }
+
+        function cube(x,y,z,S,c){
+          const ox=isoX(x,z,S), oy=isoY(x,y,z,S);
+          const half=S/2, quarter=S/4;
+          const top=[[ox,oy],[ox+half,oy+quarter],[ox,oy+half],[ox-half,oy+quarter]];
+          const left=[[ox-half,oy+quarter],[ox,oy+half],[ox,oy+half+half],[ox-half,oy+quarter+half]];
+          const right=[[ox,oy+half],[ox+half,oy+quarter],[ox+half,oy+quarter+half],[ox,oy+half+half]];
+          const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+          const title='<title>'+esc((c.put?'placed ':'broke ')+(c.what||'a block')+
+            (c.n>1?' ×'+c.n:'')+' at y '+c.y)+'</title>';
+          if(c.put){
+            // Placed: solid, and yellow, because that is the thing that is
+            // there now that was not before.
+            return '<g>'+
+              '<polygon points="'+pts(top)+'" fill="#ffdd7a" stroke="#7a5c10" stroke-width=".6"/>'+
+              '<polygon points="'+pts(left)+'" fill="#d8a92e" stroke="#7a5c10" stroke-width=".6"/>'+
+              '<polygon points="'+pts(right)+'" fill="#a97f18" stroke="#7a5c10" stroke-width=".6"/>'+
+              title+'</g>';
+          }
+          // Broken: an outline, because what is being shown is an absence. A
+          // solid red cube would say a red block is there.
+          return '<g>'+
+            '<polygon points="'+pts(top)+'" fill="#ff5a5a" fill-opacity=".16" '+
+            'stroke="#ff5a5a" stroke-width=".9"/>'+
+            '<polygon points="'+pts(left)+'" fill="#ff5a5a" fill-opacity=".08" '+
+            'stroke="#ff5a5a" stroke-opacity=".7" stroke-width=".7"/>'+
+            '<polygon points="'+pts(right)+'" fill="#ff5a5a" fill-opacity=".05" '+
+            'stroke="#ff5a5a" stroke-opacity=".7" stroke-width=".7"/>'+
+            title+'</g>';
+        }
+
+        /** Somebody hit something here. */
+        function hitMark(x,y,z,S,m){
+          const ox=isoX(x,z,S), oy=isoY(x,y,z,S)+S/4;
+          const r=Math.max(3,S*0.42);
+          return '<g><circle cx="'+ox.toFixed(1)+'" cy="'+oy.toFixed(1)+'" r="'+r.toFixed(1)+
+            '" fill="#ff3b3b" fill-opacity=".55"/>'+
+            '<circle cx="'+ox.toFixed(1)+'" cy="'+oy.toFixed(1)+'" r="'+(r*1.7).toFixed(1)+
+            '" fill="none" stroke="#ff3b3b" stroke-opacity=".65" stroke-width="1.4"/>'+
+            '<title>'+esc(m.kind+(m.what?' — '+m.what:''))+'</title></g>';
         }
 
         // ---- who is recorded ----
@@ -3894,5 +4768,5 @@ final class WebPage {
      * constant. The split points follow the page's own sections so that a
      * piece is a readable unit and not an arbitrary cut.
      */
-    static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTINSIGHT, PART3);
+    static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ, PARTINSIGHT, PART3);
 }

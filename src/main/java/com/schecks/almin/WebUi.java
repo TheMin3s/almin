@@ -2299,6 +2299,7 @@ public final class WebUi {
             o.addProperty("z", e.z());
             o.addProperty("events", e.events());
             o.addProperty("weight", e.weight());
+            o.addProperty("tool", e.tool());
             arr.add(o);
         }
         return arr;
@@ -2455,9 +2456,22 @@ public final class WebUi {
                 json(ex, 404, err("Player faces are turned off (web-player-heads)."));
                 return;
             }
-            java.util.UUID id = Heads.parseUuid(queryParam(ex, "uuid"));
-            if (id == null) { json(ex, 400, err("Not a UUID.")); return; }
             String name = queryParam(ex, "name");
+            String rawId = queryParam(ex, "uuid");
+            java.util.UUID id = Heads.parseUuid(rawId);
+            if (id == null) {
+                // A uuid that was given and does not parse is a mistake worth
+                // saying so about; no uuid at all is the mask case, where a
+                // name is the only thing there is to go on.
+                if (rawId != null && !rawId.isBlank()) {
+                    json(ex, 400, err("Not a UUID."));
+                    return;
+                }
+                byte[] byName = name == null ? null : Heads.byName(name);
+                if (byName == null) { json(ex, 404, err("No face for that name.")); return; }
+                image(ex, "image/png", byName);
+                return;
+            }
             String texture = serverRunning
                 ? onServer(() -> Heads.textureFromProfile(server, id), "")
                 : "";

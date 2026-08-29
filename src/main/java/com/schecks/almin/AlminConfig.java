@@ -161,14 +161,35 @@ public final class AlminConfig {
      */
     public int mapSnapshotSeconds = 30;
     /**
+     * How many days of ground pictures to keep, thinned with age. 0 follows
+     * the activity log instead.
+     *
+     * <p>Longer than the log on purpose, and defensible: a thinned month-old
+     * snapshot is a picture of the world — what was built, what was cleared —
+     * rather than a record of who was standing in it. The paths and the rows
+     * that say who did it still expire on the log's clock.
+     */
+    public int mapSnapshotDays = 30;
+    /**
+     * Thin old pictures instead of deleting them outright.
+     *
+     * <p>Keeping every picture for a month is impossible and keeping none of
+     * them past a day loses the thing the map is for. So the further back a
+     * picture is, the fewer of its neighbours are kept: everything for the
+     * last half hour, one a minute for the last two, one every four hours by
+     * the time it is a month old. What survives is a record that gets coarser
+     * with age rather than one that stops.
+     */
+    public boolean mapSnapshotThin = true;
+    /**
      * How many pictures are kept before the oldest are deleted.
      *
-     * <p>Two hours' worth at the default interval. It used to be a quarter of
-     * that, back when every picture was a whole copy of the ground; now that
-     * consecutive pictures are stored as the difference between them, most of
-     * them cost a few kilobytes and keeping the afternoon is affordable.
+     * <p>A hard ceiling rather than the usual rule: {@link #mapSnapshotThin}
+     * decides what is worth keeping and this only stops a pathological case
+     * from filling a disk. Roomy, because most pictures are stored as the
+     * difference from another and cost a few kilobytes.
      */
-    public int mapSnapshotKeep = 240;
+    public int mapSnapshotKeep = 1500;
     /**
      * Blocks per pixel. 1 is a pixel per block, and the default: the map is
      * something people zoom into, and a picture that goes soft the moment you
@@ -341,8 +362,12 @@ public final class AlminConfig {
             c -> c.activityAfkSeconds, (c, v) -> c.activityAfkSeconds = (Integer) v),
         intKey("map-snapshot-seconds", "Seconds between pictures of the ground for the map (0 = no world under it)", 0, 600,
             c -> c.mapSnapshotSeconds, (c, v) -> c.mapSnapshotSeconds = (Integer) v),
-        intKey("map-snapshot-keep", "How many pictures of the ground are kept", 2, 500,
+        intKey("map-snapshot-keep", "Hard ceiling on how many pictures of the ground are kept", 2, 4000,
             c -> c.mapSnapshotKeep, (c, v) -> c.mapSnapshotKeep = (Integer) v),
+        intKey("map-snapshot-days", "How many days of ground pictures to keep (0 = the activity log's window)", 0, 365,
+            c -> c.mapSnapshotDays, (c, v) -> c.mapSnapshotDays = (Integer) v),
+        boolKey("map-snapshot-thin", "Keep fewer pictures the older they get, rather than deleting them outright",
+            c -> c.mapSnapshotThin, (c, v) -> c.mapSnapshotThin = (Boolean) v),
         intKey("map-blocks-per-pixel", "Detail of those pictures; 1 is a pixel per block and costs the most", 1, 8,
             c -> c.mapBlocksPerPixel, (c, v) -> c.mapBlocksPerPixel = (Integer) v),
         intKey("map-radius", "Blocks either side of the players each picture covers", 32, 512,

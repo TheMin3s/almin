@@ -53,9 +53,39 @@ public final class Episodes {
     public record Episode(String kind, String headline, String player, String uuid,
                           String dim, long from, long to,
                           int x, int y, int z, int spanXZ, int spanY,
-                          int events, int weight) {
+                          int events, int weight, String tool) {
 
         public long durationMs() { return Math.max(0, to - from); }
+    }
+
+    /**
+     * The tool this stretch of work would have been done with.
+     *
+     * <p>Only ever a picture on a map: the log does not record what anyone was
+     * holding, so this is read off what they broke. It is worth doing because
+     * "someone was digging here" and "someone was chopping here" are different
+     * things at a glance, and a pickaxe and an axe say which without a word.
+     */
+    private static String toolFor(String kind, Stats s) {
+        return switch (kind) {
+            case "pvp", "fight" -> "sword";
+            case "death" -> "skull";
+            case "tree" -> "axe";
+            case "farm" -> "hoe";
+            case "build" -> "hammer";
+            case "loot" -> "chest";
+            case "travel" -> "boots";
+            case "pace" -> "loop";
+            default -> {
+                if (s == null) yield "pickaxe";
+                // Whatever there was most of. Sand and gravel are a shovel's
+                // job, wood is an axe's, everything else is a pickaxe's.
+                int soft = s.dirt + s.sand, wood = s.logs + s.leaves;
+                if (wood > s.stone && wood > soft) yield "axe";
+                if (soft > s.stone && soft > wood) yield "shovel";
+                yield "pickaxe";
+            }
+        };
     }
 
     /** A pause this long ends a run: after it, whatever they do next is new. */
@@ -322,7 +352,8 @@ public final class Episodes {
         }
 
         return new Episode(kind, headline, any.player(), any.uuid(), any.dim(),
-            s.from, s.to, s.cx(), s.cy(), s.cz(), s.spanXZ(), s.spanY(), s.events(), weight);
+            s.from, s.to, s.cx(), s.cy(), s.cz(), s.spanXZ(), s.spanY(), s.events(), weight,
+            toolFor(kind, s));
     }
 
     /** Which way a tunnel runs, from which axis is longer. */
@@ -423,7 +454,7 @@ public final class Episodes {
                 "Travelled " + Math.round(net) + " blocks — " + a.x() + "," + a.z()
                     + " to " + b.x() + "," + b.z() + ", " + plural(mins, "minute"),
                 name, uuid, b.dim(), a.at(), b.at(), (b.x() + a.x()) / 2, b.y(),
-                (b.z() + a.z()) / 2, (int) Math.round(net), 0, pts.size(), 24);
+                (b.z() + a.z()) / 2, (int) Math.round(net), 0, pts.size(), 24, "boots");
         }
         if (walked >= 220 && net < walked / 6 && radius <= 40 && mins >= 3) {
             return new Episode("pace",
@@ -431,7 +462,7 @@ public final class Episodes {
                     + Math.round(walked) + " blocks walked without leaving "
                     + plural(radius, "block") + ", over " + plural(mins, "minute"),
                 name, uuid, b.dim(), a.at(), b.at(), b.x(), b.y(), b.z(), radius, 0,
-                pts.size(), 42);
+                pts.size(), 42, "loop");
         }
         return null;
     }

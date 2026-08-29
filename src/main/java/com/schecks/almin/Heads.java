@@ -122,6 +122,40 @@ public final class Heads {
     /** Drops everything, so a skin change can be picked up without a restart. */
     public static void clear() {
         CACHE.clear();
+        synchronized (NAMES) { NAMES.clear(); }
+    }
+
+    /** Name to account, remembered so a list of masks is not a list of lookups. */
+    private static final Map<String, Object> NAMES = new java.util.LinkedHashMap<>();
+    private static final Object NOBODY = new Object();
+
+    /**
+     * The head for a bare name, with no UUID to go on.
+     *
+     * <p>Which is the case a mask puts you in: a mask is a display name
+     * somebody typed, and it may be another player's account, an account
+     * nobody on this server has, or not an account at all. Answering "no face"
+     * for the last two is the correct answer and is cached like any other.
+     */
+    public static byte[] byName(String name) {
+        if (name == null) return null;
+        String clean = name.trim();
+        if (clean.isEmpty() || clean.length() > 16 || !clean.matches("[A-Za-z0-9_]+")) return null;
+        if (!AlminConfig.get().webPlayerHeads) return null;
+
+        Object known;
+        synchronized (NAMES) { known = NAMES.get(clean.toLowerCase(java.util.Locale.ROOT)); }
+        if (known == NOBODY) return null;
+        UUID id = known instanceof UUID u ? u : null;
+        if (id == null) {
+            id = lookupByName(clean);
+            synchronized (NAMES) {
+                if (NAMES.size() > 400) NAMES.clear();
+                NAMES.put(clean.toLowerCase(java.util.Locale.ROOT), id == null ? NOBODY : id);
+            }
+            if (id == null) return null;
+        }
+        return head(id, clean, "");
     }
 
     /**

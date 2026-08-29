@@ -50,9 +50,12 @@ import java.util.concurrent.Executors;
  * neither needs the world and neither should cost a tick.
  *
  * <h3>Lifetime</h3>
- * Snapshots expire on the same clock as the activity log, and are capped by
- * count as well. They are pictures of where people were, so they are not
- * allowed to accumulate any more than the log is.
+ * Pictures thin with age rather than stopping: everything for the last half
+ * hour, one a minute for the last two, one every four hours by the time it is
+ * a month old. That keeps a month of world history for less than a day of it
+ * used to cost, and what survives a slot is the newest picture in it — what
+ * the world ended up looking like. A count cap stands behind the curve so a
+ * pathological case cannot fill a disk.
  */
 public final class WorldSnapshots {
     private static final org.slf4j.Logger CONSOLE = org.slf4j.LoggerFactory.getLogger("almin");
@@ -541,13 +544,21 @@ public final class WorldSnapshots {
      * window from filling a disk.
      */
     public static synchronized void prune() {
-        long cutoff = System.currentTimeMillis() - ActivityLog.retentionMillis();
-        int keep = Math.max(2, AlminConfig.get().mapSnapshotKeep);
+        AlminConfig cfg = AlminConfig.get();
+        long now = System.currentTimeMillis();
+        long cutoff = now - retention(cfg);
+        int keep = Math.max(2, cfg.mapSnapshotKeep);
+
         List<Shot> ordered = new ArrayList<>(shots);
         ordered.sort(Comparator.comparingLong(Shot::at));
 
         List<Shot> doomed = new ArrayList<>();
         for (Shot s : ordered) if (s.at() < cutoff) doomed.add(s);
+
+        if (cfg.mapSnapshotThin) thin(ordered, doomed, now);
+
+        // The count cap is the backstop, not the rule: whatever the curve
+        // decided, a disk is still finite.
         int over = (ordered.size() - doomed.size()) - keep;
         for (int i = 0; i < ordered.size() && over > 0; i++) {
             Shot s = ordered.get(i);
@@ -556,12 +567,25 @@ public final class WorldSnapshots {
             over--;
         }
 
-        // A whole picture that something else is a difference against has to
-        // outlive it, or the survivor becomes unreadable. It goes on the next
-        // pass, once the last thing depending on it has gone.
         List<Shot> keeping = new ArrayList<>(ordered);
         keeping.removeAll(doomed);
-        doomed.removeIf(s -> s.whole() && dependedOn(s, keeping));
+
+        // A difference whose whole picture is going has to become a whole
+        // picture itself, or it becomes unreadable. Thinning drops a lot of
+        // keyframes — that is most of what it saves — so without this every
+        // one of them would have to be kept forever to serve one survivor.
+        for (Shot s : keeping) {
+            if (s.whole()) continue;
+            Shot base = baseOf(s);
+            if (base != null && !doomed.contains(base)) continue;
+            if (!materialise(s)) {
+                // Could not rebuild it, so the only safe thing is to keep what
+                // it depends on. If that is gone too, drop it rather than
+                // leave a picture that cannot be read.
+                if (base == null) doomed.add(s);
+                else doomed.remove(base);
+            }
+        }
 
         for (Shot s : doomed) {
             shots.remove(s);
@@ -574,12 +598,84 @@ public final class WorldSnapshots {
         }
     }
 
-    /** Whether any surviving snapshot is stored as a difference against this one. */
-    private static boolean dependedOn(Shot base, List<Shot> surviving) {
-        for (Shot s : surviving) {
-            if (s.base() == base.at() && s.dim().equals(base.dim())) return true;
+    /** How far back ground pictures go, which need not be the log's window. */
+    private static long retention(AlminConfig cfg) {
+        return cfg.mapSnapshotDays > 0
+            ? cfg.mapSnapshotDays * 86_400_000L
+            : ActivityLog.retentionMillis();
+    }
+
+    /**
+     * How close together pictures are allowed to be at a given age.
+     *
+     * <p>The curve, in one table. Recent time is worth watching minute by
+     * minute; a month ago is worth having at all and not worth having in
+     * detail. Each row is {@code {age, one picture every}}.
+     */
+    private static final long[][] DENSITY = {
+        {   30 * 60_000L,          0L },   // last half hour: everything
+        { 2 * 3600_000L,      60_000L },   // then one a minute
+        { 6 * 3600_000L,  5 * 60_000L },
+        {    86_400_000L, 15 * 60_000L },  // a day: four an hour
+        {3 * 86_400_000L, 30 * 60_000L },
+        {7 * 86_400_000L,    3600_000L },  // a week: one an hour
+        {Long.MAX_VALUE, 4 * 3600_000L},   // beyond: six a day
+    };
+
+    /** The spacing that applies to something of this age. */
+    static long spacingFor(long age) {
+        for (long[] row : DENSITY) {
+            if (age < row[0]) return row[1];
         }
-        return false;
+        return DENSITY[DENSITY.length - 1][1];
+    }
+
+    /**
+     * Marks for deletion everything that is closer to its neighbour than its
+     * age allows.
+     *
+     * <p>Newest first, so the survivor of a slot is the most recent picture in
+     * it — the one that shows what the world ended up looking like.
+     */
+    private static void thin(List<Shot> ordered, List<Shot> doomed, long now) {
+        java.util.Set<String> taken = new java.util.HashSet<>();
+        for (int i = ordered.size() - 1; i >= 0; i--) {
+            Shot s = ordered.get(i);
+            if (doomed.contains(s)) continue;
+            long spacing = spacingFor(now - s.at());
+            if (spacing <= 0) continue;                    // recent: keep them all
+            // One per slot per dimension per framing, so two areas being
+            // watched at once do not thin each other away.
+            String slot = s.dim() + "@" + s.minX() + "@" + s.minZ()
+                + "@" + (s.at() / spacing);
+            if (!taken.add(slot)) doomed.add(s);
+        }
+    }
+
+    /**
+     * Rewrites a difference as the whole picture it stands for.
+     *
+     * @return false if it could not be rebuilt, in which case the caller has
+     *         to keep what it depends on
+     */
+    private static boolean materialise(Shot s) {
+        byte[] png = read(s);
+        Path d = dir;
+        if (png == null || d == null) return false;
+        Shot whole = new Shot(s.at(), s.dim(), s.minX(), s.minZ(), s.blocks(), s.scale(), 0L, "");
+        String file = name(whole);
+        try {
+            Files.write(d.resolve(file), png);
+        } catch (IOException e) {
+            AlminLog.warn("[almin] could not flatten map snapshot {}: {}", s.file(), e.toString());
+            return false;
+        }
+        Shot named = new Shot(s.at(), s.dim(), s.minX(), s.minZ(), s.blocks(), s.scale(), 0L, file);
+        shots.remove(s);
+        shots.add(named);
+        COMPOSED.remove(s.file());
+        delete(s);
+        return true;
     }
 
     private static void delete(Shot s) {

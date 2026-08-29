@@ -196,6 +196,30 @@ Mojang, and the lists draw a coloured initial instead. That fallback is also
 what you get for any player whose skin cannot be found, so a cracked server
 without the setting changed simply shows initials.
 
+### What each player has been doing
+
+Every row in the **Players** list carries three more things.
+
+A masked player gets a small second row underneath with the face and name of
+the account they appear as. A mask is another player's name as far as everyone
+else is concerned, and the useful question — "who does this look like" — is
+answered by the face rather than by the string. It is a bare name with no UUID
+behind it, so that face is looked up by name; a mask naming no real account
+falls back to an initial, which is itself the answer.
+
+Beside it, **what they did**: one icon per kind of action with how many times
+in the corner, so a glance says "mostly breaking blocks, one death" without
+opening anything.
+
+And **where they went**: their path, small, framed to fit whatever they
+actually did — someone who spent the day in one room and someone who walked to
+the badlands both get a picture that fills the box, with a scale bar underneath
+saying which is which. Without the bar the two would look identical, which
+would be worse than no map at all.
+
+**Activity** on any row — and the button on the corner of the little map — opens
+that player on the big map with everyone else filtered out.
+
 The header carries **Stop**, **Restart** and **Start** for the Minecraft server
 itself. Stop means stop. **Restart** genuinely restarts: Almin stops the server
 and then starts it again from this machine, without needing a wrapper script to
@@ -434,9 +458,18 @@ block under the cursor stays under it — and drag to move. The buttons in the
 corner zoom in, zoom out, and put the framing back to everything in view.
 
 Every player's **face** is drawn where they were at the cursor, so scrubbing
-moves them along their paths. Clicking a face — or a name in the legend, or
-anyone in the online strip — **focuses** that player: the map, the timeline
-ticks and the side list all drop everyone else. Click again to get them back.
+moves them along their paths, and it goes grey once nobody has moved it. Nobody
+is sampled while they stand still, so the gap between the cursor and their last
+sample is exactly how long they have not moved — which makes the grey right
+when you scrub back, rather than only describing right now. Clicking a face —
+or a name in the legend, or anyone in the online strip — **focuses** that
+player: the map, the timeline ticks and the side list all drop everyone else.
+Click again to get them back.
+
+Marks keep their size **on the screen** rather than in the map's own
+coordinates, so making the map bigger shows more map instead of bigger marks.
+Without that, fullscreen made a mark that read well in the panel fill a
+building.
 
 On a wide enough screen a panel opens beside the map with what happened, chat
 included, newest at the cursor first. Clicking a line takes the map to that
@@ -573,6 +606,34 @@ so it is deliberately bounded; encoding the PNG and writing it happen on a
 daemon thread afterwards, where they cost nothing. One snapshot is taken at a
 time, so a slow disk delays the next rather than queueing up.
 
+**Pictures thin with age rather than stopping.** Keeping every picture for a
+month is impossible and keeping none past a day loses the thing the map is
+for, so the further back a picture is, the fewer of its neighbours are kept:
+
+| How far back | One picture every |
+|---|---|
+| the last half hour | every one taken |
+| up to 2 hours | 1 minute |
+| up to 6 hours | 5 minutes |
+| up to a day | 15 minutes |
+| up to 3 days | 30 minutes |
+| up to a week | 1 hour |
+| up to `map-snapshot-days` | 4 hours |
+
+What survives a slot is the newest picture in it — what the world ended up
+looking like — and two areas being watched at once are thinned separately, so
+one does not erase the other. A month of pictures taken every thirty seconds is
+86,400 of them; the curve keeps about 600. `map-snapshot-thin` turns it off and
+goes back to keeping the newest N.
+
+**Everywhere anyone has been stays drawn.** Pictures are taken of wherever
+people are and their windows are aligned to a grid, so a server played on for a
+week has pictures of a dozen different places rather than a dozen pictures of
+one. The map draws one per place — the newest taken at or before the cursor —
+rather than only the one nearest the cursor, so walking away from your base no
+longer blanks the map behind you. Nobody is touching that ground, so the last
+picture of it is still the right one.
+
 **Only what changed is stored.** The ground barely changes, so writing all of it
 again every half minute was writing the same picture over and over. Capture
 windows are aligned to a 64-block grid, so a player wandering around produces
@@ -593,11 +654,17 @@ minutes of ground under a five-day timeline.
 | Setting | Default | Meaning |
 |---|---|---|
 | `map-snapshot-seconds` | `30` | how often a picture is taken; `0` leaves the map a grid |
-| `map-snapshot-keep` | `240` | how many are kept before the oldest are deleted — two hours at the default interval |
+| `map-snapshot-keep` | `1500` | hard ceiling on how many are kept, behind the curve |
+| `map-snapshot-days` | `30` | how far back ground pictures go; `0` follows the activity log |
+| `map-snapshot-thin` | `true` | keep fewer the older they get, rather than deleting outright |
 | `map-blocks-per-pixel` | `1` | detail; `1` is a pixel per block, `2` is four times cheaper |
 | `map-radius` | `192` | blocks either side of the players each picture covers |
 
-Pictures expire on the same clock as the activity log, and go when it is
+Ground pictures have their own window — `map-snapshot-days`, a month by default
+— rather than the activity log's. That is defensible rather than an oversight:
+a thinned month-old snapshot is a picture of the world, what was built and what
+was cleared, and not a record of who was standing in it. The paths and the rows
+that say who did it still expire on the log's clock. They all go when the log is
 cleared. They are pictures of where people were, so they are not allowed to
 accumulate any more than the log is.
 
