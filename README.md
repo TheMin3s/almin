@@ -444,7 +444,13 @@ period** puts it back.
 
 Stretches when nobody was on are hatched and labelled, and **Skip quiet time**
 makes playback jump over them — an empty map is not worth watching in real
-time. Playback speed runs from a quarter to eight times.
+time. Playback loops: reaching the end of the visible slice sends it back to
+the start of that slice, so zooming the timeline picks what to watch.
+
+Speed is a real multiple of recorded time — at `60×` one second on screen is a
+minute that was lived, and the readout beside the buttons says so. It follows
+the clock rather than the frame rate, so a busy page or a background tab
+changes how smooth it looks and not how fast it runs.
 
 A player counts as away after `activity-afk-seconds` (twenty by default) of not
 moving. Standing still is the only signal a server can be sure of: a client

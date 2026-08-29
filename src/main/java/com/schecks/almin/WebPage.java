@@ -1264,11 +1264,15 @@ final class WebPage {
         }
 
         // ---- player activity ----
-        const ACTION_COLOR = { chat:'#7fd1f0', command:'#ffab33', container:'#c792ea',
-                               death:'#e05a5a', attack:'#ff8a65', hurt:'#d98b6a',
-                               join:'#57c957', leave:'#8b9096', respawn:'#8fd98f',
-                               item:'#d3c26a', interact:'#9c8ce0', use:'#7f8a99',
-                               place:'#66c2a5', 'break':'#e8a33d', afk:'#6f7a89' };
+        // Brighter than the list they replace: these sit on grass, sand, stone
+        // and water, and a colour that reads against one of those is not
+        // enough. Every one of them is also a different shape, so the map does
+        // not depend on telling two hues apart.
+        const ACTION_COLOR = { chat:'#8fd8ff', command:'#ffc14d', container:'#d6a8ff',
+                               death:'#ff6b6b', attack:'#ff9a5e', hurt:'#ffbc8f',
+                               join:'#6df06d', leave:'#aab4c2', respawn:'#a8f5a8',
+                               item:'#ffe066', interact:'#b7a4ff', use:'#a3b0c2',
+                               place:'#6fe6bd', 'break':'#ffc55e', afk:'#9aa5b4' };
         function activityPanel(){
           const wrap=document.createElement('div');
           wrap.innerHTML='<p class="muted">What players have been doing. '+
@@ -1283,6 +1287,7 @@ final class WebPage {
                 '<div class="tlbar">'+
                   '<button class="btn go" id="t-play">Play</button>'+
                   '<span class="speed" id="t-speed"></span>'+
+                  '<span class="muted num" id="t-rate"></span>'+
                   '<button class="btn" id="t-skip">Skip quiet time</button>'+
                   '<button class="btn" id="t-zoomout">Whole period</button>'+
                   '<span class="spacer"></span>'+
@@ -1337,13 +1342,20 @@ final class WebPage {
         let win={from:0, to:0, set:false};
 
         let cursorAt=0, cursorSet=false;
-        let playSpeed=1, skipGaps=true;
+        // A minute of recorded time per second: real time is available but
+        // watching a day at 1x would take a day.
+        let playSpeed=60, skipGaps=true;
         let focusPlayer='';
         let showOverlays=true;
 
-        // How long the whole visible window takes to play at 1x.
-        const PLAY_MS=20000;
+        // Playback speed is a real multiple of recorded time: at 1x a second
+        // on screen is a second that was lived. It used to mean "the visible
+        // window, whatever its length, in twenty seconds", so the number on
+        // the button described nothing — on a ten-minute period 1x ran at
+        // thirty times real speed, and on a day it ran at four thousand.
         const FRAME_MS=50;
+        const SPEEDS=[1,10,60,300,1800];
+        let lastTick=0;
 
         // Nothing happening for this long is a gap worth marking and worth
         // skipping — shorter than this is just a quiet minute.
@@ -1355,7 +1367,7 @@ final class WebPage {
 
         // Markers were sized for a map you looked at whole. Now that it zooms,
         // they are the thing you are looking for, so they are drawn larger.
-        const MARK_SCALE=1.7;
+        const MARK_SCALE=2.2;
 
         // Stable per-player colour: the same person is the same colour every
         // time the map is drawn, without keeping a palette in sync with a
@@ -1438,7 +1450,14 @@ final class WebPage {
          */
         function marker(action,x,y,fill,scale){
           const r=(scale||1);
-          const body=markerShape(action,x,y,fill);
+          // A dark disc under every mark. Without one the shapes were drawn
+          // straight onto the terrain, and a thin bright outline over pixel
+          // art reads as noise rather than as a symbol — which is exactly what
+          // a busy map looked like.
+          const halo='<circle cx="'+x+'" cy="'+y+'" r="8.4" fill="#0a0c10" '+
+            'fill-opacity=".78"/><circle cx="'+x+'" cy="'+y+'" r="8.4" fill="none" '+
+            'stroke="'+fill+'" stroke-opacity=".38" stroke-width="1.2"/>';
+          const body=halo+markerShape(action,x,y,fill);
           if(r===1) return body;
           return '<g transform="translate('+x+' '+y+') scale('+r.toFixed(3)+') translate('+
             (-x)+' '+(-y)+')">'+body+'</g>';
@@ -1446,9 +1465,9 @@ final class WebPage {
         function markerShape(action,x,y,fill){
           const c=fill, r=1;
           const sq=(k,f)=>'<rect x="'+(x-k)+'" y="'+(y-k)+'" width="'+(2*k)+'" height="'+(2*k)+
-            '" fill="'+(f?c:'none')+'" stroke="'+(f?'#0b0d11':c)+'" stroke-width="1.6" rx="1"/>';
+            '" fill="'+(f?c:'none')+'" stroke="'+(f?'#0a0c10':c)+'" stroke-width="2" rx="1"/>';
           const li=(x1,y1,x2,y2,w)=>'<line x1="'+(x+x1)+'" y1="'+(y+y1)+'" x2="'+(x+x2)+
-            '" y2="'+(y+y2)+'" stroke="'+c+'" stroke-width="'+(w||1.8)+'" stroke-linecap="round"/>';
+            '" y2="'+(y+y2)+'" stroke="'+c+'" stroke-width="'+(w||2.2)+'" stroke-linecap="round"/>';
           const poly=(pts,f)=>'<polygon points="'+pts.map(q=>(x+q[0])+','+(y+q[1])).join(' ')+
             '" fill="'+(f?c:'none')+'" stroke="'+(f?'#0b0d11':c)+'" stroke-width="1.4"/>';
           const dot=(k)=>'<circle cx="'+x+'" cy="'+y+'" r="'+k+'" fill="'+c+
@@ -1482,13 +1501,13 @@ final class WebPage {
             case 'respawn':   return '<circle cx="'+x+'" cy="'+y+'" r="5" fill="none" stroke="'+c+
                                      '" stroke-width="2"/>'+li(-2.5,0,2.5,0,1.6)+li(0,-2.5,0,2.5,1.6);
             case 'item':      return poly([[0,-5.5],[5.5,0],[0,5.5],[-5.5,0]],true);
-            case 'interact':  return dot(3.4)+'<circle cx="'+x+'" cy="'+y+'" r="6" fill="none" '+
+            case 'interact':  return dot(3.6)+'<circle cx="'+x+'" cy="'+y+'" r="6" fill="none" '+
                                      'stroke="'+c+'" stroke-width="1.4"/>';
             // Stopped: a pause, inside the ring that means "still here".
             case 'afk':       return '<circle cx="'+x+'" cy="'+y+'" r="6" fill="none" stroke="'+c+
                                      '" stroke-width="1.5" stroke-dasharray="2.6 2.2"/>'+
                                      li(-1.8,-3,-1.8,3,2)+li(1.8,-3,1.8,3,2);
-            default:          return dot(4);
+            default:          return dot(4.8);
           }
         }
 
@@ -1502,11 +1521,19 @@ final class WebPage {
           const b=$('t-play'); if(!b) return;
           b.textContent='Pause'; b.className='btn on';
           const gaps=quietGaps();
+          // Advance by the time that actually passed, not by the interval we
+          // asked for. Browsers throttle timers on a busy page and clamp them
+          // hard in a background tab, so a fixed step per tick makes the
+          // number on the button a guess — which is the whole complaint.
+          lastTick=Date.now();
           playTimer=setInterval(()=>{
             if(!allData){ stopPlay(); return; }
-            const to=allData.to||0;
-            const span=Math.max(1,(win.set?win.to-win.from:(to-(allData.from||0))));
-            cursorAt += (span/PLAY_MS)*FRAME_MS*playSpeed;
+            const now=Date.now();
+            // Capped: coming back to a tab that was throttled for a minute
+            // should resume, not leap an hour.
+            const elapsed=Math.min(1000,Math.max(0,now-lastTick));
+            lastTick=now;
+            cursorAt += elapsed*playSpeed;
             cursorSet=true;
             // Nothing happened here and nobody is watching an empty map for a
             // real-time hour. Step over it, and let the timeline show why.
@@ -1514,13 +1541,9 @@ final class WebPage {
               const g=gapAt(cursorAt,gaps);
               if(g) cursorAt=g.to;
             }
-            if(cursorAt>=to){ cursorAt=to; paintAll(); stopPlay(); return; }
-            // Keep the cursor in view: playing past the edge of the window
-            // would leave you watching a strip the cursor has left.
-            if(win.set && cursorAt>win.to){
-              const w=win.to-win.from;
-              win.from=cursorAt-w*0.15; win.to=win.from+w;
-            }
+            // Round and round the visible slice. Zoom the timeline to choose
+            // what to watch; the loop follows it rather than the whole day.
+            if(cursorAt>=win.to) cursorAt=win.from;
             paintAll();
           },FRAME_MS);
         }
@@ -1624,10 +1647,25 @@ final class WebPage {
           const sx=v=>((v-view.cx)/span)*W+anchorX;
           const sz=v=>((v-view.cz)/span)*W+H/2;
 
+          // Ground nobody has a picture of — outside the last snapshot, or a
+          // chunk that was not loaded when it was taken — used to come out as
+          // flat black squares scattered through the terrain, which read as
+          // holes in the world rather than as gaps in the record.
+          const backing='<defs><pattern id="unknown" width="12" height="12" '+
+            'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'+
+            '<rect width="12" height="12" fill="#12161d"/>'+
+            '<rect width="6" height="12" fill="#161b23"/></pattern></defs>'+
+            '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="url(#unknown)"/>';
+          // Only where there is no picture. Over terrain a grid is four lines
+          // that mean nothing crossing something that does.
           const grid=[];
-          for(let g=0;g<=4;g++){
-            grid.push('<line x1="'+(W/4)*g+'" y1="0" x2="'+(W/4)*g+'" y2="'+H+'" stroke="#1b1f27"/>');
-            grid.push('<line x1="0" y1="'+(H/4)*g+'" x2="'+W+'" y2="'+(H/4)*g+'" stroke="#1b1f27"/>');
+          if(!shot){
+            for(let g=0;g<=4;g++){
+              grid.push('<line x1="'+(W/4)*g+'" y1="0" x2="'+(W/4)*g+'" y2="'+H+
+                '" stroke="#1b1f27"/>');
+              grid.push('<line x1="0" y1="'+(H/4)*g+'" x2="'+W+'" y2="'+(H/4)*g+
+                '" stroke="#1b1f27"/>');
+            }
           }
 
           // The ground as it was at the cursor. Nearest-neighbour scaling, so
@@ -1640,7 +1678,11 @@ final class WebPage {
               '" x="'+sx(shot.minX).toFixed(1)+'" y="'+sz(shot.minZ).toFixed(1)+
               '" width="'+(sx(shot.minX+shot.span)-sx(shot.minX)).toFixed(1)+
               '" height="'+(sz(shot.minZ+shot.span)-sz(shot.minZ)).toFixed(1)+
-              '" preserveAspectRatio="none" style="image-rendering:pixelated" opacity=".95"/>'
+              '" preserveAspectRatio="none" style="image-rendering:pixelated"/>'+
+              // A thin scrim over the ground. The terrain is the background,
+              // not the subject: muting it a little is what lets a path and a
+              // handful of marks read as the thing on top of it.
+              '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#0a0c10" opacity=".22"/>'
             : '';
 
           const heads=[];
@@ -1652,26 +1694,32 @@ final class WebPage {
             const d=pts=>pts.map((p,i)=>(i?'L':'M')+sx(p.x).toFixed(1)+' '+
               sz(p.z).toFixed(1)).join(' ');
             // The whole path faintly, so you can see where to scrub to; the
-            // travelled part solid on top of it.
+            // travelled part solid on top of it, over a dark casing so a pale
+            // line does not disappear where it crosses sand.
             let out='<path d="'+d(full)+'" fill="none" stroke="'+c+'" stroke-width="1.8" '+
               'stroke-opacity=".16" stroke-linejoin="round" stroke-linecap="round"/>';
             if(upto.length){
-              out+='<path d="'+d(upto)+'" fill="none" stroke="'+c+'" stroke-width="2.8" '+
-                'stroke-opacity=".72" stroke-linejoin="round" stroke-linecap="round"/>';
-              // Where they were at the cursor, drawn as their own face. The
-              // ring is under it and stays visible if the face never loads.
+              out+='<path d="'+d(upto)+'" fill="none" stroke="#0a0c10" stroke-width="5" '+
+                'stroke-opacity=".45" stroke-linejoin="round" stroke-linecap="round"/>'+
+                '<path d="'+d(upto)+'" fill="none" stroke="'+c+'" stroke-width="2.6" '+
+                'stroke-opacity=".95" stroke-linejoin="round" stroke-linecap="round"/>';
+              // Where they were at the cursor, drawn as their own face —
+              // square, because a Minecraft head is. The player's colour is
+              // the frame around it, and stays visible if the face never
+              // loads or is turned off.
               const last=upto[upto.length-1];
               const hx=sx(last.x), hy=sz(last.z), R=13;
-              let head='<circle cx="'+hx.toFixed(1)+'" cy="'+hy.toFixed(1)+'" r="'+R+
-                '" fill="'+c+'" stroke="#0b0d11" stroke-width="2"/>';
+              let head='<rect x="'+(hx-R).toFixed(1)+'" y="'+(hy-R).toFixed(1)+
+                '" width="'+(R*2)+'" height="'+(R*2)+'" rx="2.5" fill="'+c+
+                '" stroke="#0a0c10" stroke-width="2.5"/>';
               if(headsOn && ids[n]){
                 head+='<image href="/api/head?uuid='+encodeURIComponent(ids[n])+
                   '&name='+encodeURIComponent(n)+'" x="'+(hx-R+3).toFixed(1)+
                   '" y="'+(hy-R+3).toFixed(1)+'" width="'+(R*2-6)+'" height="'+(R*2-6)+
-                  '" style="image-rendering:pixelated" clip-path="circle(50%)"/>';
+                  '" style="image-rendering:pixelated"/>';
               }
               heads.push('<g class="thead" data-who="'+esc(n)+'" style="cursor:pointer">'+
-                head+'</g>');
+                head+'<title>'+esc(n)+'</title></g>');
             }
             return out;
           }).join('');
@@ -1692,7 +1740,7 @@ final class WebPage {
           box.innerHTML='<div class="mapwrap">'+
             '<svg id="t-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
             'role="img" aria-label="Where everyone was and what they did">'+
-            grid.join('')+groundImage+lines+dots+heads.join('')+'</svg>'+
+            backing+groundImage+grid.join('')+lines+dots+heads.join('')+'</svg>'+
             '<div class="maptip" id="t-tip"></div>'+
             (showOverlays?'<div class="onlinebar" id="t-online"></div>':'')+
             '<div class="mapbtns">'+
@@ -1880,14 +1928,22 @@ final class WebPage {
         function paintSpeed(){
           const box=$('t-speed'); if(!box) return;
           box.innerHTML='';
-          for(const s of [0.25,0.5,1,2,4,8]){
+          for(const s of SPEEDS){
             const b=document.createElement('button');
-            b.textContent=(s<1?s:s+'')+'×';
+            b.textContent=s+'×';
             if(s===playSpeed) b.className='on';
-            b.title='Play at '+s+' times speed';
+            b.title='One second here is '+humanSeconds(s)+' of recorded time';
             b.onclick=()=>{ playSpeed=s; paintSpeed(); };
             box.appendChild(b);
           }
+          const note=$('t-rate');
+          if(note) note.textContent='1s = '+humanSeconds(playSpeed);
+        }
+        /** "45 seconds", "2 minutes", "1 hour" — for the speed readout. */
+        function humanSeconds(n){
+          if(n<60) return n+(n===1?' second':' seconds');
+          if(n<3600){ const m=n/60; return m+(m===1?' minute':' minutes'); }
+          const h=n/3600; return h+(h===1?' hour':' hours');
         }
 
         /**
