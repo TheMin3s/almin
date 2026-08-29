@@ -342,6 +342,7 @@ public final class WebUi {
         http.createContext("/api/head", guard("/api/head", ui::handleHead));
         http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
         http.createContext("/api/ai/key", guard("/api/ai/key", ui::handleAiKey));
+        http.createContext("/api/properties", guard("/api/properties", ui::handleProperties));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -2368,6 +2369,68 @@ public final class WebUi {
             AlminLog.info("[almin] AI key {} from the panel by {}",
                 key.isBlank() ? "cleared" : "set", clientKey(ex));
             json(ex, 200, "{\"ok\":true,\"hasKey\":" + AiInsights.hasKey() + "}");
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Minecraft's own settings file.
+     *
+     * <p>Not Almin's, which is the point: the panel already offers a file
+     * browser this could be edited in, so offering it properly — typed
+     * controls, a name per row, and a sentence saying it lands at the next
+     * restart — is strictly better than making someone find the file.
+     */
+    private void handleProperties(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (server == null) { json(ex, 503, err("No server here.")); return; }
+            java.nio.file.Path file = ServerProperties.fileFor(server);
+
+            if ("POST".equals(ex.getRequestMethod())) {
+                JsonObject body = readBody(ex);
+                if (!body.has("set") || !body.get("set").isJsonObject()) {
+                    json(ex, 400, err("Nothing to set."));
+                    return;
+                }
+                Map<String, String> changes = new java.util.LinkedHashMap<>();
+                for (Map.Entry<String, com.google.gson.JsonElement> e
+                        : body.getAsJsonObject("set").entrySet()) {
+                    if (!e.getValue().isJsonPrimitive()) continue;
+                    changes.put(e.getKey(), e.getValue().getAsString());
+                }
+                if (changes.size() > 200) { json(ex, 400, err("Too many at once.")); return; }
+                int changed;
+                try {
+                    changed = ServerProperties.write(file, changes);
+                } catch (IOException bad) {
+                    json(ex, 400, err(bad.getMessage()));
+                    return;
+                }
+                AlminLog.info("[almin] server.properties: {} value(s) changed from the panel by {}",
+                    changed, clientKey(ex));
+                json(ex, 200, "{\"ok\":true,\"changed\":" + changed + "}");
+                return;
+            }
+
+            JsonArray rows = new JsonArray();
+            for (ServerProperties.Entry e : ServerProperties.read(file)) {
+                JsonObject o = new JsonObject();
+                o.addProperty("key", e.key());
+                o.addProperty("value", e.value());
+                o.addProperty("type", e.type());
+                o.addProperty("secret", e.secret());
+                rows.add(o);
+            }
+            JsonObject root = new JsonObject();
+            root.add("rows", rows);
+            root.addProperty("file", "server.properties");
+            json(ex, 200, root.toString());
+        } catch (IOException missing) {
+            json(ex, 404, err(missing.getMessage()));
         } catch (Throwable t) {
             fault(ex, t);
         } finally {

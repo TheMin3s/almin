@@ -198,6 +198,14 @@ final class WebPage {
           .mapopts input[type=checkbox]{width:15px;height:15px;flex:none;padding:0;
                                         accent-color:var(--brand)}
           .mapopts select{width:104px;flex:none;padding:3px 6px;font-size:12px}
+          .mapopts hr{border:0;border-top:1px solid var(--line);margin:10px 0 8px}
+          .mapopts .onote{color:var(--mute);font-size:11px;margin:-3px 0 6px;
+                          font-variant-numeric:tabular-nums}
+          .mapopts .chips{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 4px}
+          .mapopts .chips button{background:var(--card2);border:1px solid var(--line);
+                                 color:var(--dim);border-radius:999px;padding:2px 9px;
+                                 font:inherit;font-size:11px;cursor:pointer}
+          .mapopts .chips button.on{border-color:var(--brand);color:var(--brand)}
           .mapopts .row{display:flex;gap:6px;margin-top:10px}
           .mapopts .row .btn{flex:1;padding:4px 8px;font-size:12px}
           /* What a crowd of marks turns into when the map is zoomed out. */
@@ -329,6 +337,22 @@ final class WebPage {
                     color:var(--dim);align-items:center}
           .scenekey i{display:inline-block;width:10px;height:10px;border-radius:2px;
                       margin-right:5px;vertical-align:-1px}
+          .subtabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+          .subtabs button{background:var(--card2);border:1px solid var(--line);
+                          color:var(--dim);border-radius:9px;padding:6px 14px;
+                          font:inherit;font-size:13px;cursor:pointer}
+          .subtabs button:hover{color:var(--ink)}
+          .subtabs button.on{border-color:var(--brand);color:var(--brand);font-weight:650}
+          .sprow{display:grid;grid-template-columns:minmax(170px,270px) minmax(0,1fr) auto;
+                 gap:10px;align-items:center;padding:5px 0;
+                 border-bottom:1px solid rgba(255,255,255,.05)}
+          .sprow:last-child{border-bottom:0}
+          .sprow code{font-size:12.5px;color:var(--dim);word-break:break-all}
+          .sprow input,.sprow select{padding:6px 9px;font-size:12.5px}
+          .sprow .btn{padding:4px 10px;font-size:11.5px;visibility:hidden}
+          .sprow.edited code{color:var(--brand)}
+          .sprow.edited input,.sprow.edited select{border-color:var(--brand)}
+          .sprow.edited .btn{visibility:visible}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
                   border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
                   color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
@@ -1671,7 +1695,11 @@ final class WebPage {
          */
         const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.35, colour:'action',
                             faces:true, paths:true, cluster:true, overlays:true,
-                            sequences:true};
+                            sequences:true, refresh:10,
+                            // Off by default: the map's job is to show what
+                            // happened, and something that quietly removes
+                            // things should be asked for rather than assumed.
+                            fade:{on:false, minutes:120, cats:['world','fight','things']}};
         let mapOpts=Object.assign({},MAP_DEFAULTS);
         let optsOpen=false;
         // The map, given the whole window, with everything else floating over
@@ -1681,7 +1709,14 @@ final class WebPage {
         let fullMap=false;
         try {
           const saved=localStorage.getItem('almin.map');
-          if(saved) mapOpts=Object.assign({},MAP_DEFAULTS,JSON.parse(saved));
+          if(saved){
+            const was=JSON.parse(saved);
+            mapOpts=Object.assign({},MAP_DEFAULTS,was);
+            // Nested, so a shallow merge would hand back a half-built object
+            // to anything reading a key the saved copy predates.
+            mapOpts.fade=Object.assign({},MAP_DEFAULTS.fade,was.fade||{});
+            if(!Array.isArray(mapOpts.fade.cats)) mapOpts.fade.cats=MAP_DEFAULTS.fade.cats;
+          }
         } catch(e){ /* private mode, or someone edited it by hand */ }
         function saveMapOpts(){
           try { localStorage.setItem('almin.map',JSON.stringify(mapOpts)); }
@@ -1726,14 +1761,46 @@ final class WebPage {
         let filterOpen=false, filterOpenAct='';
 
         const CATEGORIES=[
-          {name:'The world', acts:['place','break','use']},
-          {name:'Fighting', acts:['attack','hurt','death']},
-          {name:'Talking', acts:['chat','command']},
-          {name:'Coming and going', acts:['join','leave','respawn','afk','mask']},
-          {name:'Things', acts:['item','interact','container']}];
+          {key:'world',  name:'The world', acts:['place','break','use']},
+          {key:'fight',  name:'Fighting', acts:['attack','hurt','death']},
+          {key:'talk',   name:'Talking', acts:['chat','command']},
+          {key:'move',   name:'Coming and going', acts:['join','leave','respawn','afk','mask']},
+          {key:'things', name:'Things', acts:['item','interact','container']}];
+
+        /** Which group an action belongs to, for anything that works by group. */
+        const ACT_CATEGORY={};
+        for(const c of CATEGORIES) for(const a of c.acts) ACT_CATEGORY[a]=c.key;
 
         /** Actions that have a thing attached worth listing one by one. */
         const DETAILED=new Set(['place','break','use','attack','interact','item']);
+
+        /**
+         * How visible something of a given age should be, or zero for gone.
+         *
+         * <p>Two different fades. The one that has always been there is about
+         * recency — what happened just now stands out, everything else stays
+         * legible — and its floor is high on purpose, because on a long period
+         * almost everything is old and fading those away would empty the map
+         * of the marks it exists to show.
+         *
+         * <p>The one this adds is about forgetting: past its window a thing is
+         * not drawn at all. That is a different question and it is off unless
+         * asked for, per group, because "stop showing me week-old chat" and
+         * "stop showing me week-old block edits" are separate wishes.
+         */
+        function ageOpacity(category,age,windowMs){
+          const f=mapOpts.fade;
+          if(f && f.on && f.cats.indexOf(category)>=0){
+            const limit=Math.max(1,f.minutes)*60000;
+            const left=1-age/limit;
+            if(left<=0) return 0;
+            // Never quite to nothing before it goes: a mark at two percent is
+            // a mark nobody can see that still crowds the one next to it.
+            return 0.14+0.86*left;
+          }
+          const k=Math.min(1,age/Math.max(1,windowMs));
+          return Math.max(0.55,0.98-k*0.43);
+        }
 
         function filtering(){
           return filt.acts.size>0 || filt.items.size>0 || filt.kinds.size>0;
@@ -1969,13 +2036,21 @@ final class WebPage {
         // Live refreshes on its own clock rather than on the panel's three
         // seconds: the period is a couple of thousand rows, and asking for it
         // twenty times a minute would be rude to a server that is also running
-        // a game.
-        const LIVE_EVERY=10000;
-        let lastLiveLoad=0;
+        // a game. How often is a per-viewer preference, so it lives with the
+        // rest of them in the panel beside the map.
+        let lastLiveLoad=0, lastInsight=0;
         function liveTick(){
-          if(!live || tab!=='activity' || document.hidden) return;
-          if(Date.now()-lastLiveLoad < LIVE_EVERY) return;
-          loadAll(true);
+          if(tab!=='activity' || document.hidden) return;
+          const every=Math.max(2,mapOpts.refresh||10)*1000;
+          if(live && Date.now()-lastLiveLoad >= every) loadAll(true);
+          // The episode list and whatever the model last said are part of the
+          // same picture, and used to change only when the whole page was
+          // reloaded. Slower than the map, because working out episodes costs
+          // the server a pass over the log.
+          if(Date.now()-lastInsight >= Math.max(every,20000)){
+            lastInsight=Date.now();
+            loadInsights();
+          }
         }
 
         // The newest picture taken at or before the cursor — what the ground
@@ -2532,16 +2607,14 @@ final class WebPage {
           const drawn=[], groups=[], dotSvg=[], clusterSvg=[];
           const colourOf=a=>mapOpts.colour==='player'
             ? playerColor(a.player) : (ACTION_COLOR[a.action]||'#9aa3ae');
+          const opacityOf=a=>ageOpacity(ACT_CATEGORY[a.action]||'things',
+            cursor-a.at, windowMs);
           for(const b of bins.values()){
             if(!mapOpts.cluster || b.items.length<2){
               for(const a of b.items){
-                // Recent is bright, older stays visible. Never to zero: a mark
-                // you cannot see is the same as one that is not drawn.
+                const fade=opacityOf(a);
+                if(fade<=0) continue;
                 const age=Math.min(1,(cursor-a.at)/windowMs);
-                // Recent stands out, but the floor is high: over a long period
-                // almost everything is "old", and fading those to nothing
-                // would empty the map of the very marks it exists to show.
-                const fade=Math.max(0.55,0.98-age*0.43);
                 dotSvg.push('<g class="tmk" data-i="'+drawn.length+'" opacity="'+
                   fade.toFixed(2)+'">'+
                   marker(a.action,+sx(a.x).toFixed(1),+sz(a.z).toFixed(1),
@@ -2549,9 +2622,16 @@ final class WebPage {
                 drawn.push(a);
               }
             } else {
+              // A box is as visible as the freshest thing in it, and gone once
+              // everything in it has gone.
+              const live=b.items.filter(a=>opacityOf(a)>0);
+              if(!live.length) continue;
+              let fade=0;
+              for(const a of live) fade=Math.max(fade,opacityOf(a));
               const cx=b.sx/b.items.length, cy=b.sy/b.items.length;
-              clusterSvg.push(clusterMark(cx,cy,b.items,groups.length,colourOf));
-              groups.push({x:cx,y:cy,items:b.items});
+              clusterSvg.push('<g opacity="'+fade.toFixed(2)+'">'+
+                clusterMark(cx,cy,live,groups.length,colourOf)+'</g>');
+              groups.push({x:cx,y:cy,items:live});
             }
           }
           const dots=dotSvg.join('')+clusterSvg.join('');
@@ -2568,10 +2648,13 @@ final class WebPage {
               if(e.from>cursor) continue;
               const ex=sx(e.x), ey=sz(e.z);
               if(ex<-40||ex>W+40||ey<-40||ey>H+40) continue;
+              const fade=ageOpacity('seq',cursor-e.to,windowMs);
+              if(fade<=0) continue;
               const c=SEQUENCE_COLOR[e.kind]||'#ffab33';
               const note=momentFor(e);
               const label=(e.weight>=40||note)?(note?note.label:e.headline):'';
-              seqs.push('<g class="tsq" data-i="'+seqShown.length+'" style="cursor:pointer">'+
+              seqs.push('<g class="tsq" data-i="'+seqShown.length+'" opacity="'+
+                fade.toFixed(2)+'" style="cursor:pointer">'+
                 sequenceIcon(e.kind,+ex.toFixed(1),+ey.toFixed(1),c,1.05*unitAdjust)+
                 (label?labelBox(ex,ey,label,c,note?note.why:''):'')+
                 '<title>'+esc(e.player+' — '+e.headline)+'</title></g>');
@@ -2645,9 +2728,37 @@ final class WebPage {
             check('o-cluster','Group crowded marks',mapOpts.cluster)+
             check('o-seq','Sequence badges',mapOpts.sequences)+
             check('o-overlays','Side panel and player bar',mapOpts.overlays)+
+            '<hr>'+
+            '<label><span>Refresh every</span><input type="range" id="o-refresh" min="2" '+
+            'max="120" step="1" value="'+(mapOpts.refresh||10)+'"></label>'+
+            '<div class="onote" id="o-refreshnote"></div>'+
+            '<hr>'+
+            check('o-fade','Fade old marks away',mapOpts.fade.on)+
+            (mapOpts.fade.on
+              ? '<label><span>Gone after</span><input type="range" id="o-fademins" min="5" '+
+                'max="10080" step="5" value="'+mapOpts.fade.minutes+'"></label>'+
+                '<div class="onote" id="o-fadenote"></div>'+
+                '<div class="chips" id="o-fadecats">'+
+                  CATEGORIES.map(c=>'<button data-cat="'+c.key+'"'+
+                    (mapOpts.fade.cats.indexOf(c.key)>=0?' class="on"':'')+'>'+
+                    esc(c.name)+'</button>').join('')+
+                  '<button data-cat="seq"'+
+                    (mapOpts.fade.cats.indexOf('seq')>=0?' class="on"':'')+
+                    '>Sequences</button>'+
+                '</div>'
+              : '')+
             '<div class="row"><button class="btn" id="o-reset">Reset</button>'+
             '<button class="btn" id="o-close">Done</button></div>'+
             '</div>';
+        }
+
+        /** "every 10 seconds", "gone after 2 hours" — the readouts under the sliders. */
+        function humanMins(n){
+          if(n<60) return n+(n===1?' minute':' minutes');
+          if(n<1440){ const h=Math.round(n/6)/10;
+            return h+(h===1?' hour':' hours'); }
+          const d=Math.round(n/144)/10;
+          return d+(d===1?' day':' days');
         }
 
         function wireMapOptions(){
@@ -2664,9 +2775,33 @@ final class WebPage {
           set('o-cluster','onchange',el=>mapOpts.cluster=el.checked);
           set('o-seq','onchange',el=>mapOpts.sequences=el.checked);
           set('o-overlays','onchange',el=>mapOpts.overlays=el.checked);
-          const reset=$('o-reset');
-          if(reset) reset.onclick=()=>{ mapOpts=Object.assign({},MAP_DEFAULTS);
+          set('o-refresh','oninput',el=>mapOpts.refresh=+el.value);
+          set('o-fademins','oninput',el=>mapOpts.fade.minutes=+el.value);
+          // Turning it on or off changes which controls are there, so this one
+          // redraws the panel rather than only the map.
+          const fadeBox=$('o-fade');
+          if(fadeBox) fadeBox.onchange=()=>{ mapOpts.fade.on=fadeBox.checked;
             saveMapOpts(); paintAll(); };
+          const chips=$('o-fadecats');
+          if(chips) chips.querySelectorAll('button').forEach(b=>{
+            b.onclick=()=>{
+              const key=b.getAttribute('data-cat');
+              const at=mapOpts.fade.cats.indexOf(key);
+              if(at>=0) mapOpts.fade.cats.splice(at,1); else mapOpts.fade.cats.push(key);
+              saveMapOpts(); paintAll();
+            };
+          });
+          const rn=$('o-refreshnote');
+          if(rn) rn.textContent='every '+(mapOpts.refresh||10)+' seconds';
+          const fn=$('o-fadenote');
+          if(fn) fn.textContent='gone after '+humanMins(mapOpts.fade.minutes);
+          const reset=$('o-reset');
+          if(reset) reset.onclick=()=>{
+            mapOpts=Object.assign({},MAP_DEFAULTS);
+            mapOpts.fade=Object.assign({},MAP_DEFAULTS.fade);
+            mapOpts.fade.cats=MAP_DEFAULTS.fade.cats.slice();
+            saveMapOpts(); paintAll();
+          };
           const close=$('o-close');
           if(close) close.onclick=()=>{ optsOpen=false; paintAll(); };
         }
@@ -3326,6 +3461,7 @@ final class WebPage {
 
         async function loadInsights(){
           const box=$('i-eps'); if(!box) return;
+          lastInsight=Date.now();
           const r=await jget('/api/insights');
           if(r.status!==200){ box.innerHTML='<div class="note">unavailable</div>'; return; }
           episodes=r.body.episodes||[];
@@ -3902,10 +4038,51 @@ final class WebPage {
      */
     private static final String PART3 = """
         // ---- settings ----
+        // Two different things live under Settings: Almin's own, and the
+        // game's. Keeping them on one page would put a checkbox that changes
+        // how Almin behaves next to one that changes how Minecraft behaves,
+        // which is exactly the confusion worth avoiding.
+        let settingsTab='almin';
+
         function settingsPanel(){
           const wrap=document.createElement('div');
-          wrap.innerHTML=
-            '<section><h2>Admin password</h2>'+
+          const strip=document.createElement('div');
+          strip.className='subtabs';
+          for(const [key,label] of [['almin','Almin'],['server','Minecraft server']]){
+            const b=document.createElement('button');
+            b.textContent=label;
+            if(settingsTab===key) b.className='on';
+            b.onclick=()=>{ settingsTab=key; render(); };
+            strip.appendChild(b);
+          }
+          wrap.appendChild(strip);
+          if(settingsTab==='server'){
+            const box=document.createElement('div');
+            box.innerHTML=
+              '<section><h2>server.properties</h2>'+
+              '<p class="muted">Minecraft\u2019s own settings, not Almin\u2019s. Almost '+
+              'everything here is read when the server boots and kept in memory after '+
+              'that, so <b>changes land at the next restart</b> \u2014 the file is '+
+              'written straight away, comments and order untouched.</p>'+
+              '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;'+
+              'margin-bottom:10px">'+
+              '<input id="sp-find" placeholder="filter settings" style="flex:1;min-width:180px">'+
+              '<button class="btn" id="sp-reload">Reload from disk</button>'+
+              '<button class="btn go" id="sp-save" disabled>Save changes</button></div>'+
+              '<div id="sp-rows"><div class="note">loading\u2026</div></div>'+
+              '<div class="msg" id="sp-msg"></div></section>';
+            wrap.appendChild(box);
+            setTimeout(()=>{
+              loadProperties();
+              $('sp-reload').onclick=loadProperties;
+              $('sp-save').onclick=saveProperties;
+              $('sp-find').oninput=paintProperties;
+            },0);
+            return wrap;
+          }
+          const body=document.createElement('div');
+          body.innerHTML=
+            '<section id="s-almin"><h2>Admin password</h2>'+
             '<p class="muted">Changing it signs every other session out. You stay logged in here.</p>'+
             '<div class="term"><input id="s-pw" type="password" autocomplete="new-password" '+
             'placeholder="new password (8+ characters)">'+
@@ -3940,6 +4117,7 @@ final class WebPage {
             '<div id="s-keys"><div class="note">loading…</div></div>'+
             '<button class="btn" id="s-reload" style="margin-top:12px">Reload from disk</button>'+
             '<div class="msg" id="s-msg"></div></section>';
+          wrap.appendChild(body);
           setTimeout(()=>{
             loadConfig(); loadUpdate(); showRelaunch(); showAi();
             $('s-aikeygo').onclick=()=>saveAiKey($('s-aikey').value);
@@ -4008,6 +4186,95 @@ final class WebPage {
                      'not open it.':'Key forgotten.')
             : ((r.body&&r.body.error)||'failed');
           if(r.status===200){ $('s-aikey').value=''; showAi(); }
+        }
+
+        // ---- Minecraft's own settings ----
+        let props=[], propEdits={};
+
+        async function loadProperties(){
+          const box=$('sp-rows'); if(!box) return;
+          propEdits={};
+          const r=await jget('/api/properties');
+          if(r.status!==200){
+            box.innerHTML='<div class="note">'+esc((r.body&&r.body.error)||'unavailable')+
+              '</div>';
+            props=[]; paintSaveState(); return;
+          }
+          props=r.body.rows||[];
+          paintProperties();
+        }
+
+        function paintProperties(){
+          const box=$('sp-rows'); if(!box) return;
+          const find=(($('sp-find')||{}).value||'').trim().toLowerCase();
+          box.innerHTML='';
+          const shown=props.filter(p=>!find || p.key.toLowerCase().includes(find) ||
+            String(p.value).toLowerCase().includes(find));
+          if(!shown.length){
+            box.innerHTML='<div class="note">'+(props.length?'Nothing matches.'
+              :'server.properties is empty.')+'</div>';
+            paintSaveState(); return;
+          }
+          for(const p of shown) box.appendChild(propRow(p));
+          paintSaveState();
+        }
+
+        function propRow(p){
+          const row=document.createElement('div');
+          row.className='sprow'+(p.key in propEdits?' edited':'');
+          const name=document.createElement('code');
+          name.textContent=p.key;
+          row.appendChild(name);
+          const now=(p.key in propEdits)?propEdits[p.key]:p.value;
+          let input;
+          if(p.type==='BOOL'){
+            input=document.createElement('select');
+            for(const v of ['true','false']){
+              const o=document.createElement('option'); o.value=v; o.textContent=v;
+              if(String(now)===v) o.selected=true;
+              input.appendChild(o);
+            }
+          } else {
+            input=document.createElement('input');
+            input.type=p.secret?'password':(p.type==='INT'?'number':'text');
+            input.value=now;
+            if(p.secret) input.placeholder='unchanged';
+          }
+          input.oninput=input.onchange=()=>{
+            const v=String(input.value);
+            // Back to what it was is not a change, so the count stays honest.
+            if(v===String(p.value)) delete propEdits[p.key];
+            else propEdits[p.key]=v;
+            row.className='sprow'+(p.key in propEdits?' edited':'');
+            paintSaveState();
+          };
+          row.appendChild(input);
+          const undo=document.createElement('button');
+          undo.className='btn'; undo.textContent='Undo';
+          undo.title='Put this one back';
+          undo.onclick=()=>{ delete propEdits[p.key]; paintProperties(); };
+          row.appendChild(undo);
+          return row;
+        }
+
+        function paintSaveState(){
+          const save=$('sp-save'); if(!save) return;
+          const n=Object.keys(propEdits).length;
+          save.disabled=n===0;
+          save.textContent=n?('Save '+n+' change'+(n===1?'':'s')):'Save changes';
+        }
+
+        async function saveProperties(){
+          const msg=$('sp-msg');
+          const n=Object.keys(propEdits).length;
+          if(!n) return;
+          const r=await jpost('/api/properties',{set:propEdits});
+          msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent=r.status===200
+            ? ((r.body.changed||0)+' written to server.properties. '+
+               'The server reads it when it boots, so restart for it to take effect.')
+            : ((r.body&&r.body.error)||'failed');
+          if(r.status===200) loadProperties();
         }
 
         async function setPassword(){

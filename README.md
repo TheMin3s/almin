@@ -183,6 +183,25 @@ file, a new folder. The editor is an overlay now rather than a permanent second
 column, so it appears when there is something to edit and the browser gets the
 full width the rest of the time.
 
+### Minecraft's own settings
+
+The **Settings** tab has two halves. *Almin* is everything above; *Minecraft
+server* is `server.properties` — the game's file, not Almin's — with a typed
+control per row (a dropdown for a true/false, a number box for a number), a
+filter, and an Undo on anything you have touched.
+
+Editing it here rather than in the file browser is the point: the browser would
+let you do it anyway, so doing it properly is strictly better. Values are
+written straight away, **on the line the key is already on**, so the comments
+and the order in the file survive — which is more than `Properties.store` would
+have left of them.
+
+Almost everything in that file is read when the server boots and kept in memory
+after that, so **changes land at the next restart**, and the panel says so
+where you press Save. Anything whose name says `password` comes back masked and
+is only written if you type a new one: the panel is behind a login, but a
+credential that renders into a page is a credential in a screenshot.
+
 ### Player faces
 
 The **Players** and **Activity** lists show each player's face, cropped out of
@@ -492,14 +511,71 @@ around it. They are the same elements in the same order — only positioned
 differently — so going in and out cannot lose where you were looking. `Esc`
 comes back.
 
+#### Forgetting with age
+
+Marks fade with recency out of the box — what happened just now stands out and
+everything else stays legible, with a high floor, because on a long period
+almost everything is old and fading those away would empty the map of the marks
+it exists to show.
+
+**Fade old marks away** is a different thing and is off until you ask for it:
+past its window a mark is not drawn at all. It is set per group — the world,
+fighting, talking, coming and going, things, and sequences — because "stop
+showing me week-old chat" and "stop showing me week-old block edits" are
+separate wishes. A box of grouped marks is as visible as the freshest thing in
+it and goes once everything in it has. None of this deletes anything: it is
+about what is drawn, and what is *kept* is `activity-retention-minutes`.
+
+#### Showing less of it
+
+**Filter** opens the tree of what is actually in the period: kinds of thing
+grouped into the world, fighting, talking, coming and going, and things — with
+a count beside each — and under `place`, `break` and the rest, the particular
+blocks and items, also with counts. Ticking a kind shows that kind; expanding
+it and ticking `Oak Log` narrows to that. Unticking the kind lets go of the
+things under it, so the map never hides rows for a reason that is no longer on
+screen.
+
+Sequences are in the same tree. Ticking `fight` shows everything that player
+did *while the fight was going on* rather than only the swings, which is the
+honest reading of the question. The filter reaches the map, the timeline ticks
+and the side list together, so all three agree about what is being shown.
+
+#### One badge per stretch of work
+
+A stretch of work gets a badge with the tool on it — a pickaxe for a shaft, an
+axe for felling trees, a hammer for a build, a sword for a fight, boots for a
+journey — worked out from what was actually broken, so digging through sand
+gets a shovel and digging through stone gets a pickaxe. Notable ones carry
+their sentence beside them, and once a model is connected the badge carries
+what the model said about it instead. Clicking one opens it.
+
+#### What a stretch of work actually built
+
+The map answers *where*; a mark from above cannot answer *what shape*. The log
+knows every block that went down and every one that came up, with its height,
+so the shape is recoverable — and **3D** on a build, a shaft, a tunnel or a
+clearing draws it in isometric: placed blocks solid and yellow, broken blocks
+as red outlines, because what is being shown there is an absence. Anything hit
+during it is a red burst where it happened.
+
+Turn it a quarter at a time to see round the back, and drag the slider to watch
+it go up in the order it actually went up. It is clamped to 64 blocks across —
+an episode can wander, and a scene covering a kilometre is a scene of nothing —
+and only what changed is in it: the world around it was never recorded, and
+drawing a guess at it would be drawing a lie.
+
 #### How it looks
 
 The cog in the top corner opens the adjustments that are about your eyes rather
 than about the server, and they are there rather than in Settings because they
 are the things you change *while looking at the thing they change*: ground
-darkness, path width, marker size, whether marks are coloured by what they were
-or by who did them, and whether faces, paths, grouping and the side panels are
-drawn at all. They are remembered in the browser, so two admins looking at the
+darkness, path width, marker size, face size, whether marks are coloured by
+what they were or by who did them, whether faces, paths, grouping, sequence
+badges and the side panels are drawn at all, **how often the live map
+refreshes**, and **whether old marks fade away**. Faces have their own size
+because they are the thing you look for: tying them to the marker size meant
+making them readable made everything else shout. They are remembered in the browser, so two admins looking at the
 same map are allowed to disagree about how dark the ground should be.
 
 #### The timeline
