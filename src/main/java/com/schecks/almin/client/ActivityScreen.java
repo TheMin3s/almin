@@ -77,8 +77,11 @@ public final class ActivityScreen extends Screen {
     private static final int MAP_H = 104;
     private static final int MAP_MIN_ROOM = 260;
 
-    /** How far back from the cursor an action still counts as "just now". */
-    private static final double MARKER_WINDOW = 0.06;
+    /** Pixels a frame may spend on paths. Each one is its own quad. */
+    private static final int PIXEL_BUDGET = 6000;
+
+    /** A segment longer than this is a gap in the record, not a walk. */
+    private static final int MAX_SEGMENT = 220;
 
     private static final int MAP_BG   = 0xFF0E1116;
     private static final int MAP_GRID = 0xFF1B1F27;
@@ -312,7 +315,6 @@ public final class ActivityScreen extends Screen {
         for (ActivityLog.Entry e : acts) { from = Math.min(from, e.at()); to = Math.max(to, e.at()); }
         if (from == Long.MAX_VALUE) from = to;
         long at = from + (long) ((to - from) * cursor);
-        long window = Math.max(1L, (long) ((to - from) * MARKER_WINDOW));
 
         // Bounds over everything in this dimension, so the view does not jump
         // about as the cursor moves.
@@ -344,6 +346,10 @@ public final class ActivityScreen extends Screen {
             g.horizontalLine(innerX, innerX + innerW, innerY + innerH * i / 4, MAP_GRID);
         }
 
+        // Every pixel of a line here is a separate quad, so the budget is real:
+        // a long path at full resolution would cost thousands of them per
+        // frame for a picture no denser than this one.
+        int budget = PIXEL_BUDGET;
         for (ActivityPayload.Track t : tracks) {
             int color = playerColor(t.player());
             int px = Integer.MIN_VALUE, py = 0, lastX = 0, lastY = 0;
@@ -352,19 +358,26 @@ public final class ActivityScreen extends Screen {
                 if (!mapDim.equals(pt.dim()) || pt.at() > at) continue;
                 int sx = innerX + (int) ((pt.x() - cxW) / span * innerW + innerW / 2.0);
                 int sy = innerY + (int) ((pt.z() - czW) / span * innerH + innerH / 2.0);
-                if (px != Integer.MIN_VALUE) line(g, px, py, sx, sy, color);
-                px = sx; py = sy; lastX = sx; lastY = sy; any = true;
+                lastX = sx; lastY = sy; any = true;
+                // Two samples landing on one pixel draw one pixel.
+                if (px == sx && py == sy) continue;
+                if (px != Integer.MIN_VALUE && budget > 0) {
+                    budget -= line(g, px, py, sx, sy, color);
+                }
+                px = sx; py = sy;
             }
             // Where they were when the cursor points.
             if (any) g.fill(lastX - 2, lastY - 2, lastX + 3, lastY + 3, 0xFF000000 | color);
         }
 
+        // Everything that had happened by the cursor, not only the last moment
+        // of it: a narrow window looks tidy and is useless, because scrubbing
+        // to a quiet minute empties the map of the marks it exists to show.
         for (ActivityLog.Entry e : acts) {
-            if (!mapDim.equals(e.dim()) || e.at() > at || e.at() < at - window) continue;
+            if (!mapDim.equals(e.dim()) || e.at() > at) continue;
             int sx = innerX + (int) ((e.x() - cxW) / span * innerW + innerW / 2.0);
             int sy = innerY + (int) ((e.z() - czW) / span * innerH + innerH / 2.0);
-            g.fill(sx - 2, sy - 2, sx + 3, sy + 3, actionColor(e.action()));
-            g.fill(sx - 1, sy - 1, sx + 2, sy + 2, 0xFFFFFFFF);
+            mark(g, sx, sy, e.action(), actionColor(e.action()));
         }
 
         String caption = mapDim + " · " + Math.round(span) + " blocks across · "
@@ -412,20 +425,84 @@ public final class ActivityScreen extends Screen {
         mapDim = order.get((i + 1) % order.size());
     }
 
-    /** A straight line as filled pixels — the GUI has no line primitive that takes two points. */
-    private static void line(GuiGraphicsExtractor g, int x1, int y1, int x2, int y2, int rgb) {
+    /**
+     * A shape per action, so a glance says what happened and not only that
+     * something did.
+     *
+     * <p>A block put down is a solid square and one taken away is the outline
+     * it left — the two rows a grief report is actually about, and the two
+     * that most need telling apart from across the map.
+     */
+    private static void mark(GuiGraphicsExtractor g, int x, int y, String action, int color) {
+        switch (action) {
+            case "place" -> {
+                g.fill(x - 3, y - 3, x + 4, y + 4, 0xFF0B0D11);
+                g.fill(x - 2, y - 2, x + 3, y + 3, color);
+            }
+            case "break" -> g.outline(x - 3, y - 3, 7, 7, color);
+            case "attack" -> { diagonal(g, x, y, 1, color); diagonal(g, x, y, -1, color); }
+            case "hurt" -> {
+                g.horizontalLine(x - 3, x + 3, y, color);
+                g.verticalLine(x, y - 3, y + 3, color);
+            }
+            case "death" -> {
+                g.fill(x - 3, y - 3, x + 4, y + 4, color);
+                g.fill(x - 1, y - 1, x + 2, y + 2, 0xFF0B0D11);
+            }
+            case "chat" -> {
+                g.fill(x - 4, y - 2, x + 5, y + 3, color);
+                g.fill(x - 4, y + 3, x - 1, y + 5, color);      // the tail
+            }
+            case "container" -> {
+                g.fill(x - 3, y - 3, x + 4, y + 4, color);
+                g.horizontalLine(x - 3, x + 3, y, 0xFF0B0D11);
+            }
+            case "item" -> {                                    // a diamond
+                for (int i = -3; i <= 3; i++) {
+                    int w = 3 - Math.abs(i);
+                    g.fill(x - w, y + i, x + w + 1, y + i + 1, color);
+                }
+            }
+            case "join" -> arrow(g, x, y, 1, color);
+            case "leave" -> arrow(g, x, y, -1, color);
+            default -> {
+                g.fill(x - 2, y - 2, x + 3, y + 3, 0xFF0B0D11);
+                g.fill(x - 1, y - 1, x + 2, y + 2, color);
+            }
+        }
+    }
+
+    private static void diagonal(GuiGraphicsExtractor g, int x, int y, int dir, int color) {
+        for (int i = -3; i <= 3; i++) g.fill(x + i, y + i * dir, x + i + 1, y + i * dir + 1, color);
+    }
+
+    /** A triangle pointing right ({@code dir} 1) or left, for arriving and leaving. */
+    private static void arrow(GuiGraphicsExtractor g, int x, int y, int dir, int color) {
+        for (int i = -3; i <= 3; i++) {
+            int w = 3 - Math.abs(i);
+            int tip = x + dir * 3;
+            int base = x - dir * w;
+            g.fill(Math.min(tip, base), y + i, Math.max(tip, base) + 1, y + i + 1, color);
+        }
+    }
+
+    /**
+     * A straight line as filled pixels — the GUI has no primitive that takes
+     * two arbitrary points. Returns how many it drew, for the frame budget.
+     */
+    private static int line(GuiGraphicsExtractor g, int x1, int y1, int x2, int y2, int rgb) {
         int color = 0xFF000000 | rgb;
-        int dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
-        int steps = Math.max(dx, dy);
-        // A path that jumps a long way is a teleport or a gap in sampling, not
-        // a walk; drawing it would invent a journey nobody made.
-        if (steps > 400) { g.fill(x2, y2, x2 + 1, y2 + 1, color); return; }
-        if (steps == 0) { g.fill(x1, y1, x1 + 1, y1 + 1, color); return; }
+        int steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+        // A path that jumps most of the map is a teleport or a gap in
+        // sampling, not a walk; drawing it would invent a journey nobody made.
+        if (steps > MAX_SEGMENT) { g.fill(x2, y2, x2 + 1, y2 + 1, color); return 1; }
+        if (steps == 0) { g.fill(x1, y1, x1 + 1, y1 + 1, color); return 1; }
         for (int i = 0; i <= steps; i++) {
             int x = x1 + (x2 - x1) * i / steps;
             int y = y1 + (y2 - y1) * i / steps;
             g.fill(x, y, x + 1, y + 1, color);
         }
+        return steps + 1;
     }
 
     /** Stable per-player colour, so the same person is the same line every time. */

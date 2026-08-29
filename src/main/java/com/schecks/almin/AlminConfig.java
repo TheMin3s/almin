@@ -140,6 +140,26 @@ public final class AlminConfig {
      * off. A player standing still is never sampled twice.
      */
     public int activityTrackSeconds = 5;
+    /**
+     * Seconds between pictures of the ground for the activity map. 0 turns
+     * them off, leaving the map a grid with paths on it.
+     *
+     * <p>Each one is a real cost: sampling has to happen on the server thread,
+     * because block states belong to it. The defaults are chosen so that cost
+     * lands roughly once every half minute and is bounded by
+     * {@link #mapRadius} and {@link #mapBlocksPerPixel}.
+     */
+    public int mapSnapshotSeconds = 30;
+    /** How many pictures are kept before the oldest are deleted. */
+    public int mapSnapshotKeep = 40;
+    /**
+     * Blocks per pixel. 1 is a pixel per block and four times the work of 2,
+     * which is the default because a path drawn over it is not that precise
+     * anyway.
+     */
+    public int mapBlocksPerPixel = 2;
+    /** Blocks either side of the players the picture covers. */
+    public int mapRadius = 192;
 
     public enum Type { INT, BOOL, TEXT }
 
@@ -256,7 +276,15 @@ public final class AlminConfig {
         boolKey("activity-items", "Include item use, entity interaction and containers",
             c -> c.activityItems, (c, v) -> c.activityItems = (Boolean) v),
         intKey("activity-track-seconds", "Seconds between position samples for the map (0 = no map)", 0, 300,
-            c -> c.activityTrackSeconds, (c, v) -> c.activityTrackSeconds = (Integer) v)
+            c -> c.activityTrackSeconds, (c, v) -> c.activityTrackSeconds = (Integer) v),
+        intKey("map-snapshot-seconds", "Seconds between pictures of the ground for the map (0 = no world under it)", 0, 600,
+            c -> c.mapSnapshotSeconds, (c, v) -> c.mapSnapshotSeconds = (Integer) v),
+        intKey("map-snapshot-keep", "How many pictures of the ground are kept", 2, 500,
+            c -> c.mapSnapshotKeep, (c, v) -> c.mapSnapshotKeep = (Integer) v),
+        intKey("map-blocks-per-pixel", "Detail of those pictures; 1 is finest and costs the most", 1, 8,
+            c -> c.mapBlocksPerPixel, (c, v) -> c.mapBlocksPerPixel = (Integer) v),
+        intKey("map-radius", "Blocks either side of the players each picture covers", 32, 512,
+            c -> c.mapRadius, (c, v) -> c.mapRadius = (Integer) v)
     );
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */

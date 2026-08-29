@@ -336,6 +336,7 @@ public final class WebUi {
         http.createContext("/api/fetch", guard("/api/fetch", ui::handleFetch));
         http.createContext("/api/activity", guard("/api/activity", ui::handleActivity));
         http.createContext("/api/track", guard("/api/track", ui::handleTrack));
+        http.createContext("/api/map", guard("/api/map", ui::handleMap));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -2021,6 +2022,63 @@ public final class WebUi {
         root.addProperty("to", to);
         root.add("admins", adminPolicyJson());
         return root;
+    }
+
+    /**
+     * The pictures of the ground the map is drawn over.
+     *
+     * <p>{@code /api/map} lists what exists, so the page can pick the one that
+     * matches wherever the timeline is pointing; {@code /api/map?at=…&dim=…}
+     * returns that picture as a PNG. Two shapes on one route because the list
+     * is small and the choice is entirely the browser's.
+     */
+    private void handleMap(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            String atParam = queryParam(ex, "at");
+            String dim = queryParam(ex, "dim");
+
+            if (atParam == null || atParam.isBlank()) {
+                JsonArray arr = new JsonArray();
+                for (WorldSnapshots.Shot shot : WorldSnapshots.all()) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("at", shot.at());
+                    o.addProperty("dim", shot.dim());
+                    o.addProperty("minX", shot.minX());
+                    o.addProperty("minZ", shot.minZ());
+                    o.addProperty("span", shot.span());
+                    arr.add(o);
+                }
+                JsonObject root = new JsonObject();
+                root.add("shots", arr);
+                root.addProperty("every", AlminConfig.get().mapSnapshotSeconds);
+                json(ex, 200, root.toString());
+                return;
+            }
+
+            long at;
+            try {
+                at = Long.parseLong(atParam.trim());
+            } catch (NumberFormatException e) {
+                json(ex, 400, err("Not a timestamp."));
+                return;
+            }
+            WorldSnapshots.Shot shot = WorldSnapshots.at(dim, at);
+            byte[] png = shot == null ? null : WorldSnapshots.read(shot);
+            if (png == null) { json(ex, 404, err("No picture of that moment.")); return; }
+            // Each picture is immutable once written, and the browser asks for
+            // a lot of them while scrubbing the timeline.
+            ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+            ex.getResponseHeaders().set("Content-Type", "image/png");
+            ex.sendResponseHeaders(200, png.length);
+            try (OutputStream out = ex.getResponseBody()) {
+                out.write(png);
+            }
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
     }
 
     // ---------- routes: players and masks ----------

@@ -355,8 +355,10 @@ public final class ActivityLog {
         synchronized (ActivityLog.class) {
             entries.clear();
         }
-        // The map is the same record seen another way; it goes too.
+        // The map is the same record seen another way; it goes too — the
+        // paths, and the pictures of the ground they were drawn over.
         PlayerTracks.clear();
+        WorldSnapshots.clear();
         pending.clear();
         pendingCount.set(0);
         Path f = file;

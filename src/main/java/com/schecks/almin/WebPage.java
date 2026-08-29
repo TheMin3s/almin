@@ -134,8 +134,12 @@ final class WebPage {
                border-radius:12px;padding:6px 4px}
           .mapwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;
                    padding:10px;position:relative}
-          .mapwrap svg{display:block;width:100%;height:min(60vh,560px);
+          /* Direct child only. The legend draws the same marker shapes inline
+             to key them, and a descendant selector blew each one up to the
+             full width of the map. */
+          .mapwrap > svg{display:block;width:100%;height:min(60vh,560px);
                        background:#0b0d11;border-radius:8px}
+          .legend svg{width:15px;height:15px;display:inline-block;vertical-align:-3px}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
                   border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
                   color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
@@ -700,6 +704,7 @@ final class WebPage {
             'markers are what happened around it.</p>'+
             '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
             '<button class="btn" id="t-play">Play</button>'+
+            '<button class="btn" id="t-fit">Fit: ground</button>'+
             '<input type="range" id="t-time" min="0" max="1000" value="1000" '+
             'style="flex:1;min-width:200px">'+
             '<span class="muted" id="t-at" style="min-width:140px"></span>'+
@@ -725,6 +730,7 @@ final class WebPage {
             $('a-refresh').onclick=()=>{ loadActivity(); loadAll(); loadTrack($('a-who').value); };
             $('t-time').oninput=()=>{ stopPlay(); paintAll(); };
             $('t-play').onclick=togglePlay;
+            $('t-fit').onclick=()=>{ fitGround=!fitGround; paintAll(); };
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
@@ -740,9 +746,15 @@ final class WebPage {
         // was around" — which needs everyone on the same timeline.
         let allData=null, allDim='', playTimer=null;
 
+        // Which of two questions the map is framed to answer: "what does the
+        // ground here look like", or "where has everyone been". Over a day a
+        // path covers kilometres and a picture of the ground covers a few
+        // hundred blocks, so one framing cannot serve both.
+        let fitGround=true;
+
         // How far back from the cursor a marker still counts as "just now".
         // A fraction of the period, so a busy hour and a quiet day both read.
-        const MARKER_WINDOW=0.06;
+        const MARKER_WINDOW=0.12;
 
         // Stable per-player colour: the same person is the same colour every
         // time the map is drawn, without keeping a palette in sync with a
@@ -753,14 +765,83 @@ final class WebPage {
           return 'hsl('+(h%360)+' 62% 62%)';
         }
 
+        // Pictures of the ground, so the map has a world under it rather than
+        // a grid. Listed once; the browser picks which one matches the cursor.
+        let shots=[], shotEvery=0;
+
         async function loadAll(){
           const box=$('t-map'); if(!box) return;
           const r=await jget('/api/track?all=1');
           if(r.status!==200){ box.innerHTML='<div class="note">unavailable</div>'; return; }
           allData=r.body; allDim='';
           showAdmins(r.body.admins);
+          const m=await jget('/api/map');
+          shots=(m.status===200 && m.body.shots)?m.body.shots:[];
+          shotEvery=(m.body&&m.body.every)||0;
           const t=$('t-time'); if(t) t.value=1000;
           paintAll();
+        }
+
+        // The newest picture taken at or before the cursor — what the ground
+        // looked like then. Falls back to the earliest there is, because an
+        // approximately-right world beats an empty grid.
+        function shotFor(dim,at){
+          let best=null, earliest=null;
+          for(const s of shots){
+            if(s.dim!==dim) continue;
+            if(!earliest || s.at<earliest.at) earliest=s;
+            if(s.at<=at && (!best || s.at>best.at)) best=s;
+          }
+          return best||earliest;
+        }
+
+        // ---- what each action looks like on the map ----
+        // Drawn rather than fetched: the panel has to work on a server with no
+        // way out to the internet, and an icon set would be another thing to
+        // ship and license. A shape per action, all built from two primitives.
+        function marker(action,x,y,fill,scale){
+          const c=fill, r=(scale||1);
+          const sq=(k,f)=>'<rect x="'+(x-k)+'" y="'+(y-k)+'" width="'+(2*k)+'" height="'+(2*k)+
+            '" fill="'+(f?c:'none')+'" stroke="'+(f?'#0b0d11':c)+'" stroke-width="1.6" rx="1"/>';
+          const li=(x1,y1,x2,y2,w)=>'<line x1="'+(x+x1)+'" y1="'+(y+y1)+'" x2="'+(x+x2)+
+            '" y2="'+(y+y2)+'" stroke="'+c+'" stroke-width="'+(w||1.8)+'" stroke-linecap="round"/>';
+          const poly=(pts,f)=>'<polygon points="'+pts.map(q=>(x+q[0])+','+(y+q[1])).join(' ')+
+            '" fill="'+(f?c:'none')+'" stroke="'+(f?'#0b0d11':c)+'" stroke-width="1.4"/>';
+          const dot=(k)=>'<circle cx="'+x+'" cy="'+y+'" r="'+k+'" fill="'+c+
+            '" stroke="#0b0d11" stroke-width="1.4"/>';
+          switch(action){
+            // A block put down is a solid square; one taken away is the hole
+            // it left, with the break through it.
+            case 'place':     return sq(4.5*r,true);
+            case 'break':     return sq(4.5*r,false)+li(-3,-3,3,3,1.5)+li(-3,3,3,-3,1.5);
+            // Crossed swords.
+            case 'attack':    return li(-5,-5,5,5,2.2)+li(-5,5,5,-5,2.2);
+            // A hit taken: a burst.
+            case 'hurt':      return li(0,-6,0,6,1.8)+li(-6,0,6,0,1.8)+li(-4,-4,4,4,1.4)+
+                                     li(-4,4,4,-4,1.4);
+            case 'death':     return dot(5)+'<path d="M'+(x-2.4)+' '+(y-1.4)+'l4.8 0M'+
+                                     (x-2.4)+' '+(y+1.8)+'l4.8 0" stroke="#0b0d11" '+
+                                     'stroke-width="1.4"/>';
+            // A speech bubble, tail down-left.
+            case 'chat':      return '<path d="M'+(x-6)+' '+(y-5)+'h12a2 2 0 0 1 2 2v5a2 2 0 0 1'+
+                                     ' -2 2h-6l-4 3v-3h-2a2 2 0 0 1 -2 -2v-5a2 2 0 0 1 2 -2z" '+
+                                     'fill="'+c+'" stroke="#0b0d11" stroke-width="1.2"/>';
+            // A prompt.
+            case 'command':   return li(-4,-4,1,0,2)+li(1,0,-4,4,2)+li(2,4,6,4,2);
+            // A chest: lid line and latch.
+            case 'container': return sq(5*r,true)+'<path d="M'+(x-5)+' '+(y-1)+'h10" '+
+                                     'stroke="#0b0d11" stroke-width="1.4"/>'+
+                                     '<rect x="'+(x-1.2)+'" y="'+(y-2.2)+'" width="2.4" '+
+                                     'height="3.4" fill="#0b0d11"/>';
+            case 'join':      return poly([[-4,-5],[4,0],[-4,5]],true);
+            case 'leave':     return poly([[4,-5],[-4,0],[4,5]],true);
+            case 'respawn':   return '<circle cx="'+x+'" cy="'+y+'" r="5" fill="none" stroke="'+c+
+                                     '" stroke-width="2"/>'+li(-2.5,0,2.5,0,1.6)+li(0,-2.5,0,2.5,1.6);
+            case 'item':      return poly([[0,-5.5],[5.5,0],[0,5.5],[-5.5,0]],true);
+            case 'interact':  return dot(3.4)+'<circle cx="'+x+'" cy="'+y+'" r="6" fill="none" '+
+                                     'stroke="'+c+'" stroke-width="1.4"/>';
+            default:          return dot(4);
+          }
         }
 
         function stopPlay(){
@@ -809,20 +890,48 @@ final class WebPage {
           $('t-at').textContent=fmtAgo(cursor)+(frac>=1?' (now)':'');
 
           const inDim=p=>p.dim===allDim;
-          const shownActs=acts.filter(a=>inDim(a) && a.at<=cursor && a.at>=cursor-windowMs);
+          // Everything that had happened by the cursor, not just the last
+          // moment of it. A narrow window looks tidy and is useless: scrub to
+          // a quiet minute and the map goes blank, which says nothing about
+          // where anything happened. Age is carried by fading instead.
+          const shownActs=acts.filter(a=>inDim(a) && a.at<=cursor);
           const paths=names.map(n=>({name:n, pts:tracks[n].filter(p=>inDim(p) && p.at<=cursor)}))
                            .filter(t=>t.pts.length);
 
-          const pool=[].concat(...paths.map(t=>t.pts)).concat(acts.filter(inDim));
-          if(!pool.length){
+          // Full extent, not just what is drawn: the view must not lurch about
+          // as the cursor moves, and a map that goes blank early in the period
+          // tells you nothing about where to look.
+          const whole=[].concat(...names.map(n=>tracks[n].filter(inDim)))
+                        .concat(acts.filter(inDim));
+          const shot=shotFor(allDim,cursor);
+          if(!whole.length && !shot){
             box.innerHTML='<div class="note">Nothing in '+esc(allDim)+'.</div>';
             wireDims(); return;
           }
-          const xs=pool.map(p=>p.x), zs=pool.map(p=>p.z);
-          let minX=Math.min(...xs), maxX=Math.max(...xs);
-          let minZ=Math.min(...zs), maxZ=Math.max(...zs);
-          const pad=Math.max(8,(Math.max(maxX-minX,maxZ-minZ))*0.06);
-          minX-=pad; maxX+=pad; minZ-=pad; maxZ+=pad;
+          const ground=!!shot && fitGround;
+          const btn=$('t-fit');
+          if(btn){
+            btn.textContent=ground?'Fit: ground':'Fit: everything';
+            btn.disabled=!shot;
+            btn.title=shot?'Switch between the pictured area and everywhere anyone has been'
+                          :'No picture of the ground yet';
+          }
+          let minX, maxX, minZ, maxZ;
+          if(ground){
+            // Frame the picture, so the world is the thing you can see. The
+            // view then follows the players as you scrub, because each picture
+            // was taken around wherever they were.
+            minX=shot.minX; maxX=shot.minX+shot.span;
+            minZ=shot.minZ; maxZ=shot.minZ+shot.span;
+          } else {
+            const xs=whole.map(p=>p.x), zs=whole.map(p=>p.z);
+            minX=xs.length?Math.min(...xs):shot.minX;
+            maxX=xs.length?Math.max(...xs):shot.minX+shot.span;
+            minZ=zs.length?Math.min(...zs):shot.minZ;
+            maxZ=zs.length?Math.max(...zs):shot.minZ+shot.span;
+            const pad=Math.max(8,(Math.max(maxX-minX,maxZ-minZ))*0.06);
+            minX-=pad; maxX+=pad; minZ-=pad; maxZ+=pad;
+          }
           const span=Math.max(maxX-minX,maxZ-minZ,16);
           const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2;
           const W=1000, H=Math.round(W*0.62);
@@ -835,40 +944,72 @@ final class WebPage {
             grid.push('<line x1="0" y1="'+(H/4)*g+'" x2="'+W+'" y2="'+(H/4)*g+'" stroke="#1b1f27"/>');
           }
 
-          const lines=paths.map(t=>{
-            const c=playerColor(t.name);
-            const d=t.pts.map((p,i)=>(i?'L':'M')+sx(p.x).toFixed(1)+' '+sz(p.z).toFixed(1)).join(' ');
-            const last=t.pts[t.pts.length-1];
-            return '<path d="'+d+'" fill="none" stroke="'+c+'" stroke-width="2.5" '+
-              'stroke-opacity=".55" stroke-linejoin="round" stroke-linecap="round"/>'+
-              '<circle cx="'+sx(last.x).toFixed(1)+'" cy="'+sz(last.z).toFixed(1)+'" r="5.5" '+
-              'fill="'+c+'" stroke="#0b0d11" stroke-width="1.5"/>';
+          // The ground as it was at the cursor. Nearest-neighbour scaling, so
+          // it reads as blocks rather than as a blur.
+          const groundImage=shot
+            // Addressed by the picture's own timestamp, not the cursor's:
+            // during playback the cursor changes every frame, and that URL
+            // would be a fresh request each time instead of a cache hit.
+            ? '<image href="/api/map?at='+shot.at+'&dim='+encodeURIComponent(allDim)+
+              '" x="'+sx(shot.minX).toFixed(1)+'" y="'+sz(shot.minZ).toFixed(1)+
+              '" width="'+(sx(shot.minX+shot.span)-sx(shot.minX)).toFixed(1)+
+              '" height="'+(sz(shot.minZ+shot.span)-sz(shot.minZ)).toFixed(1)+
+              '" preserveAspectRatio="none" style="image-rendering:pixelated" opacity=".92"/>'
+            : '';
+
+          const lines=names.map(n=>{
+            const c=playerColor(n);
+            const full=tracks[n].filter(inDim);
+            if(!full.length) return '';
+            const upto=full.filter(p=>p.at<=cursor);
+            const d=pts=>pts.map((p,i)=>(i?'L':'M')+sx(p.x).toFixed(1)+' '+
+              sz(p.z).toFixed(1)).join(' ');
+            // The whole path faintly, so you can see where to scrub to; the
+            // travelled part solid on top of it.
+            let out='<path d="'+d(full)+'" fill="none" stroke="'+c+'" stroke-width="1.6" '+
+              'stroke-opacity=".16" stroke-linejoin="round" stroke-linecap="round"/>';
+            if(upto.length){
+              out+='<path d="'+d(upto)+'" fill="none" stroke="'+c+'" stroke-width="2.5" '+
+                'stroke-opacity=".7" stroke-linejoin="round" stroke-linecap="round"/>';
+              const last=upto[upto.length-1];
+              out+='<circle cx="'+sx(last.x).toFixed(1)+'" cy="'+sz(last.z).toFixed(1)+
+                '" r="5.5" fill="'+c+'" stroke="#0b0d11" stroke-width="1.5"/>';
+            }
+            return out;
           }).join('');
 
           const dots=shownActs.map((a,i)=>{
-            // Fades with age inside the window, so the eye finds the newest.
-            const age=(cursor-a.at)/windowMs;
-            return '<circle class="tmk" data-i="'+i+'" cx="'+sx(a.x).toFixed(1)+'" cy="'+
-              sz(a.z).toFixed(1)+'" r="'+(6-age*2).toFixed(1)+'" fill="'+
-              (ACTION_COLOR[a.action]||'#9aa3ae')+'" fill-opacity="'+(0.95-age*0.6).toFixed(2)+
-              '" stroke="#0b0d11" stroke-width="1.5"/>';
+            // Recent is bright, older stays visible. Never to zero: a mark you
+            // cannot see is the same as one that is not drawn.
+            const age=Math.min(1,(cursor-a.at)/windowMs);
+            // Recent stands out, but the floor is high: over a long period
+            // almost everything is "old", and fading those to nothing would
+            // empty the map of the very marks it exists to show.
+            const fade=Math.max(0.55,0.98-age*0.43);
+            return '<g class="tmk" data-i="'+i+'" opacity="'+fade.toFixed(2)+'">'+
+              marker(a.action,+sx(a.x).toFixed(1),+sz(a.z).toFixed(1),
+                ACTION_COLOR[a.action]||'#9aa3ae',age>0.99?0.7:1)+'</g>';
           }).join('');
 
           box.innerHTML='<div class="mapwrap">'+
             '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" '+
             'aria-label="Where everyone was and what they did">'+
-            grid.join('')+lines+dots+'</svg>'+
+            grid.join('')+groundImage+lines+dots+'</svg>'+
             '<div class="maptip" id="t-tip"></div>'+
             '<div class="legend" id="t-legend"></div></div>';
 
           const used=[...new Set(shownActs.map(a=>a.action))];
+          const key=used.map(u=>'<span><svg width="16" height="16" viewBox="-8 -8 16 16" '+
+            'style="vertical-align:-3px">'+marker(u,0,0,ACTION_COLOR[u]||'#9aa3ae',0.8)+
+            '</svg> '+esc(u)+'</span>').join('');
           $('t-legend').innerHTML=
             paths.map(t=>'<span><i style="background:'+playerColor(t.name)+'"></i>'+
-              esc(t.name)+'</span>').join('')+
-            used.map(u=>'<span><i style="background:'+(ACTION_COLOR[u]||'#9aa3ae')+'"></i>'+
-              esc(u)+'</span>').join('')+
+              esc(t.name)+'</span>').join('')+key+
             '<span class="muted">'+paths.length+' player(s) · '+shownActs.length+
-            ' action(s) in view · '+Math.round(span)+' blocks across</span>';
+            ' action(s) by then · '+Math.round(span)+' blocks across'+
+            (shot?' · ground from '+fmtAgo(shot.at)
+                 :' · no picture of the ground yet (map-snapshot-seconds)')+
+            '</span>';
 
           const svg=box.querySelector('svg'), tip=$('t-tip');
           box.querySelectorAll('.tmk').forEach(el=>{

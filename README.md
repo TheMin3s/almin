@@ -364,10 +364,11 @@ one row.
 Both Activity tabs open on a map of **everyone, on one clock**: each tracked
 player's path from above — X across, Z down, the way Minecraft's own maps read
 — with the things they did marked along it. Drag the timeline to move through
-the period, or press Play to watch it: paths draw up to the cursor, and markers
-fade in and out as their moment passes. It answers the question you usually
-start with, which is not "where has this person been" but "what happened here,
-and who was around".
+the period, or press Play to watch it. Paths draw up to the cursor and recent
+marks stand out, but nothing disappears: scrub to a quiet minute and you still
+see where everything happened. It answers the question you usually start with,
+which is not "where has this person been" but "what happened here, and who was
+around".
 
 Underneath it, the web panel still has the single-player view: pick a name for
 that player's path on its own, and hover any marker for what happened and when.
@@ -376,9 +377,55 @@ Dimensions are drawn separately, because overworld and nether coordinates share
 numbers without sharing places. The web panel gives each one a button; in game,
 click the map to cycle.
 
-The in-game map receives a thinned copy of the paths — every nth point rather
-than the most recent ones, so a shorter path over the whole period beats a
-complete path over the last five minutes.
+**Every action has its own shape**, so a glance says what happened rather than
+only that something did. A block put down is a solid square; one taken away is
+the outline it left. Attacks are crossed swords, a hit taken is a burst, chat
+is a speech bubble, a container is a chest, arriving and leaving are arrows in
+and out. They are drawn, not fetched: the panel has to work on a server with no
+way out to the internet.
+
+#### The world under it
+
+The web map is drawn over a picture of the actual ground, and that picture
+changes with the timeline — scrub forward and a build appears.
+
+Almin takes them itself, on a timer: a top-down raster of the loaded area
+around whoever is playing, the same idea as a vanilla map — each column's top
+block in its map colour, shaded by whether the ground rises or falls going
+north. They are kept with a timestamp, and the map shows the newest one taken
+at or before wherever the cursor is.
+
+Only chunks the server already has loaded are drawn; anything else stays
+transparent. Generating terrain in order to photograph it would be an enormous
+cost for a picture nobody asked for, so the picture is of where people are —
+which is what the activity log is about anyway.
+
+Sampling has to happen on the server thread, because block states belong to it,
+so it is deliberately bounded; encoding the PNG and writing it happen on a
+daemon thread afterwards, where they cost nothing. One snapshot is taken at a
+time, so a slow disk delays the next rather than queueing up.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `map-snapshot-seconds` | `30` | how often a picture is taken; `0` leaves the map a grid |
+| `map-snapshot-keep` | `40` | how many are kept before the oldest are deleted |
+| `map-blocks-per-pixel` | `2` | detail; `1` is a pixel per block and four times the work |
+| `map-radius` | `192` | blocks either side of the players each picture covers |
+
+Pictures expire on the same clock as the activity log, and go when it is
+cleared. They are pictures of where people were, so they are not allowed to
+accumulate any more than the log is.
+
+Over a day a path covers kilometres and a picture covers a few hundred blocks,
+so one framing cannot serve both. **Fit** switches between them: *ground* keeps
+the world in view and follows the players as you scrub, *everything* zooms out
+to wherever anyone has been.
+
+The in-game map has the paths and the shapes but not the ground — the pictures
+are files, and the in-game screen is fed by a packet. It receives a thinned
+copy of the paths, every nth point rather than the most recent ones, so a
+shorter path over the whole period beats a complete path over the last five
+minutes.
 
 Movement is sampled, not followed: a position every `activity-track-seconds`,
 and only when the player has actually gone somewhere, so standing still adds
