@@ -163,6 +163,14 @@ final class WebPage {
           .speed button{background:none;border:0;color:var(--dim);padding:3px 8px;
                         border-radius:6px;font:inherit;font-size:12px;font-variant-numeric:tabular-nums}
           .speed button.on{background:var(--brand);color:#1a1205;font-weight:700}
+          .dims{display:flex;align-items:center;gap:2px;background:var(--card2);
+                border:1px solid var(--line);border-radius:8px;padding:2px 2px 2px 9px}
+          .dims .lbl{color:var(--mute);font-size:11px;text-transform:uppercase;
+                     letter-spacing:.7px;margin-right:5px}
+          .dims button{background:none;border:0;color:var(--dim);padding:3px 9px;
+                       border-radius:6px;font:inherit;font-size:12px;cursor:pointer}
+          .dims button:hover{color:var(--ink)}
+          .dims button.on{background:var(--brand);color:#1a1205;font-weight:700}
           .mapside{background:var(--card);border:1px solid var(--line);border-radius:12px;
                    padding:11px 12px;max-height:min(62vh,560px);overflow:auto}
           .mapside h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;
@@ -379,8 +387,9 @@ final class WebPage {
           .cmod .ban{border:1px solid #d7484a;color:#ff8f90;border-radius:999px;
                      padding:0 7px;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
           .maptip{position:absolute;pointer-events:none;background:#0b0d11;
-                  border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
-                  color:var(--ink);white-space:nowrap;opacity:0;transition:opacity .1s;z-index:2}
+                  border:1px solid var(--line);border-radius:6px;padding:5px 9px;font-size:12px;
+                  color:var(--ink);max-width:340px;opacity:0;transition:opacity .1s;z-index:3;
+                  line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.5)}
           .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:9px;font-size:12px;color:var(--dim)}
           .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;
                     margin-right:4px;vertical-align:-1px}
@@ -1422,7 +1431,27 @@ final class WebPage {
           setTimeout(loadPlayers,0);
           return wrap;
         }
-        function playerRow(p,sub,since){
+        /**
+         * When this player's last visit began.
+         *
+         * <p>Read off the path rather than off join and leave rows, which are
+         * only in the log if that player was being recorded at the time.
+         * Samples stop while somebody is offline, so a gap longer than a
+         * session's worth of standing still is where the last one started.
+         */
+        const SESSION_GAP=20*60*1000;
+        function lastSessionFrom(name){
+          const pts=((peopleData&&peopleData.tracks)||{})[name]||[];
+          if(pts.length<2) return 0;
+          let from=pts[pts.length-1].at;
+          for(let i=pts.length-1;i>0;i--){
+            if(pts[i].at-pts[i-1].at>SESSION_GAP) break;
+            from=pts[i-1].at;
+          }
+          return from;
+        }
+
+        function playerRow(p,sub,since,offline){
           const card=document.createElement('div'); card.className='pcard';
           const row=document.createElement('div'); row.className='row';
           row.style.alignItems='center'; row.style.gap='10px';
@@ -1483,8 +1512,8 @@ final class WebPage {
 
           const strips=document.createElement('div');
           strips.className='pstrips';
-          strips.appendChild(actionStrip(p.name,since));
-          strips.appendChild(pathMap(p.name,since));
+          strips.appendChild(actionStrip(p.name,since,offline));
+          strips.appendChild(pathMap(p.name,since,offline));
           card.appendChild(strips);
           return card;
         }
@@ -1497,17 +1526,18 @@ final class WebPage {
          *              doing" asked about a player who is here is a question
          *              about now, not about last week
          */
-        function actionStrip(name,since){
+        function actionStrip(name,since,offline){
           const box=document.createElement('div');
           box.className='pstrip acts';
-          if(since) box.setAttribute('title','This session only');
+          if(since) box.setAttribute('title',offline?'Their last visit only':'This session only');
           const acts=(peopleData&&peopleData.actions||[])
             .filter(a=>a.player===name && (!since || a.at>=since));
           if(!acts.length){
             // Saying which nothing it is: "nothing this session" and "nothing
             // ever" look identical otherwise, and they mean different things.
             box.innerHTML='<span class="none">'+
-              (since?'nothing this session':'nothing recorded')+'</span>';
+              (since?(offline?'nothing on their last visit':'nothing this session')
+                    :'nothing recorded')+'</span>';
             return box;
           }
           const by=new Map();
@@ -1534,14 +1564,15 @@ final class WebPage {
          * which. Without the bar the two would look identical, which would be
          * worse than no map at all.
          */
-        function pathMap(name,since){
+        function pathMap(name,since,offline){
           const box=document.createElement('div');
           box.className='pstrip mini';
           const all=((peopleData&&peopleData.tracks)||{})[name]||[];
           const pts=since?all.filter(q=>q.at>=since):all;
           if(pts.length<2){
             box.innerHTML='<span class="none">'+
-              (since?'has not moved this session':'no path recorded')+'</span>';
+              (since?(offline?'did not move last visit':'has not moved this session')
+                    :'no path recorded')+'</span>';
             return box;
           }
           // Where they are now, unless they have only just arrived there:
@@ -1557,7 +1588,8 @@ final class WebPage {
           const here=pts.filter(q=>q.dim===dim);
           if(here.length<2){
             box.innerHTML='<span class="none">'+
-              (since?'has not moved this session':'no path recorded')+'</span>';
+              (since?(offline?'did not move last visit':'has not moved this session')
+                    :'no path recorded')+'</span>';
             return box;
           }
           const xs=here.map(q=>q.x), zs=here.map(q=>q.z);
@@ -1667,6 +1699,7 @@ final class WebPage {
           s1.innerHTML='<h2>Online ('+online.length+' / '+(r.body.maxPlayers||0)+')</h2>';
           if(!online.length) s1.insertAdjacentHTML('beforeend','<div class="note">Nobody is connected.</div>');
           const now=Date.now();
+          const here=new Set(online.map(p=>p.name));
           for(const p of online){
             // What they have done since they joined, not since the log began.
             const since=p.sessionMillis>0?now-p.sessionMillis:0;
@@ -1677,9 +1710,15 @@ final class WebPage {
           const s2=document.createElement('section');
           s2.innerHTML='<h2>Seen before ('+hist.length+')</h2>';
           if(!hist.length) s2.insertAdjacentHTML('beforeend','<div class="note">No history recorded yet.</div>');
-          for(const p of hist.slice(0,150))
+          for(const p of hist.slice(0,150)){
+            // Somebody who is offline is asked about the last time they were
+            // on. Their whole path over five days is a scribble; the walk they
+            // took before logging off is a thing you can read.
+            const since=here.has(p.name)?0:lastSessionFrom(p.name);
             s2.appendChild(playerRow(p, p.joins+' join'+(p.joins===1?'':'s')+' · '+
-              fmtDur(p.playtimeMillis)+' played · last seen '+fmtAgo(p.lastSeen)));
+              fmtDur(p.playtimeMillis)+' played · last seen '+fmtAgo(p.lastSeen), since,
+              !here.has(p.name)));
+          }
           hs.appendChild(s2);
         }
         /**
@@ -1797,7 +1836,7 @@ final class WebPage {
                   '<button class="btn" id="t-skip">Skip quiet time</button>'+
                   '<button class="btn" id="t-golive">Back to live</button>'+
                   '<span class="spacer"></span>'+
-                  '<span class="muted" id="t-dims"></span>'+
+                  '<span class="dims" id="t-dims"></span>'+
                 '</div>'+
                 '<div id="t-filters"></div>'+
                 '<div class="legend" id="t-legend"></div>'+
@@ -2594,12 +2633,17 @@ final class WebPage {
           // One dimension at a time: overworld and nether coordinates share
           // numbers but not places, and drawing them together is a lie.
           const all=[].concat(...names.map(n=>tracks[n])).concat(acts);
-          const dims=[...new Set(all.map(p=>p.dim).filter(Boolean))];
+          // Somewhere there is a picture of counts too, not only somewhere
+          // somebody did something: a dimension nobody has been to since the
+          // log rolled over is still a dimension worth being able to look at.
+          const dims=[...new Set(all.map(p=>p.dim).filter(Boolean)
+            .concat(shots.map(sh=>sh.dim).filter(Boolean)))];
           if(!allDim || !dims.includes(allDim)) allDim=dims[0]||'';
           $('t-dims').innerHTML = dims.length>1
-            ? dims.map(d=>'<button class="btn'+(d===allDim?' on':'')+'" data-tdim="'+esc(d)+'" '+
-                'style="padding:3px 9px;font-size:12px;margin-left:6px">'+esc(d)+'</button>').join('')
-            : esc(allDim);
+            ? '<span class="lbl">Dimension</span>'+
+              dims.map(d=>'<button'+(d===allDim?' class="on"':'')+' data-tdim="'+esc(d)+'">'+
+                esc(prettyDim(d))+'</button>').join('')
+            : '<span class="lbl">'+esc(prettyDim(allDim))+'</span>';
 
           const from=allData.from||0;
           // The period is exactly what is saved, end to end. It used to run to
@@ -2897,13 +2941,13 @@ final class WebPage {
               const fade=ageOpacity('seq',cursor-e.to,windowMs);
               if(fade<=0) continue;
               const c=SEQUENCE_COLOR[e.kind]||'#ffab33';
-              const note=momentFor(e);
-              const label=(e.weight>=40||note)?(note?note.label:e.headline):'';
+              // The sentence waits for the pointer. Drawn always, a dozen of
+              // them cover the map they are describing — and the badge already
+              // says what kind of work it was, which is what a glance needs.
               seqs.push('<g class="tsq" data-i="'+seqShown.length+'" opacity="'+
                 fade.toFixed(2)+'" style="cursor:pointer">'+
                 sequenceIcon(e.kind,+ex.toFixed(1),+ey.toFixed(1),c,1.05*unitAdjust)+
-                (label?labelBox(ex,ey,label,c,note?note.why:''):'')+
-                '<title>'+esc(e.player+' — '+e.headline)+'</title></g>');
+                '</g>');
               seqShown.push(e);
             }
           }
@@ -3204,33 +3248,6 @@ final class WebPage {
           el.style.top=Math.max(6,Math.min(wrap.clientHeight-high-6,py-14))+'px';
         }
 
-        /**
-         * The label beside a sequence badge.
-         *
-         * <p>Drawn as SVG rather than as an HTML overlay so it pans and zooms
-         * with the thing it is labelling, and sits on its own dark plate so a
-         * sentence over grass is still a sentence.
-         */
-        function labelBox(x,y,text,c,why){
-          const line=text.length>46?text.slice(0,45)+'…':text;
-          const second=why?(why.length>52?why.slice(0,51)+'…':why):'';
-          const w=Math.max(line.length,second.length)*4.9+16;
-          const h=second?30:19;
-          // Flipped to the left when there is no room on the right.
-          const right=x+14+w<proj.W-6;
-          const bx=right?x+13:x-13-w;
-          const by=y-h/2;
-          return '<g class="sqlabel" pointer-events="none">'+
-            '<rect x="'+bx.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+w.toFixed(1)+
-            '" height="'+h+'" rx="4" fill="#0a0c10" fill-opacity=".84" stroke="'+c+
-            '" stroke-opacity=".5" stroke-width="1"/>'+
-            '<text x="'+(bx+8).toFixed(1)+'" y="'+(by+(second?12:13.5)).toFixed(1)+
-            '" fill="#e7ecf3" font-size="10.5" font-weight="600">'+esc(line)+'</text>'+
-            (second?'<text x="'+(bx+8).toFixed(1)+'" y="'+(by+24).toFixed(1)+
-              '" fill="#9aa3ae" font-size="9.5">'+esc(second)+'</text>':'')+
-            '</g>';
-        }
-
         /** The model's note about this stretch, if it made one. */
         function momentFor(e){
           if(!aiReport || !aiReport.moments) return null;
@@ -3241,6 +3258,7 @@ final class WebPage {
         }
 
         function wireSequences(box,shown){
+          const svg=$('t-svg'), tip=$('t-tip');
           box.querySelectorAll('.tsq').forEach(el=>{
             el.onclick=ev=>{ ev.stopPropagation();
               const e=shown[+el.getAttribute('data-i')];
@@ -3249,7 +3267,34 @@ final class WebPage {
               // map to it, which is all there is to show.
               if(hasShape(e)) openScene(e); else jumpTo(e.to,e.dim,e.x,e.z);
             };
+            if(!svg||!tip) return;
+            el.addEventListener('mouseenter',()=>{
+              const e=shown[+el.getAttribute('data-i')];
+              if(!e) return;
+              const note=momentFor(e);
+              tip.textContent=(e.mask||e.player)+' · '+e.headline+
+                (note&&note.why?' — '+note.why:'')+
+                ' · '+fmtAgo(e.to)+(hasShape(e)?' · click to see it':'');
+              placeTip(tip,el,svg,box);
+            });
+            el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
           });
+        }
+
+        /** Puts the tooltip over one mark, wherever that mark is on screen. */
+        function placeTip(tip,el,svg,box){
+          const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect();
+          const g=el.getBBox();
+          const scale=Math.min(r.width/proj.W,r.height/proj.H);
+          const ox=(r.width-proj.W*scale)/2, oy=(r.height-proj.H*scale)/2;
+          const x=r.left-b.left+ox+(g.x+g.width/2)*scale;
+          const y=r.top-b.top+oy+g.y*scale-26;
+          // Kept inside the map, or a mark near the edge points its label off
+          // the side of the panel.
+          tip.style.opacity='1';
+          const wide=tip.offsetWidth||160;
+          tip.style.left=Math.max(6,Math.min(box.clientWidth-wide-6,x-wide/2))+'px';
+          tip.style.top=Math.max(4,y)+'px';
         }
 
         /** Who is on right now, greyed if they have stopped moving. */
@@ -3680,14 +3725,19 @@ final class WebPage {
               tip.textContent=(a.mask?a.mask+' ('+a.player+')':a.player)+' · '+a.action+
                 (a.count>1?' x'+a.count:'')+(a.detail?' · '+a.detail:'')+
                 ' · '+a.x+','+a.y+','+a.z+' · '+fmtAgo(a.at);
-              const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect();
-              const g=el.getBBox();
-              tip.style.left=(r.left-b.left+(g.x+g.width/2)/W*r.width)+'px';
-              tip.style.top=(r.top-b.top+g.y/H*r.height-26)+'px';
-              tip.style.opacity='1';
+              placeTip(tip,el,svg,box);
             });
             el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
           });
+        }
+
+        /** "the_nether" is what the game calls it; "Nether" is what people do. */
+        function prettyDim(d){
+          if(!d) return '';
+          const known={overworld:'Overworld', the_nether:'Nether', the_end:'The End'};
+          if(known[d]) return known[d];
+          return d.replace(/^the_/,'').replace(/_/g,' ')
+                  .replace(/^./,ch=>ch.toUpperCase());
         }
 
         function wireDims(){

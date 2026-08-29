@@ -291,7 +291,12 @@ about now, not about last week — and it says which nothing it is when there is
 none.
 
 And **where they went**: their path over the ground it was walked on, framed to
-fit whatever they actually did — someone who spent the day in one room and someone who walked to
+fit whatever they actually did. For somebody who is offline that is **their
+last visit** rather than their whole week — the week is a scribble, and the
+walk they took before logging off is a thing you can read. The visit is found
+from the samples themselves, since a gap longer than twenty minutes is where
+they were not here; join and leave rows would only work for players who were
+being recorded at the time. Their action strip follows the same window — someone who spent the day in one room and someone who walked to
 the badlands both get a picture that fills the box, with a scale bar underneath
 saying which is which. Without the bar the two would look identical, which
 would be worse than no map at all.
@@ -520,7 +525,10 @@ Underneath it, the web panel still has the single-player view: pick a name for
 that player's path on its own, and hover any marker for what happened and when.
 
 Dimensions are drawn separately, because overworld and nether coordinates share
-numbers without sharing places. The web panel gives each one a button; in game,
+numbers without sharing places. A labelled switcher under the timeline names
+them the way people do — Overworld, Nether, The End — and lists any dimension
+there is either activity or a picture of the ground for, so somewhere nobody
+has been since the log rolled over is still somewhere you can look at. In game,
 click the map to cycle.
 
 **Every action has its own shape**, so a glance says what happened rather than
@@ -613,9 +621,10 @@ axe for felling trees, a hammer for a build, a sword for a fight, boots for a
 journey — worked out from what was actually broken, so digging through sand
 gets a shovel and digging through stone gets a pickaxe. Where the server has
 textures they are the game's own iron tools; where it has none they are drawn,
-which is the same fallback the ground has. Notable ones carry
-their sentence beside them, and once a model is connected the badge carries
-what the model said about it instead. Clicking one opens it.
+which is the same fallback the ground has. Point at one and it says what it was — and what the model said about it, once
+one is connected. It waits for the pointer on purpose: a dozen sentences drawn
+across the map cover the map they are describing, and the badge already says
+what kind of work it was, which is what a glance needs. Clicking one opens it.
 
 #### What a stretch of work actually built
 
@@ -843,9 +852,15 @@ minutes.
 
 Movement is sampled, not followed: a position every `activity-track-seconds`,
 and only when the player has actually gone somewhere, so standing still adds
-nothing. Points are held in memory only and expire on the same clock as the
-log — they are never written to disk, so a restart starts the map fresh. That
-is a deliberate limit on how long a record of someone's movements can exist.
+nothing. Points expire on the same clock as the log, which is the limit on how
+long a record of someone's movements exists.
+
+They are written to `config/almin/tracks.json` and picked up again at the next
+start. Holding them in memory only sounded like a privacy measure and was
+really an inconsistency — every row in the activity log carries the coordinates
+it happened at and has always been written to disk — and it meant a player who
+was offline had no path at all, which is exactly when you want one. Clearing
+the log deletes the file with everything else.
 
 Block edits would otherwise drown everything else, so consecutive edits of the
 same block by the same player fold into one row with a count — `break ×47

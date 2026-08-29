@@ -46,6 +46,7 @@ public class Almin implements ModInitializer {
             WorldSnapshots.init(server);
             AiInsights.init(server.getServerDirectory());
             ClientProfiles.init(server);
+            PlayerTracks.init(server);
             BlockTextures.init(server);
         });
         // Boot-time update check — runs after config is loaded. With auto-update
@@ -76,6 +77,7 @@ public class Almin implements ModInitializer {
             WebUi.onServerStopped();
             ConsoleTap.stop();
             ActivityLog.close();
+            PlayerTracks.save();
             WorldSnapshots.close();
             AiInsights.close();
             BlockTextures.close();
