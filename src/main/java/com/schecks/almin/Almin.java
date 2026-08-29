@@ -52,6 +52,10 @@ public class Almin implements ModInitializer {
         // PlayerTracks; this only has to offer it the tick.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
             .register(PlayerTracks::sample);
+        // Who has stopped moving. Its own schedule lives in Afk; this only has
+        // to offer the tick.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
+            .register(Afk::tick);
         // Pictures of the ground, so the map has a world under it. Its own
         // schedule lives in WorldSnapshots; this only has to offer the tick.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK

@@ -111,6 +111,14 @@ public final class PlayerTracks {
         return List.of();
     }
 
+    /** The UUID behind a tracked name, or null — the map draws faces from it. */
+    public static synchronized UUID uuidOf(String name) {
+        for (Map.Entry<UUID, String> e : names.entrySet()) {
+            if (e.getValue().equalsIgnoreCase(name)) return e.getKey();
+        }
+        return null;
+    }
+
     /** Everyone with a path, name to point count. */
     public static synchronized Map<String, Integer> tracked() {
         Map<String, Integer> out = new LinkedHashMap<>();

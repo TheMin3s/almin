@@ -2058,7 +2058,12 @@ public final class WebUi {
 
             // Everyone at once, for the timeline map at the top of the tab.
             if ("1".equals(queryParam(ex, "all"))) {
-                json(ex, 200, allTracksJson(root).toString());
+                // The player list belongs to the server thread; everything else
+                // here is a synchronized snapshot and does not.
+                List<Afk.Who> online = serverRunning
+                    ? onServer(() -> Afk.online(server), List.<Afk.Who>of())
+                    : List.<Afk.Who>of();
+                json(ex, 200, allTracksJson(root, online == null ? List.of() : online).toString());
                 return;
             }
 
@@ -2116,9 +2121,12 @@ public final class WebUi {
      * around" — which needs everyone on the same timeline or it answers
      * nothing.
      */
-    private JsonObject allTracksJson(JsonObject root) {
+    private JsonObject allTracksJson(JsonObject root, List<Afk.Who> online) {
         long from = Long.MAX_VALUE, to = 0;
 
+        // Name to UUID, so the map can draw a face at each path's head rather
+        // than a coloured dot with a label beside it.
+        JsonObject ids = new JsonObject();
         JsonObject tracks = new JsonObject();
         for (String name : PlayerTracks.tracked().keySet()) {
             JsonArray points = new JsonArray();
@@ -2133,7 +2141,10 @@ public final class WebUi {
                 from = Math.min(from, p.at());
                 to = Math.max(to, p.at());
             }
-            if (!points.isEmpty()) tracks.add(name, points);
+            if (points.isEmpty()) continue;
+            tracks.add(name, points);
+            java.util.UUID id = PlayerTracks.uuidOf(name);
+            if (id != null) ids.addProperty(name, id.toString());
         }
 
         JsonArray actions = new JsonArray();
@@ -2155,9 +2166,30 @@ public final class WebUi {
             to = Math.max(to, e.at());
         }
 
+        // Who is on right now, and who among them has stopped moving. Live
+        // rather than historical: the overlay answers "who is here", which the
+        // timeline cannot, because a path ends when someone leaves.
+        JsonArray who = new JsonArray();
+        for (Afk.Who w : online) {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", w.name());
+            o.addProperty("uuid", w.uuid());
+            o.addProperty("afk", w.afk());
+            o.addProperty("stillSince", w.stillSince());
+            o.addProperty("dim", w.dim());
+            o.addProperty("x", w.x());
+            o.addProperty("y", w.y());
+            o.addProperty("z", w.z());
+            o.addProperty("mask", maskOf(w.uuid()));
+            who.add(o);
+        }
+
         root.addProperty("all", true);
         root.add("tracks", tracks);
+        root.add("ids", ids);
         root.add("actions", actions);
+        root.add("online", who);
+        root.addProperty("afkSeconds", AlminConfig.get().activityAfkSeconds);
         root.addProperty("from", from == Long.MAX_VALUE ? 0 : from);
         root.addProperty("to", to);
         root.add("admins", adminPolicyJson());

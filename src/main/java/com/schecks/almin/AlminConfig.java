@@ -141,6 +141,14 @@ public final class AlminConfig {
      */
     public int activityTrackSeconds = 5;
     /**
+     * Seconds of not moving before a player counts as away. 0 turns it off.
+     *
+     * <p>Standing still is the only signal a server can be sure of: a client
+     * that has stopped sending movement is indistinguishable from a player who
+     * has stopped moving, which is exactly what AFK means.
+     */
+    public int activityAfkSeconds = 20;
+    /**
      * Seconds between pictures of the ground for the activity map. 0 turns
      * them off, leaving the map a grid with paths on it.
      *
@@ -153,11 +161,12 @@ public final class AlminConfig {
     /** How many pictures are kept before the oldest are deleted. */
     public int mapSnapshotKeep = 40;
     /**
-     * Blocks per pixel. 1 is a pixel per block and four times the work of 2,
-     * which is the default because a path drawn over it is not that precise
-     * anyway.
+     * Blocks per pixel. 1 is a pixel per block, and the default: the map is
+     * something people zoom into, and a picture that goes soft the moment you
+     * do is not worth the saving. 2 is four times cheaper if a server needs
+     * it back.
      */
-    public int mapBlocksPerPixel = 2;
+    public int mapBlocksPerPixel = 1;
     /** Blocks either side of the players the picture covers. */
     public int mapRadius = 192;
     /**
@@ -286,11 +295,13 @@ public final class AlminConfig {
             c -> c.activityItems, (c, v) -> c.activityItems = (Boolean) v),
         intKey("activity-track-seconds", "Seconds between position samples for the map (0 = no map)", 0, 300,
             c -> c.activityTrackSeconds, (c, v) -> c.activityTrackSeconds = (Integer) v),
+        intKey("activity-afk-seconds", "Seconds of not moving before a player counts as away (0 = never)", 0, 600,
+            c -> c.activityAfkSeconds, (c, v) -> c.activityAfkSeconds = (Integer) v),
         intKey("map-snapshot-seconds", "Seconds between pictures of the ground for the map (0 = no world under it)", 0, 600,
             c -> c.mapSnapshotSeconds, (c, v) -> c.mapSnapshotSeconds = (Integer) v),
         intKey("map-snapshot-keep", "How many pictures of the ground are kept", 2, 500,
             c -> c.mapSnapshotKeep, (c, v) -> c.mapSnapshotKeep = (Integer) v),
-        intKey("map-blocks-per-pixel", "Detail of those pictures; 1 is finest and costs the most", 1, 8,
+        intKey("map-blocks-per-pixel", "Detail of those pictures; 1 is a pixel per block and costs the most", 1, 8,
             c -> c.mapBlocksPerPixel, (c, v) -> c.mapBlocksPerPixel = (Integer) v),
         intKey("map-radius", "Blocks either side of the players each picture covers", 32, 512,
             c -> c.mapRadius, (c, v) -> c.mapRadius = (Integer) v),

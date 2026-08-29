@@ -396,6 +396,7 @@ public final class ActivityLog {
         // The map is the same record seen another way; it goes too — the
         // paths, and the pictures of the ground they were drawn over.
         PlayerTracks.clear();
+        Afk.clear();
         WorldSnapshots.clear();
         pending.clear();
         pendingCount.set(0);

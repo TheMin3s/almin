@@ -378,7 +378,8 @@ life rather than accumulating: a day by default, from memory and from
 | `activity-combat` | `true` | damage taken, hits landed, deaths |
 | `activity-items` | `true` | item use, entity interaction, containers |
 | `activity-track-seconds` | `5` | position sampling for the map; 0 turns it off |
-| `web-player-heads` | `true` | player faces in the panel's lists; off means Almin never asks Mojang |
+| `web-player-heads` | `true` | player faces in the panel's lists and on the map; off means Almin never asks Mojang |
+| `activity-afk-seconds` | `20` | seconds of not moving before a player counts as away; 0 turns it off |
 
 Recorded: joins and leaves, chat, commands, blocks placed, blocks broken,
 blocks used, containers opened, item use, entity interaction, hits landed,
@@ -417,6 +418,40 @@ is a speech bubble, a container is a chest, arriving and leaving are arrows in
 and out. They are drawn, not fetched: the panel has to work on a server with no
 way out to the internet.
 
+#### Moving around it
+
+The map is a viewer, not a picture. Scroll to zoom about the pointer — the
+block under the cursor stays under it — and drag to move. The buttons in the
+corner zoom in, zoom out, and put the framing back to everything in view.
+
+Every player's **face** is drawn where they were at the cursor, so scrubbing
+moves them along their paths. Clicking a face — or a name in the legend, or
+anyone in the online strip — **focuses** that player: the map, the timeline
+ticks and the side list all drop everyone else. Click again to get them back.
+
+On a wide enough screen a panel opens beside the map with what happened, chat
+included, newest at the cursor first. Clicking a line takes the map to that
+moment and that place. Above the map, a strip shows who is online now, with
+anyone who has stopped moving greyed out. The cog in the bottom corner hides
+both.
+
+#### The timeline
+
+Two strips. The thin one on top is the whole period with the visible slice
+marked; the one below is that slice, drawn large. Scroll it to zoom about the
+pointer, drag it to scrub, and drag the top strip to move the window. **Whole
+period** puts it back.
+
+Stretches when nobody was on are hatched and labelled, and **Skip quiet time**
+makes playback jump over them — an empty map is not worth watching in real
+time. Playback speed runs from a quarter to eight times.
+
+A player counts as away after `activity-afk-seconds` (twenty by default) of not
+moving. Standing still is the only signal a server can be sure of: a client
+that has stopped sending movement is indistinguishable from a player who has
+stopped moving, which is what AFK means. Going away is recorded as an action
+like any other, so it shows on the map and in the log.
+
 #### The world under it
 
 The web map is drawn over a picture of the actual ground, and that picture
@@ -442,7 +477,7 @@ time, so a slow disk delays the next rather than queueing up.
 |---|---|---|
 | `map-snapshot-seconds` | `30` | how often a picture is taken; `0` leaves the map a grid |
 | `map-snapshot-keep` | `40` | how many are kept before the oldest are deleted |
-| `map-blocks-per-pixel` | `2` | detail; `1` is a pixel per block and four times the work |
+| `map-blocks-per-pixel` | `1` | detail; `1` is a pixel per block, `2` is four times cheaper |
 | `map-radius` | `192` | blocks either side of the players each picture covers |
 
 Pictures expire on the same clock as the activity log, and go when it is
