@@ -506,6 +506,17 @@ cannot reach the internet. A mod with no icon anywhere gets its initial.
 /almin mods reload                   re-read mods.json
 ```
 
+To pull a file onto the server from a link, without a browser:
+
+```
+/almin op fetch mod <https-url> [restart]
+/almin op fetch datapack|config|resourcepack <https-url> [restart]
+/almin op fetch <dest-path> <https-url> [restart]
+```
+
+The first form works out the filename from the link and puts it in `mods/`;
+the last one puts it exactly where you say.
+
 ### Adding from Modrinth
 
 The easiest way, and the one that gets the mod id right:

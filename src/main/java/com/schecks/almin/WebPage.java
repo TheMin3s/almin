@@ -212,6 +212,12 @@ final class WebPage {
                   color:var(--mute);display:block;padding:6px 10px 3px}
           .menu hr{border:0;border-top:1px solid var(--line);margin:5px 3px}
           .menu .sub{color:var(--mute);font-size:11.5px;margin-left:auto;padding-left:12px}
+          .countdown{display:flex;align-items:center;gap:18px;margin:18px 0 8px}
+          .cdnum{font-size:44px;font-weight:650;letter-spacing:-1.5px;min-width:72px;
+                 text-align:center;color:var(--brand);line-height:1}
+          .cdbar{flex:1;height:8px;border-radius:99px;background:var(--track);overflow:hidden}
+          .cdbar i{display:block;height:100%;border-radius:99px;background:var(--brand);
+                   transition:width 1s linear}
           .chip{display:inline-block;padding:1px 7px;border-radius:5px;font-size:10.5px;
                 font-weight:700;letter-spacing:.5px;text-transform:uppercase;
                 border:1px solid var(--line);color:var(--dim);vertical-align:1px}
@@ -337,9 +343,16 @@ final class WebPage {
           return img;
         }
 
-        let openMenu=null, openScrim=null;
+        let openMenu=null, openScrim=null, onScrimClose=null;
         function closeMenu(){ if(openMenu){ openMenu.remove(); openMenu=null; } }
-        function closeModal(){ if(openScrim){ openScrim.remove(); openScrim=null; } }
+        function closeModal(){
+          if(!openScrim) return;
+          openScrim.remove(); openScrim=null;
+          // Whoever opened it may have something running on its behalf — a
+          // countdown, say — that has no business outliving the dialog.
+          const done=onScrimClose; onScrimClose=null;
+          if(done) done();
+        }
         document.addEventListener('keydown',e=>{
           if(e.key!=='Escape') return;
           if(openMenu) closeMenu(); else closeModal();
@@ -392,16 +405,19 @@ final class WebPage {
           const box=document.createElement('div');
           box.className='modal'+((opts&&opts.wide)?' wide':'');
           const top=document.createElement('div'); top.className='mtop';
-          const h=document.createElement('h3'); h.textContent=title;
+          const h=document.createElement('h3'); h.id='modal-title'; h.textContent=title;
           const x=document.createElement('button'); x.className='btn'; x.textContent='Close';
           x.onclick=closeModal;
           top.append(h,x);
-          const body=document.createElement('div');
+          const body=document.createElement('div'); body.id='modal-body';
+          // Named, so anything that wants to replace what is in the dialog can
+          // ask for it rather than guess at the structure from the outside.
           box.append(top,body);
           scrim.appendChild(box);
           scrim.onclick=e=>{ if(e.target===scrim) closeModal(); };
           document.body.appendChild(scrim);
           openScrim=scrim;
+          onScrimClose=(opts&&opts.onClose)||null;
           build(body,closeModal);
           return body;
         }
@@ -1787,7 +1803,7 @@ final class WebPage {
             $('s-pwgo').onclick=setPassword;
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
-            $('s-apply').onclick=applyUpdate;
+            $('s-apply').onclick=updateDialog;
             $('s-clearlog').onclick=clearLog;
             $('s-reload').onclick=reloadConfig;
           },0);
@@ -1815,6 +1831,7 @@ final class WebPage {
                                         :(r.body.error||'failed');
           if(r.status===200){ $('s-pw').value=''; pwSet=true; }
         }
+        let updateInfo=null;
         async function loadUpdate(force){
           const box=$('s-update'), apply=$('s-apply'); if(!box) return;
           box.textContent='checking…'; if(apply) apply.disabled=true;
@@ -1823,6 +1840,7 @@ final class WebPage {
           const r=await jget('/api/update'+(force?'?force=1':''));
           if(r.status!==200){ box.textContent='unavailable'; return; }
           const b=r.body;
+          updateInfo=b;
           const head='Running <b>v'+esc(b.current)+'</b> · <span class="muted">'+esc(b.repo||'')+'</span>';
           if(b.status==='current'){ box.innerHTML=head+' — up to date.'; }
           else if(b.status==='available'){
@@ -1831,21 +1849,137 @@ final class WebPage {
             if(apply) apply.disabled=!b.hasJar;
           } else { box.innerHTML=head+' — check failed: '+esc(b.reason||'unknown'); }
         }
+        /**
+         * The update dialog: what is about to happen, then a countdown.
+         *
+         * <p>Installing takes the server away and brings it back, and the
+         * panel goes with it because the panel is part of what was updated.
+         * The old flow said so in a browser confirm() and then left the page
+         * looking idle for however long a world takes to boot. This says the
+         * same thing, then counts.
+         */
+        function updateDialog(){
+          const to = updateInfo && updateInfo.latest ? 'v'+updateInfo.latest : 'the new version';
+          modal('Install '+to,(body,close)=>{
+            body.innerHTML=
+              '<p>Download <b>'+esc(to)+'</b>, install it, and restart the server.</p>'+
+              '<p class="muted">Players are disconnected. This panel is part of what gets '+
+              'updated, so the page reloads itself onto the new one — you do not have to '+
+              'reload it yourself.</p>'+
+              '<div class="row2"><button class="btn go" id="up-go">Download &amp; install</button>'+
+              '<button class="btn" id="up-no">Cancel</button></div>'+
+              '<div class="msg" id="up-msg"></div>';
+            $('up-no').onclick=close;
+            $('up-go').onclick=applyUpdate;
+          });
+        }
+
+        // How long the page waits before reloading itself. Long enough for a
+        // small world to be back, short enough to feel like a wait and not an
+        // abandonment. It reloads sooner if the server answers sooner.
+        const RELOAD_AFTER=20;
+        // countGen retires a run: closing the dialog or starting a fresh
+        // countdown bumps it, and anything still in flight against the old
+        // number stops rather than reloading the page under someone.
+        let reloadTimer=null, reloadLeft=0, countGen=0;
+
         async function applyUpdate(){
-          const msg=$('s-upmsg');
-          if(!confirm('Download and install the new version, then restart?\\n\\n'+
-                      'Players are disconnected. This panel is part of what gets '+
-                      'updated, so the page reloads itself onto the new one when '+
-                      'the server is back.')) return;
-          msg.className='msg'; msg.textContent='Downloading…'; $('s-apply').disabled=true;
+          const msg=$('up-msg'), go=$('up-go'), no=$('up-no');
+          if(go) go.disabled=true;
+          if(msg){ msg.className='msg'; msg.textContent='Downloading…'; }
+          const apply=$('s-apply'); if(apply) apply.disabled=true;
           const r=await jpost('/api/update',{restart:true});
-          msg.className='msg '+(r.body.ok?'ok':'err');
-          msg.textContent=r.body.message||r.body.error||'failed';
-          if(r.body.restarting && r.body.relaunch){
-            awaitingReturn=true; waitingSince=Date.now(); showWaiting(); return;
+          const out=$('s-upmsg');
+          if(out){ out.className='msg '+(r.body.ok?'ok':'err');
+            out.textContent=r.body.message||r.body.error||'failed'; }
+          if(!r.body.restarting){
+            // Nothing is going away, so there is nothing to count down to.
+            if(msg){ msg.className='msg '+(r.body.ok?'ok':'err');
+              msg.textContent=r.body.message||r.body.error||'failed'; }
+            if(go) go.disabled=false;
+            if(no) no.textContent='Close';
+            loadUpdate(true);
+            return;
           }
-          if(r.body.restarting) return;    // stopping, with nothing here to bring it back
-          loadUpdate(true);
+          if(!r.body.relaunch){
+            // Stopping, with nothing here to bring it back. Saying "reloading
+            // in 20 seconds" would be a promise this cannot keep.
+            if(msg){ msg.className='msg';
+              msg.textContent=(r.body.message||'Installed.')+
+                ' The server is stopping; whatever starts it will bring the panel back.'; }
+            if(no) no.textContent='Close';
+            return;
+          }
+          awaitingReturn=true; waitingSince=Date.now();
+          showWaiting();
+          countdown();
+        }
+
+        /** Swaps the dialog into a countdown and starts it. */
+        function countdown(){
+          const body=$('modal-body');
+          if(!body){ startCountdown(); return; }
+          const title=$('modal-title');
+          if(title) title.textContent='Restarting';
+          body.innerHTML=
+            '<p class="muted">Installed. The server is starting again.</p>'+
+            '<div class="countdown"><div class="cdnum num" id="cd-num">'+RELOAD_AFTER+'</div>'+
+            '<div class="cdbar"><i id="cd-bar" style="width:100%"></i></div></div>'+
+            '<p class="muted" id="cd-note">This page reloads itself when the count runs out, '+
+            'or as soon as the server answers again — whichever comes first.</p>'+
+            '<div class="row2"><button class="btn" id="cd-now">Reload now</button></div>';
+          $('cd-now').onclick=()=>location.reload();
+          // Closing the dialog is a way out, not a trap: it stops the timer.
+          // The page still comes back on its own once the server answers, the
+          // way it did before any of this existed.
+          onScrimClose=stopCountdown;
+          startCountdown();
+        }
+
+        function startCountdown(){
+          stopCountdown();
+          const gen=countGen;
+          reloadLeft=RELOAD_AFTER;
+          paintCountdown();
+          reloadTimer=setInterval(()=>{
+            reloadLeft--;
+            paintCountdown();
+            if(reloadLeft>0) return;
+            // Not stopCountdown(): that retires this run, and this run is the
+            // one about to finish.
+            clearInterval(reloadTimer); reloadTimer=null;
+            finishCountdown(gen);
+          },1000);
+        }
+        function stopCountdown(){
+          countGen++;
+          if(reloadTimer){ clearInterval(reloadTimer); reloadTimer=null; }
+        }
+        function paintCountdown(){
+          const n=$('cd-num'), bar=$('cd-bar');
+          if(n) n.textContent=Math.max(0,reloadLeft);
+          if(bar) bar.style.width=Math.max(0,(reloadLeft/RELOAD_AFTER)*100)+'%';
+        }
+
+        /**
+         * The count has run out. Reload — but only onto something that is
+         * there: reloading at zero onto a server still booting would replace a
+         * page explaining itself with the browser's connection error.
+         */
+        async function finishCountdown(gen){
+          if(gen!==countGen) return;             // retired: closed, or superseded
+          const note=$('cd-note');
+          if(!note) return;                      // dialog gone; poll still has it
+          try {
+            const r=await fetch('/api/session',
+              {credentials:'same-origin',cache:'no-store'});
+            if(r.ok){ location.reload(); return; }
+          } catch(e){ /* still down */ }
+          const n=$('cd-num'); if(n) n.textContent='…';
+          const bar=$('cd-bar'); if(bar) bar.style.width='100%';
+          note.textContent='Still starting — a big world takes a while. '+
+            'This page reloads the moment the server answers.';
+          setTimeout(()=>finishCountdown(gen),3000);
         }
         async function clearLog(){
           const msg=$('s-upmsg');

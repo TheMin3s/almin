@@ -225,8 +225,45 @@ public final class ActivityLog {
     public static boolean watched(ServerPlayer player) {
         if (player == null) return false;
         if (includeAdmins()) return true;
-        if (TrustedOps.isTrusted(player.getUUID())) return false;
-        return !player.permissions().hasPermission(Permissions.COMMANDS_MODERATOR);
+        return !isAdmin(player);
+    }
+
+    /**
+     * Whether this is an admin driving Almin itself.
+     *
+     * <p>Never recorded, and not subject to {@code activity-include-admins}
+     * either. The log is read through {@code /almin}, so recording those
+     * commands means every admin who opens the activity screen writes a row
+     * about having opened it — the log fills with the act of looking at it,
+     * and the thing it exists to show gets pushed off the end. Turning admin
+     * tracking on is a choice to watch what admins <em>do in the world</em>,
+     * not to watch them read.
+     *
+     * <p>An ordinary player typing {@code /almin} is still recorded: that is
+     * someone finding the tool, which is worth seeing.
+     */
+    private static boolean ownCommand(ServerPlayer player, String action, String detail) {
+        return isOwnCommand(action, detail) && isAdmin(player);
+    }
+
+    /**
+     * The string half of the rule above, without a player.
+     *
+     * <p>Deliberately exact: {@code /alminx} and {@code /admin} are somebody
+     * else's commands and stay in the log.
+     */
+    static boolean isOwnCommand(String action, String detail) {
+        if (!"command".equals(action) || detail == null) return false;
+        String typed = detail.trim();
+        if (typed.startsWith("/")) typed = typed.substring(1).trim();
+        return typed.equals(Almin.MOD_ID) || typed.startsWith(Almin.MOD_ID + " ");
+    }
+
+    /** Trusted UUID, or moderator permission and above — every vanilla op. */
+    private static boolean isAdmin(ServerPlayer player) {
+        if (player == null) return false;
+        if (TrustedOps.isTrusted(player.getUUID())) return true;
+        return player.permissions().hasPermission(Permissions.COMMANDS_MODERATOR);
     }
 
     /** Records one action, if the log is on and this player is watched. */
@@ -245,6 +282,7 @@ public final class ActivityLog {
 
     private static void record(ServerPlayer player, String action, String detail, boolean fold) {
         if (!AlminConfig.get().activityLog) return;
+        if (ownCommand(player, action, detail)) return;
         if (!watched(player)) return;
         store(player.getGameProfile().name(), player.getUUID().toString(),
             action, detail, player, player.blockPosition(), fold);

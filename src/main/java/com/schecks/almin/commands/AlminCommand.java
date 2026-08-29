@@ -89,6 +89,22 @@ public final class AlminCommand {
     };
 
     /** Tab-completion for entries in the server's shared/ folder (/almin get). */
+    private static final List<String> FETCH_CATEGORIES =
+        List.of("mod", "datapack", "config", "resourcepack");
+
+    /** The four category words, so the greedy argument still completes them. */
+    private static final SuggestionProvider<CommandSourceStack> FETCH_SUGGESTIONS = (ctx, builder) -> {
+        String typed = builder.getRemaining();
+        // Only while the first word is still being typed: after that the
+        // player is on the URL, and there is nothing useful to offer.
+        if (!typed.contains(" ")) {
+            for (String c : FETCH_CATEGORIES) {
+                if (c.startsWith(typed.toLowerCase(java.util.Locale.ROOT))) builder.suggest(c);
+            }
+        }
+        return builder.buildFuture();
+    };
+
     private static final SuggestionProvider<CommandSourceStack> SHARED_SUGGESTIONS = (ctx, builder) -> {
         String remaining = builder.getRemaining().toLowerCase();
         for (Path p : FileShare.listShared()) {
@@ -250,34 +266,19 @@ public final class AlminCommand {
                         .executes(AlminCommand::opNanoSave))
                     .then(Commands.argument("path", StringArgumentType.greedyString())
                         .executes(AlminCommand::opNanoLoad)))
+                // /almin op fetch <mod|datapack|config|resourcepack|dest> <url> [restart]
+                //
+                // One greedy argument rather than a tree of literals, because
+                // the tree could not accept a URL. Brigadier's quotable string
+                // stops at the first character an unquoted word may not hold,
+                // and "https://..." fails on the colon — so every form of this
+                // command was rejected before it reached the server, with an
+                // error pointing at "https" and no hint that the fix was to
+                // put quotes round something the docs showed unquoted.
                 .then(Commands.literal("fetch")
-                    // Category shortcuts: /almin op fetch mod <url> [restart]
-                    .then(Commands.literal("mod")
-                        .then(Commands.argument("url", StringArgumentType.string())
-                            .executes(ctx -> opFetchCategory(ctx, "mod", false))
-                            .then(Commands.literal("restart")
-                                .executes(ctx -> opFetchCategory(ctx, "mod", true)))))
-                    .then(Commands.literal("datapack")
-                        .then(Commands.argument("url", StringArgumentType.string())
-                            .executes(ctx -> opFetchCategory(ctx, "datapack", false))
-                            .then(Commands.literal("restart")
-                                .executes(ctx -> opFetchCategory(ctx, "datapack", true)))))
-                    .then(Commands.literal("config")
-                        .then(Commands.argument("url", StringArgumentType.string())
-                            .executes(ctx -> opFetchCategory(ctx, "config", false))
-                            .then(Commands.literal("restart")
-                                .executes(ctx -> opFetchCategory(ctx, "config", true)))))
-                    .then(Commands.literal("resourcepack")
-                        .then(Commands.argument("url", StringArgumentType.string())
-                            .executes(ctx -> opFetchCategory(ctx, "resourcepack", false))
-                            .then(Commands.literal("restart")
-                                .executes(ctx -> opFetchCategory(ctx, "resourcepack", true)))))
-                    // Flexible form: /almin op fetch <dest> <url> [restart]
-                    .then(Commands.argument("dest", StringArgumentType.string())
-                        .then(Commands.argument("url", StringArgumentType.string())
-                            .executes(ctx -> opFetchFlexible(ctx, false))
-                            .then(Commands.literal("restart")
-                                .executes(ctx -> opFetchFlexible(ctx, true)))))))
+                    .then(Commands.argument("args", StringArgumentType.greedyString())
+                        .suggests(FETCH_SUGGESTIONS)
+                        .executes(AlminCommand::opFetch))))
         );
     }
 
@@ -1156,12 +1157,44 @@ public final class AlminCommand {
 
     // ---------- /almin op fetch + /almin op restart ----------
 
-    private static int opFetchCategory(CommandContext<CommandSourceStack> ctx, String category, boolean restartAfter)
+    /**
+     * Splits the one greedy argument into destination, URL and the optional
+     * trailing {@code restart}.
+     *
+     * <p>Whitespace-separated, because a URL has none and a destination path
+     * that does can be given the same way any other path is: it simply cannot
+     * contain a space, which is a smaller restriction than the command not
+     * working at all.
+     */
+    private static int opFetch(CommandContext<CommandSourceStack> ctx)
             throws CommandSyntaxException {
-        String url = StringArgumentType.getString(ctx, "url");
+        String raw = StringArgumentType.getString(ctx, "args").trim();
+        String[] parts = raw.isEmpty() ? new String[0] : raw.split("\\s+");
+        boolean restartAfter = parts.length > 0
+            && parts[parts.length - 1].equalsIgnoreCase("restart");
+        int count = restartAfter ? parts.length - 1 : parts.length;
+        if (count != 2) {
+            ctx.getSource().sendFailure(Component.literal(
+                "Usage: /almin op fetch <mod|datapack|config|resourcepack|dest> <url> [restart]"));
+            return 0;
+        }
+        String where = parts[0];
+        String url = parts[1];
+        if (FETCH_CATEGORIES.contains(where.toLowerCase(java.util.Locale.ROOT))) {
+            return opFetchCategory(ctx, where.toLowerCase(java.util.Locale.ROOT), url, restartAfter);
+        }
+        boolean isModDest = where.startsWith("mods/") || where.startsWith("mods\\");
+        return runFetch(ctx, where, url, restartAfter, isModDest);
+    }
+
+    private static int opFetchCategory(CommandContext<CommandSourceStack> ctx, String category,
+                                       String url, boolean restartAfter)
+            throws CommandSyntaxException {
         String filename = FileFetcher.basenameFromUrl(url);
         if (filename == null) {
-            ctx.getSource().sendFailure(Component.literal("Could not infer filename from URL. Use the flexible form: /almin op fetch <dest> <url>"));
+            ctx.getSource().sendFailure(Component.literal(
+                "Could not infer a filename from that URL. Give the destination instead: "
+                + "/almin op fetch <dest> <url>"));
             return 0;
         }
         String dest;
@@ -1184,14 +1217,6 @@ public final class AlminCommand {
             return 0;
         }
         return runFetch(ctx, dest, url, restartAfter, "mod".equals(category));
-    }
-
-    private static int opFetchFlexible(CommandContext<CommandSourceStack> ctx, boolean restartAfter)
-            throws CommandSyntaxException {
-        String dest = StringArgumentType.getString(ctx, "dest");
-        String url = StringArgumentType.getString(ctx, "url");
-        boolean isModDest = dest.startsWith("mods/") || dest.startsWith("mods\\");
-        return runFetch(ctx, dest, url, restartAfter, isModDest);
     }
 
     /**
@@ -1642,19 +1667,47 @@ public final class AlminCommand {
      * overwrite an existing file. Greedy argument; the last space separates
      * the path from the new name, so paths with spaces aren't supported.
      */
+    /**
+     * Splits {@code <path> <new-name>} into its two halves, or null.
+     *
+     * <p>Both halves may contain spaces, which one separator cannot express —
+     * so a quoted new name settles it. Unquoted, the last space wins, which is
+     * what someone typing a path with spaces and a plain new name expects; the
+     * file browser always quotes, because a person renaming a file to
+     * "My New Pack.zip" should not have to know any of this.
+     */
+    static String[] splitRename(String args) {
+        String trimmed = args == null ? "" : args.trim();
+        if (trimmed.length() < 3) return null;
+        if (trimmed.endsWith("\"")) {
+            int open = trimmed.lastIndexOf('"', trimmed.length() - 2);
+            // The quote has to start a word, or it is part of a filename.
+            if (open > 0 && trimmed.charAt(open - 1) == ' ') {
+                String name = trimmed.substring(open + 1, trimmed.length() - 1).trim();
+                String path = trimmed.substring(0, open).trim();
+                if (!name.isEmpty() && !path.isEmpty()) return new String[]{path, name};
+            }
+        }
+        int lastSpace = trimmed.lastIndexOf(' ');
+        if (lastSpace <= 0 || lastSpace == trimmed.length() - 1) return null;
+        String path = trimmed.substring(0, lastSpace).trim();
+        String name = trimmed.substring(lastSpace + 1).trim();
+        return (path.isEmpty() || name.isEmpty()) ? null : new String[]{path, name};
+    }
+
     private static int opRename(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer self = ctx.getSource().getPlayerOrException();
         MinecraftServer server = self.level().getServer();
         if (server == null) return 0;
-        String args = StringArgumentType.getString(ctx, "args");
-        int lastSpace = args.lastIndexOf(' ');
-        if (lastSpace <= 0 || lastSpace == args.length() - 1) {
+        String[] split = splitRename(StringArgumentType.getString(ctx, "args"));
+        if (split == null) {
             ctx.getSource().sendFailure(Component.literal(
-                "Usage: /almin op rename <path> <new-name>"));
+                "Usage: /almin op rename <path> <new-name>   "
+                + "(quote the new name if it contains spaces)"));
             return 0;
         }
-        String relPath = args.substring(0, lastSpace).trim();
-        String newName = args.substring(lastSpace + 1).trim();
+        String relPath = split[0];
+        String newName = split[1];
         if (newName.isEmpty() || newName.contains("/") || newName.contains("\\") || newName.equals("..")) {
             ctx.getSource().sendFailure(Component.literal("Invalid new name: " + newName));
             return 0;

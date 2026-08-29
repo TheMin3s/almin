@@ -17,9 +17,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * It observes at HEAD and never cancels: a fault here cannot stop a command
  * from running, only from being written down.
  *
- * <p>{@link ActivityLog#record} does the filtering, so nothing an op or a
- * trusted UUID types reaches the log — including their own {@code /almin}
- * commands.
+ * <p>{@link ActivityLog#record} does the filtering. By default nothing an op
+ * or a trusted UUID types reaches the log at all; and an admin's {@code /almin}
+ * commands are dropped even when admin tracking is turned on, because the log
+ * is read through {@code /almin} and would otherwise fill with the act of
+ * reading it.
  */
 @Mixin(Commands.class)
 public class CommandActivityMixin {

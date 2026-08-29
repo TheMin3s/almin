@@ -55,7 +55,11 @@ public final class RenameFileScreen extends Screen {
         }
         String oldPath = parentPath.isEmpty() ? oldName : parentPath + "/" + oldName;
         if (this.minecraft != null && this.minecraft.getConnection() != null) {
-            this.minecraft.getConnection().sendCommand("almin op rename " + oldPath + " " + newName);
+            // Quoted: a new name with a space in it is otherwise
+            // indistinguishable from a path with a space in it, and the person
+            // renaming a file should not have to think about that.
+            this.minecraft.getConnection().sendCommand(
+                "almin op rename " + oldPath + " \"" + newName.replace("\"", "") + "\"");
         }
         // Refresh the dir browser at the parent path.
         ClientPlayNetworking.send(new DirRequestPayload(parentPath));
