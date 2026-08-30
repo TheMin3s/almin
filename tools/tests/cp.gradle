@@ -1,0 +1,1 @@
+allprojects { tasks.register('printCp') { doLast { println "CPSTART" + sourceSets.main.compileClasspath.asPath + "CPEND" } } }

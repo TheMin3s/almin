@@ -34,3 +34,4 @@ Thumbs.db
 *.class
 out/
 target/
+tools/tests/cp.txt
