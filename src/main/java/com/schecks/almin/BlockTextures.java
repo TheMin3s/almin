@@ -68,6 +68,12 @@ public final class BlockTextures {
 
     private static final Map<Block, Skin> SKINS = new ConcurrentHashMap<>();
 
+    /** Display name back to registry block, shared by the scene texture route. */
+    private static volatile Map<String, Block> blocksByName = Map.of();
+
+    /** Small rendered face textures, keyed by registry id and face. */
+    private static final Map<String, byte[]> FACES = new ConcurrentHashMap<>();
+
     /** Blocks whose load is already queued, so a busy map cannot queue it twice. */
     private static final Map<Block, Boolean> PENDING = new ConcurrentHashMap<>();
 
@@ -196,6 +202,8 @@ public final class BlockTextures {
         SKINS.clear();
         PENDING.clear();
         ITEMS.clear();
+        FACES.clear();
+        blocksByName = Map.of();
         palette = null;
         any = false;
     }
@@ -229,15 +237,18 @@ public final class BlockTextures {
         Map<String, Integer> have = palette;
         if (have != null) return have;
         Map<String, Integer> built = new java.util.LinkedHashMap<>();
+        Map<String, Block> names = new java.util.LinkedHashMap<>();
         try {
             for (Block block : BuiltInRegistries.BLOCK) {
                 String name = block.getName().getString();
                 if (name.isEmpty() || built.containsKey(name)) continue;
                 built.put(name, colourFor(block));
+                names.put(name, block);
             }
         } catch (Throwable t) {
             AlminLog.warn("[almin] could not read the block palette: {}", t.toString());
         }
+        blocksByName = Map.copyOf(names);
         palette = Map.copyOf(built);
         return palette;
     }
@@ -251,15 +262,7 @@ public final class BlockTextures {
      * are grey files, and the palette already knows they are green.
      */
     private static int colourFor(Block block) {
-        int fallback = 0x7a8595;
-        try {
-            var map = block.defaultMapColor();
-            if (map != null && map != net.minecraft.world.level.material.MapColor.NONE) {
-                fallback = map.col;
-            }
-        } catch (Throwable ignored) {
-            // A block that will not say; the grey stands in.
-        }
+        int fallback = fallbackFor(block);
         if (!any) return fallback;
         Skin skin = SKINS.get(block);
         if (skin == null) {
@@ -269,6 +272,67 @@ public final class BlockTextures {
         }
         if (skin == NONE || skin.tinted()) return fallback;
         return skin.average();
+    }
+
+    private static int fallbackFor(Block block) {
+        int fallback = 0x7a8595;
+        try {
+            var map = block.defaultMapColor();
+            if (map != null && map != net.minecraft.world.level.material.MapColor.NONE) {
+                fallback = map.col;
+            }
+        } catch (Throwable ignored) {
+            // A block that will not say; the grey stands in.
+        }
+        return fallback;
+    }
+
+    /**
+     * A real resource-pack face for the isometric scene, by the display name
+     * recorded in the activity log. The returned PNG is a single 16x16 frame;
+     * greyscale biome masks are tinted with the block's map colour.
+     */
+    public static byte[] block(String displayName, String face) {
+        if (!any || displayName == null || displayName.length() > 160) return null;
+        Map<String, Block> names = blocksByName;
+        if (names.isEmpty()) {
+            palette();
+            names = blocksByName;
+        }
+        Block block = names.get(displayName);
+        if (block == null) return null;
+        Identifier id = BuiltInRegistries.BLOCK.getKey(block);
+        String side = "side".equals(face) ? "side" : "top";
+        String key = id + "\u0000" + side;
+        byte[] cached = FACES.get(key);
+        if (cached != null) return cached.length == 0 ? null : cached;
+
+        byte[] png = renderFace(id, side, fallbackFor(block));
+        if (FACES.size() > 512) FACES.clear();
+        FACES.put(key, png == null ? new byte[0] : png);
+        return png;
+    }
+
+    private static byte[] renderFace(Identifier id, String face, int fallback) {
+        for (String name : faceCandidates(id, face)) {
+            byte[] raw = read(id.getNamespace(), name);
+            if (raw == null) continue;
+            Skin skin = reduce(raw, fallback);
+            if (skin == null || skin == NONE || skin.texel().length != 256) continue;
+            int[] pixels = new int[256];
+            for (int i = 0; i < pixels.length; i++) {
+                int rgb = skin.texel()[i];
+                if (skin.tinted()) {
+                    int lum = luminance(rgb);
+                    int avg = Math.max(1, luminance(skin.average()));
+                    rgb = scale(fallback, lum / (float) avg);
+                }
+                pixels[i] = 0xFF000000 | (rgb & 0xFFFFFF);
+            }
+            try { return Png.encode(pixels, 16, 16); }
+            catch (IOException ignored) { return null; }
+        }
+        return null;
     }
 
     /**
@@ -366,6 +430,19 @@ public final class BlockTextures {
         out.add(path + "_top");
         out.add(path);
         // Doubles and slabs are cut from another block's texture.
+        if (path.endsWith("_slab")) out.add(path.substring(0, path.length() - 5));
+        if (path.endsWith("_stairs")) out.add(path.substring(0, path.length() - 7));
+        return out;
+    }
+
+    private static List<String> faceCandidates(Identifier id, String face) {
+        if (!"side".equals(face)) return candidates(id);
+        String path = id.getPath();
+        List<String> out = new ArrayList<>(4);
+        out.add(path + "_side");
+        out.add(path);
+        String alias = ALIASES.get(path);
+        if (alias != null && !out.contains(alias)) out.add(alias);
         if (path.endsWith("_slab")) out.add(path.substring(0, path.length() - 5));
         if (path.endsWith("_stairs")) out.add(path.substring(0, path.length() - 7));
         return out;

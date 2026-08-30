@@ -1802,6 +1802,15 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     return good ? true : 'the outlier still controlled the frame';
   });
 
+  check('scene cubes request real block-face textures when a pack exists', () => {
+    const saved = sandbox.shotTextures;
+    sandbox.shotTextures = 'textures.zip';
+    const defs = sandbox.sceneTextureDefs([{ what: 'Oak Planks' }, { what: 'Stone' }]);
+    sandbox.shotTextures = saved;
+    return /api\/block\?name=Oak%20Planks&amp;face=top|api\/block\?name=Oak%20Planks&face=top/.test(defs)
+      ? true : 'the texture route was not used';
+  });
+
   // ---- tools ----
   check('the game’s own tool textures are used when there are any', () => {
     sandbox.toolTextures = true;

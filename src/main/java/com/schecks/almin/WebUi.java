@@ -365,6 +365,7 @@ public final class WebUi {
             guard("/api/servermods/change", ui::handleServerModChange));
         http.createContext("/api/properties", guard("/api/properties", ui::handleProperties));
         http.createContext("/api/blocks", guard("/api/blocks", ui::handleBlocks));
+        http.createContext("/api/block", guard("/api/block", ui::handleBlock));
         http.createContext("/api/item", guard("/api/item", ui::handleItem));
         http.createContext("/api/client", guard("/api/client", ui::handleClient));
         // In supervisor mode the web threads must be non-daemon, or the JVM
@@ -2884,6 +2885,21 @@ public final class WebUi {
             root.addProperty("textures", BlockTextures.source());
             ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
             json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** One actual resource-pack block face for the isometric activity scene. */
+    private void handleBlock(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            byte[] png = BlockTextures.block(queryParam(ex, "name"), queryParam(ex, "face"));
+            if (png == null) { json(ex, 404, err("No texture for that block.")); return; }
+            ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+            image(ex, "image/png", png);
         } catch (Throwable t) {
             fault(ex, t);
         } finally {

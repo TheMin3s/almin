@@ -47,6 +47,12 @@ public class SceneTests {
                 && page.contains("function scenePlayer")
                 && page.contains("p.wx+','+p.y+','+p.wz"),
             "player altitude is not carried through the scene");
+        check("scene block textures use an authenticated image route",
+            page.contains("function sceneTextureDefs")
+                && page.contains("/api/block?name=")
+                && web.contains("guard(\"/api/block\", ui::handleBlock)")
+                && section(web, "private void handleBlock", 500).contains("requireAuth(ex)"),
+            "the scene texture route is missing or public");
         check("build marks can be expanded without disabling the 3D badge",
             page.contains("sceneEvents:false")
                 && page.contains("id=\"t-scene-events\"")

@@ -5078,6 +5078,7 @@ final class WebPage {
           box.innerHTML='<svg viewBox="'+(-W/2)+' '+(-H/2)+' '+W+' '+H+
             '" width="100%" height="'+H+'" role="img" '+
             'aria-label="The changed blocks, nearby world, and recorded players">'+
+            sceneTextureDefs(shown.concat(world))+
             '<g transform="translate('+tx.toFixed(1)+' '+ty.toFixed(1)+')">'+
             groundPlane(S,base)+sceneGridSvg(S,base,top)+
             items.map(i=>i.svg).join('')+'</g></svg>';
@@ -5307,11 +5308,17 @@ final class WebPage {
           const attrs=sceneAttrs(c,c.put?'placed':'broken','sc-block');
           if(c.put){
             return '<g '+attrs+'>'+
-              '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.12)+'" stroke="'+edge+
+              '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.12)+'"/>'+
+              sceneTextureFace(c,pts(top),'top','.94','')+
+              '<polygon points="'+pts(top)+'" fill="none" stroke="'+edge+
               '" stroke-opacity=".85" stroke-width="'+line.toFixed(2)+'"/>'+
-              '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.78)+'" stroke="'+edge+
+              '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.78)+'"/>'+
+              sceneTextureFace(c,pts(left),'side','.82','.20')+
+              '<polygon points="'+pts(left)+'" fill="none" stroke="'+edge+
               '" stroke-opacity=".5" stroke-width="'+(line*0.7).toFixed(2)+'"/>'+
-              '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.58)+'" stroke="'+edge+
+              '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.58)+'"/>'+
+              sceneTextureFace(c,pts(right),'side','.75','.34')+
+              '<polygon points="'+pts(right)+'" fill="none" stroke="'+edge+
               '" stroke-opacity=".5" stroke-width="'+(line*0.7).toFixed(2)+'"/>'+
               title+'</g>';
           }
@@ -5320,10 +5327,13 @@ final class WebPage {
           return '<g '+attrs+'>'+
             '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.05)+'" fill-opacity=".26" '+
             'stroke="'+edge+'" stroke-width="'+(line*1.1).toFixed(2)+'"/>'+
+            sceneTextureFace(c,pts(top),'top','.24','')+
             '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.7)+'" fill-opacity=".16" '+
             'stroke="'+edge+'" stroke-opacity=".6" stroke-width="'+(line*0.8).toFixed(2)+'"/>'+
+            sceneTextureFace(c,pts(left),'side','.13','.22')+
             '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.55)+'" fill-opacity=".12" '+
             'stroke="'+edge+'" stroke-opacity=".6" stroke-width="'+(line*0.8).toFixed(2)+'"/>'+
+            sceneTextureFace(c,pts(right),'side','.10','.36')+
               title+'</g>';
         }
 
@@ -5338,10 +5348,44 @@ final class WebPage {
           const base=blockRgb(c.what);
           return '<g '+sceneAttrs(c,'world now','sc-block')+' opacity=".48">'+
             '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.04)+'"/>'+
+            sceneTextureFace(c,pts(top),'top','.96','')+
             '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.72)+'"/>'+
+            sceneTextureFace(c,pts(left),'side','.84','.22')+
             '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.54)+'"/>'+
+            sceneTextureFace(c,pts(right),'side','.76','.36')+
             '<title>'+esc((c.what||'a block')+' in the world now at '+
               c.wx+','+c.y+','+c.wz)+'</title></g>';
+        }
+
+        /** Resource-pack textures, shared by every cube of the same block. */
+        function sceneTextureDefs(blocks){
+          if(!shotTextures || shotTextures==='none') return '';
+          const names=[...new Set(blocks.map(c=>c.what).filter(Boolean))];
+          const out=[];
+          for(const name of names){
+            for(const face of ['top','side']){
+              out.push('<pattern id="'+texturePatternId(name,face)+'" '+
+                'patternUnits="objectBoundingBox" patternContentUnits="objectBoundingBox" '+
+                'width="1" height="1"><image href="/api/block?name='+
+                encodeURIComponent(name)+'&face='+face+'" x="0" y="0" width="1" height="1" '+
+                'preserveAspectRatio="none" style="image-rendering:pixelated"/></pattern>');
+            }
+          }
+          return out.length?'<defs>'+out.join('')+'</defs>':'';
+        }
+
+        function texturePatternId(name,face){
+          let h=2166136261;
+          const s=String(name)+'/'+face;
+          for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
+          return 'sc-tx-'+(h>>>0).toString(36);
+        }
+
+        function sceneTextureFace(c,points,face,opacity,shade){
+          if(!shotTextures || shotTextures==='none' || !c.what) return '';
+          return '<polygon points="'+points+'" fill="url(#'+texturePatternId(c.what,face)+
+            ')" opacity="'+opacity+'"/>'+(shade?'<polygon points="'+points+
+            '" fill="#000" opacity="'+shade+'"/>':'');
         }
 
         /** A recorded player position, with altitude visible in the label. */
