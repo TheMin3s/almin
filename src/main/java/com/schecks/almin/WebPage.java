@@ -5353,7 +5353,7 @@ final class WebPage {
           wrap.appendChild(body);
           setTimeout(()=>{
             loadConfig(); loadUpdate(); showRelaunch(); showAi();
-            $('s-aisave').onclick=saveAi;
+            $('s-aisave').onclick=()=>saveAi(false);
             $('s-aion').onclick=toggleAi;
             $('s-aitest').onclick=testAi;
             $('s-aikeyclr').onclick=()=>saveAiKey('');
@@ -5430,6 +5430,20 @@ final class WebPage {
           aiFormChanged();
         }
 
+        /**
+         * Which providers keep their address in the form.
+         *
+         * <p>Anthropic and OpenAI have one endpoint each and it is not a
+         * setting. The other three are wherever the admin says \u2014 including
+         * Gemini, whose address only moves for a proxy. This is the rule the
+         * address row is shown by <em>and</em> the rule it is saved by; they
+         * were two separate lists, one of which said only 'local', so an
+         * address you could see and type into was never written down.
+         */
+        function aiHasUrl(p){
+          return p==='local' || p==='custom' || p==='google';
+        }
+
         /** Marks the form as the person's rather than the server's. */
         function aiFormChanged(){
           const prov=$('s-aiprov'); if(!prov) return;
@@ -5439,7 +5453,7 @@ final class WebPage {
           // setting. Everything else is wherever the admin says — including
           // Gemini, whose address only moves for a proxy.
           const row=$('s-aiurlrow');
-          if(row) row.style.display=(local||custom||prov.value==='google')?'':'none';
+          if(row) row.style.display=aiHasUrl(prov.value)?'':'none';
           // A model name that belongs to the provider they just picked, so the
           // common case is one dropdown and a button.
           const model=$('s-aimodel');
@@ -5510,7 +5524,7 @@ final class WebPage {
           const sets=[['ai-provider',prov],
                       ['ai-model',($('s-aimodel').value||'').trim()],
                       ['ai-auto-minutes',$('s-aiauto').value]];
-          if(prov==='local') sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
+          if(aiHasUrl(prov)) sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
           for(const [k,v] of sets){
             const r=await jpost('/api/config',{key:k,value:v});
             if(r.status!==200){
