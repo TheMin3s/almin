@@ -2,6 +2,10 @@
 import http.server, json, time, urllib.parse, os, socketserver
 
 SP = os.path.dirname(os.path.abspath(__file__))
+PANEL = os.path.join(SP, "panel.html")
+if not os.path.exists(PANEL):
+    PANEL = os.path.join(SP, "..", "..", "build", "toolstests", "panel.html")
+BLUEMAP_READY = False
 NOW = int(time.time() * 1000)
 FROM = NOW - 4 * 3600 * 1000
 # A three-hour hole in the middle, so the timeline has quiet time to mark.
@@ -157,6 +161,49 @@ SHOTS.append({"at": NOW - 3600000, "dim": "the_nether",
 
 ADMINS = {"ok": True, "includeAdmins": False, "temporary": False, "configured": False}
 
+BLUEMAP_PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#07101b;color:#dce9f7;
+font:12px system-ui}canvas{width:100%;height:100%;display:block}.badge{position:absolute;left:14px;
+top:14px;padding:7px 10px;border:1px solid #40516a;border-radius:7px;background:#091522de;
+box-shadow:0 7px 24px #0008}.hint{position:absolute;right:14px;bottom:14px;color:#9fb0c5}
+</style></head><body><canvas id="map"></canvas><div class="badge">BlueMap fixture · Almin overlay</div>
+<div class="hint" id="hint">waiting for activity…</div><script>
+const SOURCE='almin-activity-v1', canvas=document.getElementById('map'), ctx=canvas.getContext('2d');
+let state={markers:[],lines:[],players:[],scenes:[],grid:[]};
+function xy(x,z,b,w,h){return [w/2+(x-b.x)*b.s,h/2+(z-b.z)*b.s*.63];}
+function draw(){
+  const d=devicePixelRatio||1,w=innerWidth,h=innerHeight; canvas.width=w*d;canvas.height=h*d;
+  ctx.setTransform(d,0,0,d,0,0); const bg=ctx.createLinearGradient(0,0,0,h);
+  bg.addColorStop(0,'#203b45');bg.addColorStop(.55,'#17312e');bg.addColorStop(1,'#0c1d1a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+  const pts=[...state.markers,...state.players,...state.scenes].filter(p=>Number.isFinite(+p.x));
+  const cx=pts.length?pts.reduce((v,p)=>v+(+p.x||0),0)/pts.length:0;
+  const cz=pts.length?pts.reduce((v,p)=>v+(+p.z||0),0)/pts.length:0;
+  const span=Math.max(150,...pts.map(p=>Math.max(Math.abs(p.x-cx),Math.abs(p.z-cz))));
+  const b={x:cx,z:cz,s:Math.min(w,h)/(span*2.35)};
+  ctx.lineWidth=1;ctx.strokeStyle='#b6d1c31e';
+  for(let i=-10;i<=10;i++){ctx.beginPath();ctx.moveTo(0,h/2+i*32);ctx.lineTo(w,h/2+i*32);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(w/2+i*48,0);ctx.lineTo(w/2+i*48,h);ctx.stroke();}
+  for(const line of state.lines||[]){ctx.beginPath();ctx.strokeStyle=line.color||'#fff';ctx.globalAlpha=line.opacity||1;
+    (line.points||[]).forEach((p,i)=>{const q=xy(p.x,p.z,b,w,h);i?ctx.lineTo(...q):ctx.moveTo(...q)});ctx.stroke();}
+  ctx.globalAlpha=1;
+  for(const p of [...(state.scenes||[]),...(state.markers||[])]){if(!Number.isFinite(+p.x))continue;
+    const q=xy(+p.x,+p.z,b,w,h),r=p.type==='box'?6:Math.max(3,5*(+p.size||1));
+    ctx.fillStyle=p.color||'#ffad4d';ctx.globalAlpha=p.opacity==null?1:p.opacity;
+    p.type==='box'?ctx.fillRect(q[0]-r,q[1]-r,r*2,r*2):(ctx.beginPath(),ctx.arc(q[0],q[1],r,0,Math.PI*2),ctx.fill());}
+  ctx.globalAlpha=1;
+  for(const p of state.players||[]){const q=xy(+p.x,+p.z,b,w,h);ctx.fillStyle=p.color||'#66d9ef';
+    ctx.fillRect(q[0]-10,q[1]-10,20,20);ctx.fillStyle='#fff';ctx.fillText((p.text||'?').slice(0,1),q[0]-3,q[1]+4);}
+  document.getElementById('hint').textContent=(state.markers||[]).length+' actions · '+
+    (state.players||[]).length+' players · '+(state.scenes||[]).length+' scenes';
+}
+addEventListener('resize',draw);addEventListener('message',e=>{if(e.origin!==location.origin||
+  !e.data||e.data.source!==SOURCE||e.data.type!=='state')return;state=e.data.state||state;draw();});
+parent.postMessage({source:SOURCE,type:'ready'},location.origin);
+parent.postMessage({source:SOURCE,type:'camera',x:0,y:70,z:0,distance:300,map:'world'},location.origin);
+draw();
+</script></body></html>""".encode()
+
 SHOT_SPAN = 384
 UUIDS = {"Steve": "11111111-1111-1111-1111-111111111111",
          "Alex":  "22222222-2222-2222-2222-222222222222",
@@ -197,6 +244,9 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def _png(self, path):
+        if not os.path.isfile(path):
+            self.send_response(404); self.send_header("Content-Length", "0")
+            self.end_headers(); return
         b = open(path, "rb").read()
         self.send_response(200); self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
@@ -224,11 +274,14 @@ class H(http.server.BaseHTTPRequestHandler):
             return
         self._json({"ok": True})
     def do_GET(self):
+        global BLUEMAP_READY
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         p = u.path
         if p == "/":
-            b = open(os.path.join(SP, "panel.html"), "rb").read()
+            if "bluemap" in q:
+                BLUEMAP_READY = q["bluemap"][0] not in ("0", "false", "no")
+            b = open(PANEL, "rb").read()
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
         elif p == "/glyphs":
@@ -241,6 +294,18 @@ class H(http.server.BaseHTTPRequestHandler):
                         "version": "2.15.0", "canStart": True, "restarting": False,
                         "heads": True,
                         "startCommand": "java -jar server.jar nogui"})
+        elif p == "/api/bluemap":
+            self._json({"installed": BLUEMAP_READY, "enabled": BLUEMAP_READY,
+                        "loaded": BLUEMAP_READY, "configured": BLUEMAP_READY,
+                        "ready": BLUEMAP_READY, "restartRequired": False,
+                        "port": 8100 if BLUEMAP_READY else 0,
+                        "version": "5.23" if BLUEMAP_READY else "",
+                        "message": "Connected." if BLUEMAP_READY else "BlueMap is not installed.",
+                        "path": "/bluemap/"})
+        elif p.startswith("/bluemap") and BLUEMAP_READY:
+            b = BLUEMAP_PAGE
+            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
         elif p == "/api/state":
             self._json({"rows": [], "metrics": {"tps": 20, "tpsTarget": 20, "mspt": 3.1,
                         "players": 3, "maxPlayers": 20, "memUsed": "1 GB", "memMax": "4 GB",

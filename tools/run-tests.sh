@@ -26,6 +26,12 @@ javac -cp "$CP" -d "$OUT" "$T/PageDump.java"
 java -cp "$CP:$OUT" PageDump "$OUT/panel.html" "$OUT/panel.js"
 node "$T/panelsmoke.js" "$OUT/panel.js"
 
+# The BlueMap bridge is another Java text block, served from BlueMap's webroot.
+# Check its emitted JavaScript too, independently of the panel bundle.
+javac -cp "$CP" -d "$OUT" "$T/BlueMapBridgeDump.java"
+java -cp "$CP:$OUT" BlueMapBridgeDump "$OUT/bluemap-bridge.js"
+node --check "$OUT/bluemap-bridge.js"
+
 bad=""
 for f in "$T"/*Tests.java; do
   t=$(basename "$f" .java)

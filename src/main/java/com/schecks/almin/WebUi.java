@@ -125,6 +125,13 @@ public final class WebUi {
      * threads behind.
      */
     private final ExecutorService pool;
+    /**
+     * Lazily created for BlueMap's tile streams. A BlueMap page opens many
+     * files at once and holds one SSE request open; making those occupy the
+     * panel's four control workers would let the map starve the terminal and
+     * every other admin route. It stays absent when BlueMap is not used.
+     */
+    private volatile ExecutorService blueMapPool;
     private final MinecraftServer server;
     private final WebSessions sessions = new WebSessions();
     private final String bind;
@@ -340,6 +347,8 @@ public final class WebUi {
         http.createContext("/api/activity", guard("/api/activity", ui::handleActivity));
         http.createContext("/api/track", guard("/api/track", ui::handleTrack));
         http.createContext("/api/map", guard("/api/map", ui::handleMap));
+        http.createContext("/api/bluemap", guard("/api/bluemap", ui::handleBlueMap));
+        http.createContext("/bluemap", guard("/bluemap", ui::handleBlueMapProxy));
         http.createContext("/api/scene/context",
             guard("/api/scene/context", ui::handleSceneContext));
         http.createContext("/api/head", guard("/api/head", ui::handleHead));
@@ -476,6 +485,8 @@ public final class WebUi {
         // Not shutdownNow(): the thread calling this may itself be a pool
         // thread serving the request that asked for the restart.
         ui.pool.shutdown();
+        ExecutorService blue = ui.blueMapPool;
+        if (blue != null) blue.shutdownNow();
         // The port is ours again to give up; the note about holding it goes too.
         try {
             WebLock.clear(dirOf(ui.server));
@@ -553,6 +564,18 @@ public final class WebUi {
             t.setDaemon(!supervisor);
             return t;
         };
+    }
+
+    private synchronized ExecutorService blueMapPool() {
+        if (blueMapPool == null || blueMapPool.isShutdown()) {
+            boolean supervisor = AlminConfig.get().webSupervisor;
+            blueMapPool = Executors.newFixedThreadPool(16, r -> {
+                Thread t = new Thread(r, "Almin-BlueMap");
+                t.setDaemon(!supervisor);
+                return t;
+            });
+        }
+        return blueMapPool;
     }
 
     /**
@@ -3016,6 +3039,83 @@ public final class WebUi {
         } catch (Throwable t) {
             fault(ex, t);
         } finally {
+            ex.close();
+        }
+    }
+
+    /** Status and one-time configuration for the separately installed BlueMap mod. */
+    private void handleBlueMap(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if ("GET".equals(ex.getRequestMethod())) {
+                json(ex, 200, BlueMapIntegration.status(server, port).json().toString());
+                return;
+            }
+            if (!"POST".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            if (!secure(ex)) {
+                json(ex, 403, err("BlueMap can only be configured over HTTPS or from the machine itself."));
+                return;
+            }
+            if (!serverRunning) {
+                json(ex, 503, err("The Minecraft server is not running."));
+                return;
+            }
+            JsonObject body = readBody(ex);
+            String action = body.has("action") ? body.get("action").getAsString() : "";
+            if (!"configure".equals(action)) {
+                json(ex, 400, err("Unknown BlueMap action."));
+                return;
+            }
+            BlueMapIntegration.Result result = BlueMapIntegration.configure(server, port);
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", result.ok());
+            out.addProperty("message", result.message());
+            out.addProperty("restartRequired", result.restartRequired());
+            out.addProperty("port", result.port());
+            out.add("status", BlueMapIntegration.status(server, port).json());
+            json(ex, result.ok() ? 200 : 400, out.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Authenticates on a normal panel worker, then hands the long-lived tile
+     * or SSE stream to BlueMap's own pool and returns without closing it.
+     */
+    private void handleBlueMapProxy(HttpExchange ex) throws IOException {
+        if (!requireAuth(ex)) {
+            ex.close();
+            return;
+        }
+        String method = ex.getRequestMethod();
+        if (!"GET".equals(method) && !"HEAD".equals(method)) {
+            json(ex, 405, "{\"error\":\"method\"}");
+            ex.close();
+            return;
+        }
+        try {
+            blueMapPool().execute(() -> {
+                BlueMapIntegration.Status status = BlueMapIntegration.status(server, port);
+                if (!status.ready()) {
+                    try {
+                        json(ex, 503, err(status.message()));
+                    } catch (IOException ignored) {
+                        // The browser left while status was being checked.
+                    } finally {
+                        ex.close();
+                    }
+                    return;
+                }
+                BlueMapProxy.forward(ex, status.port());
+            });
+        } catch (RuntimeException rejected) {
+            json(ex, 503, err("BlueMap's web workers are stopping."));
             ex.close();
         }
     }

@@ -130,6 +130,19 @@ final class WebPage {
              full width of the map. */
           .mapwrap > svg{display:block;width:100%;height:min(60vh,560px);
                        background:#0b0d11;border-radius:8px}
+          .bluemapwrap{padding:0;overflow:hidden;background:#080a0e}
+          .bluemapwrap iframe{display:block;width:100%;height:min(66vh,620px);border:0;
+                              background:#080a0e}
+          .bluemapsetup{min-height:360px;display:grid;place-items:center;padding:34px;
+                        text-align:center;background:linear-gradient(145deg,#0b0d11,#111823)}
+          .bluemapsetup > div{max-width:560px}.bluemapsetup h3{margin:0 0 8px;color:var(--ink)}
+          .mapchoice{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+          .mapchoice .state{white-space:nowrap}.mapchoice .btn{padding:5px 10px;font-size:12px}
+          .bluepicked{position:absolute;left:12px;bottom:12px;max-width:min(520px,70%);
+                      background:rgba(11,13,17,.9);border:1px solid var(--line);
+                      border-radius:8px;padding:6px 10px;color:var(--dim);font-size:12px;
+                      pointer-events:none}
+          .bluepicked strong{color:var(--ink)}
           .legend svg{width:15px;height:15px;display:inline-block;vertical-align:-3px}
           /* ---- the timeline map ---- */
           .maplayout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
@@ -266,6 +279,8 @@ final class WebPage {
           .maplayout.fullmap > div{position:static}
           .fullmap #t-map .mapwrap{border:0;border-radius:0;padding:0;height:100vh}
           .fullmap #t-map .mapwrap > svg{height:100vh;max-height:100vh}
+          .fullmap #t-map .bluemapwrap iframe{height:100vh;max-height:100vh}
+          .fullmap .bluepicked{bottom:150px}
           .fullmap .timeline{position:absolute;left:14px;right:14px;bottom:60px;margin:0}
           .fullmap .timeline svg{height:70px;opacity:.94;
                                  box-shadow:0 8px 26px rgba(0,0,0,.55)}
@@ -2038,6 +2053,7 @@ final class WebPage {
             'Rows are deleted once they pass the retention window.</p>'+
             '<section><div class="bartitle"><h2>Everyone, over time</h2>'+
             '<span class="spacer"></span>'+
+            '<span class="mapchoice" id="t-map-choice"></span>'+
             '<span class="muted num" id="t-at"></span></div>'+
             '<div class="maplayout" id="t-layout">'+
               '<div>'+
@@ -2089,9 +2105,9 @@ final class WebPage {
             '<div class="act" id="a-rows" style="margin-top:12px"><div class="note">loading…</div></div>'+
             '<div class="msg" id="a-msg"></div>';
           setTimeout(()=>{
-            loadActivity(); loadTrackList(); loadAll(); loadInsights();
+            loadActivity(); loadTrackList(); loadBlueMapStatus(); loadAll(); loadInsights();
             $('a-refresh').onclick=()=>{ loadActivity(); loadAll(); loadInsights();
-              loadTrack($('a-who').value); };
+              loadBlueMapStatus(true); loadTrack($('a-who').value); };
             $('t-play').onclick=togglePlay;
             $('t-skip').onclick=()=>{ skipGaps=!skipGaps; paintAll(); };
             $('t-golive').onclick=goLive;
@@ -2517,6 +2533,7 @@ final class WebPage {
           if(tab!=='activity' || document.hidden) return;
           const every=Math.max(2,mapOpts.refresh||10)*1000;
           if(live && Date.now()-lastLiveLoad >= every) loadAll(true);
+          if(Date.now()-lastBlueStatus>=20000) loadBlueMapStatus();
           // The episode list and whatever the model last said are part of the
           // same picture, and used to change only when the whole page was
           // reloaded. Slower than the map, because working out episodes costs
@@ -3037,6 +3054,16 @@ final class WebPage {
               view.span=Math.max(maxX-minX,maxZ-minZ,32)*1.12;
             }
             view.set=true;
+          }
+
+          // The timeline, filters and side list are shared by both renderers.
+          // Once the optional BlueMap web app is connected, only this canvas
+          // changes; the legacy SVG remains one click away and untouched.
+          if(usingBlueMap()){
+            paintBlueMap({tracks:tracks,acts:acts,ids:ids,online:online,names:names,
+              shownActs:shownActs,shownNames:shownNames,away:away,afkSecs:afkSecs,
+              cursor:cursor,windowMs:windowMs});
+            return;
           }
 
           const W=1000, H=Math.round(W*0.60);
@@ -3640,7 +3667,7 @@ final class WebPage {
               if(!e) return;
               // A stretch with a shape opens as one; anything else takes the
               // map to it, which is all there is to show.
-              if(hasShape(e)) openScene(e); else jumpTo(e.to,e.dim,e.x,e.z);
+              if(hasShape(e)) openScene(e); else jumpTo(e.to,e.dim,e.x,e.z,e.y);
             };
             if(!svg||!tip) return;
             el.addEventListener('mouseenter',()=>{
@@ -3792,7 +3819,9 @@ final class WebPage {
             row.appendChild(body);
             // Clicking a row takes the map to it: the moment and the place.
             row.onclick=()=>{ cursorAt=a.at; cursorSet=true; live=false; allDim=a.dim;
-              view.cx=a.x; view.cz=a.z; view.set=true; stopPlay(); paintAll(); };
+              view.cx=a.x; view.cz=a.z; view.set=true;
+              if(usingBlueMap()) focusBlueMap(a.x,a.y,a.z,110);
+              stopPlay(); paintAll(); };
             side.appendChild(row);
           }
         }
@@ -4196,7 +4225,11 @@ final class WebPage {
         function wireDims(){
           const host=$('t-dims'); if(!host) return;
           host.querySelectorAll('[data-tdim]').forEach(b=>
-            b.onclick=()=>{ allDim=b.getAttribute('data-tdim'); paintAll(); });
+            b.onclick=()=>{
+              const next=b.getAttribute('data-tdim');
+              if(next!==allDim){ blueScene=null; bluePicked=''; }
+              allDim=next; paintAll();
+            });
         }
 
         """;
@@ -4423,7 +4456,7 @@ final class WebPage {
             when.className='tm';
             when.textContent=fmtAgo(e.to);
             row.appendChild(when);
-            row.onclick=()=>jumpTo(e.to,e.dim,e.x,e.z);
+            row.onclick=()=>jumpTo(e.to,e.dim,e.x,e.z,e.y);
             if(hasShape(e)){
               const look=document.createElement('button');
               look.className='btn'; look.textContent='3D';
@@ -4437,13 +4470,14 @@ final class WebPage {
         }
 
         /** Takes the map and the timeline to one moment and place. */
-        function jumpTo(at,dim,x,z){
+        function jumpTo(at,dim,x,z,y){
           if(!allData) return;
           live=false; stopPlay();
           cursorAt=at; cursorSet=true;
           if(dim) allDim=dim;
-          if(x!==undefined && z!==undefined && (x||z)){
+          if(x!==undefined && z!==undefined){
             view.cx=x; view.cz=z; view.span=Math.min(view.span||160,160); view.set=true;
+            if(usingBlueMap()) focusBlueMap(x,y||0,z,140);
           }
           paintAll();
           const map=$('t-map');
@@ -4554,7 +4588,7 @@ final class WebPage {
                 (m.why?'<span class="wy">'+esc(m.why)+'</span>':'')+
                 '<span class="tm" style="margin-left:auto;color:var(--mute)">'+
                 esc(fmtAgo(m.at))+'</span>';
-              row.onclick=()=>jumpTo(m.at,m.dim,m.x,m.z);
+              row.onclick=()=>jumpTo(m.at,m.dim,m.x,m.z,m.y);
               list.appendChild(row);
             }
           }
@@ -4762,6 +4796,7 @@ final class WebPage {
         }
 
         function openScene(e){
+          if(usingBlueMap()) { openBlueScene(e); return; }
           const built=sceneOf(e);
           if(!built){ return; }
           scene=built;
@@ -5572,6 +5607,481 @@ final class WebPage {
      *
      * <p>Split for the same reason as the others — see {@link #HTML}.
      */
+    /** The optional BlueMap-backed world renderer, kept separate at the Java string limit. */
+    private static final String PARTBLUE = """
+        // ---- optional full-world 3D activity map ----
+        const BLUE_SOURCE='almin-activity-v1';
+        let blueMapStatus=null, blueMapMode='', blueFrameReady=false, blueCamera=null;
+        let blueFrameBox=null;
+        let blueFocus=null, blueFocusNonce=0, blueScene=null, bluePicked='';
+        let blueRefs=new Map(), lastBlueStatus=0, blueLastSend=0, blueSendTimer=null;
+        let bluePendingState=null;
+        try { blueMapMode=localStorage.getItem('almin.mapMode')||''; }
+        catch(e){ /* one screen's preference only */ }
+
+        function usingBlueMap(){
+          return !!(blueMapStatus&&blueMapStatus.ready&&blueMapMode!=='legacy');
+        }
+
+        async function loadBlueMapStatus(force){
+          if(!force && Date.now()-lastBlueStatus<5000) return;
+          lastBlueStatus=Date.now();
+          const was=usingBlueMap();
+          const r=await jget('/api/bluemap');
+          if(r.status===200) blueMapStatus=r.body;
+          else blueMapStatus={installed:false,ready:false,message:r.body.error||'unavailable'};
+          // Ready means main unless this browser explicitly chose Legacy.
+          if(blueMapStatus.ready && !blueMapMode) blueMapMode='world';
+          paintBlueMapChoice();
+          if(was!==usingBlueMap()) blueFrameBox=null;
+          if(allData && was!==usingBlueMap()) paintAll();
+        }
+
+        function setBlueMapMode(mode){
+          blueMapMode=mode;
+          try { localStorage.setItem('almin.mapMode',mode); } catch(e){}
+          blueFrameReady=false; blueCamera=null; blueFrameBox=null;
+          paintBlueMapChoice(); paintAll();
+        }
+
+        function paintBlueMapChoice(){
+          const host=$('t-map-choice'); if(!host) return;
+          host.innerHTML='';
+          const s=blueMapStatus;
+          if(!s){ host.innerHTML='<span class="muted">checking 3D map…</span>'; return; }
+          const add=(label,cls,fn,title)=>{
+            const b=document.createElement('button'); b.className='btn'+(cls?' '+cls:'');
+            b.textContent=label; b.title=title||''; b.onclick=fn; host.appendChild(b); return b;
+          };
+          if(s.ready){
+            const tag=document.createElement('span'); tag.className='state good';
+            tag.textContent='BlueMap'+(s.version?' '+s.version:''); host.appendChild(tag);
+            add('3D world',usingBlueMap()?'on':'',()=>setBlueMapMode('world'),
+              'BlueMap terrain with Almin activity in world coordinates');
+            add('Legacy 2D',!usingBlueMap()?'on':'',()=>setBlueMapMode('legacy'),
+              'The original recorded-snapshot activity map');
+            return;
+          }
+          if(!s.installed){
+            add('Install 3D world map','go',blueMapInstallDialog,
+              'Install BlueMap as a separate optional server mod');
+            return;
+          }
+          if(!s.configured){
+            const tag=document.createElement('span'); tag.className='state warn';
+            tag.textContent='BlueMap needs setup'; host.appendChild(tag);
+            add('Connect',s.enabled?'go':'',configureBlueMap,
+              'Bind BlueMap to loopback and add Almin’s web bridge');
+            add('Legacy 2D','on',()=>setBlueMapMode('legacy'));
+            return;
+          }
+          const tag=document.createElement('span'); tag.className='state warn';
+          tag.textContent=s.loaded?'BlueMap starting':'BlueMap installed'; host.appendChild(tag);
+          const note=document.createElement('span'); note.className='muted';
+          note.textContent=s.message||'Restart the server to load it.'; host.appendChild(note);
+          if(s.restartRequired) add('Restart to finish','go',()=>$('srvrestart').click());
+          add('Legacy 2D','on',()=>setBlueMapMode('legacy'));
+        }
+
+        function blueMapInstallDialog(){
+          modal('Add the 3D world map',body=>{
+            body.innerHTML='<p>Install <b>BlueMap</b> from Modrinth for this server’s exact '+
+              'Minecraft version.</p><p class="muted">BlueMap remains a separate optional '+
+              'Fabric mod under its own licence. Almin does not bundle or link its code or '+
+              'web assets. It configures BlueMap’s own server on loopback and reaches it through '+
+              'the authenticated panel.</p><p class="muted">The download is placed in '+
+              '<code>mods/</code>. A restart is required before the renderer can build and serve '+
+              'the world.</p><button class="btn go" id="bm-install">Install BlueMap</button>'+
+              '<div class="msg" id="bm-install-msg"></div>';
+            $('bm-install').onclick=installBlueMap;
+          });
+        }
+
+        async function installBlueMap(){
+          const button=$('bm-install'), msg=$('bm-install-msg');
+          button.disabled=true; msg.className='msg'; msg.textContent='Downloading from Modrinth…';
+          const got=await jpost('/api/mods/modrinth',
+            {action:'server',link:'bluemap',required:false});
+          if(got.status!==200){
+            button.disabled=false; msg.className='msg err';
+            msg.textContent=got.body.error||got.body.message||'Download failed.'; return;
+          }
+          msg.textContent='Installed. Securing the web connection…';
+          const linked=await jpost('/api/bluemap',{action:'configure'});
+          msg.className='msg '+(linked.status===200?'ok':'err');
+          msg.textContent=linked.body.message||linked.body.error||got.body.message||'Installed.';
+          await loadBlueMapStatus(true); loadServerMods();
+        }
+
+        async function configureBlueMap(){
+          const r=await jpost('/api/bluemap',{action:'configure'});
+          if(r.status!==200){ alert(r.body.error||'BlueMap setup failed.'); return; }
+          await loadBlueMapStatus(true);
+          if(r.body.restartRequired && confirm(r.body.message+'\\n\\nRestart now?')){
+            $('srvrestart').click();
+          }
+        }
+
+        function focusBlueMap(x,y,z,distance){
+          blueFocus={x:+x||0,y:+y||0,z:+z||0,distance:distance||140,
+                     nonce:++blueFocusNonce};
+        }
+
+        function openBlueScene(e){
+          const built=sceneOf(e); if(!built) return;
+          blueScene=e;
+          live=false; stopPlay(); cursorAt=e.to; cursorSet=true;
+          allDim=e.dim; focusBlueMap(e.x,e.y,e.z,Math.max(55,built.radius*3.5));
+          bluePicked='<strong>'+esc(e.player)+'</strong> · '+esc(e.headline)+
+            ' · shown in the world at X '+e.x+' / Y '+e.y+' / Z '+e.z;
+          paintAll();
+          const map=$('t-map'); if(map&&map.scrollIntoView)
+            map.scrollIntoView({block:'center',behavior:'smooth'});
+        }
+
+        /** Draws the shared map chrome without replacing the iframe on every playback frame. */
+        function paintBlueMap(d){
+          const box=$('t-map'), side=$('t-side'), layout=$('t-layout');
+          if(!box||!blueMapStatus) return;
+          const wide=layout ? layout.clientWidth>=900 : false;
+          const sidebar=wide&&mapOpts.overlays;
+          if(layout) layout.className='maplayout'+(sidebar?' side':'')+(fullMap?' fullmap':'');
+          if(side) side.style.display=sidebar?'':'none';
+
+          const seqCandidates=(mapOpts.sequences?episodes:[]).filter(e=>e.dim===allDim && e.from<=d.cursor &&
+            (!focusPlayer||e.player===focusPlayer) &&
+            (!filt.kinds.size||filt.kinds.has(e.kind)) &&
+            ageOpacity('seq',d.cursor-e.to,d.windowMs)>0);
+          const buildScenes=seqCandidates.filter(e=>sceneKind(e)==='build');
+          const keys=new Set();
+          for(const e of buildScenes) for(const key of scenePlaceKeysFor(e)) keys.add(key);
+          const scenePlaces=keys.size?d.shownActs.filter(a=>a.action==='place'&&
+            keys.has(sceneActionKey(a))):[];
+
+          let frame=null;
+          if(blueFrameBox!==box){
+            blueFrameReady=false;
+            box.innerHTML='<div class="mapwrap bluemapwrap">'+
+              '<iframe id="t-blue-frame" src="'+esc(blueMapStatus.path||'/bluemap/')+'" '+
+                'title="BlueMap 3D world and Almin activity"></iframe>'+
+              '<div class="onlinebar" id="t-online"></div>'+
+              '<button class="sceneexpand" id="t-scene-events"></button>'+
+              '<div class="bluepicked" id="t-blue-picked"></div>'+
+              '<div class="mapbtns">'+
+                '<button id="t-blue-home" title="Fit recorded activity">⌂</button>'+
+                '<button id="t-blue-scene-close" title="Close the selected 3D event">×</button>'+
+                '<button id="t-full" title="'+(fullMap?'Leave fullscreen (Esc)':'Fullscreen')+
+                  '">'+(fullMap?'⤡':'⤢')+'</button>'+
+                '<button id="t-cog" title="How the map looks">'+ICON.cog+'</button>'+
+              '</div><div id="t-blue-opts"></div></div>';
+            blueFrameBox=box;
+            frame=$('t-blue-frame');
+            frame.onload=()=>{ blueFrameReady=false; sendBlueMapState(bluePendingState); };
+          } else frame=$('t-blue-frame');
+          const online=$('t-online'); if(online) online.style.display=mapOpts.overlays?'':'none';
+          paintOnline(d.online,d.ids);
+          const picked=$('t-blue-picked');
+          if(picked){ picked.innerHTML=bluePicked; picked.style.display=bluePicked?'':'none'; }
+          const expand=$('t-scene-events');
+          if(expand){
+            expand.style.display=scenePlaces.length?'':'none';
+            expand.textContent=(mapOpts.sceneEvents?'Collapse ':'Expand ')+scenePlaces.length+
+              ' build event'+(scenePlaces.length===1?'':'s');
+            expand.onclick=()=>{ mapOpts.sceneEvents=!mapOpts.sceneEvents; saveMapOpts(); paintAll(); };
+          }
+          const opts=$('t-blue-opts');
+          if(opts) opts.innerHTML=optsOpen?mapOptionsHtml():'';
+          const full=$('t-full'); if(full){ full.textContent=fullMap?'⤡':'⤢';
+            full.onclick=()=>setFull(!fullMap); }
+          const cog=$('t-cog'); if(cog) cog.onclick=()=>{ optsOpen=!optsOpen; paintAll(); };
+          const home=$('t-blue-home'); if(home) home.onclick=()=>{
+            blueCamera=null; view.set=false;
+            const pts=d.shownActs.length?d.shownActs:[].concat(...d.shownNames.map(n=>d.tracks[n]||[]));
+            if(pts.length){
+              const xs=pts.map(p=>p.x), zs=pts.map(p=>p.z);
+              const cx=(Math.min(...xs)+Math.max(...xs))/2;
+              const cz=(Math.min(...zs)+Math.max(...zs))/2;
+              const span=Math.max(Math.max(...xs)-Math.min(...xs),
+                                  Math.max(...zs)-Math.min(...zs),64);
+              focusBlueMap(cx,0,cz,Math.min(30000,Math.max(80,span*.9)));
+            }
+            paintAll();
+          };
+          const closeScene=$('t-blue-scene-close');
+          if(closeScene){
+            closeScene.style.display=blueScene?'':'none';
+            closeScene.onclick=()=>{ blueScene=null; bluePicked=''; paintAll(); };
+          }
+
+          const payload=blueMapPayload(d,seqCandidates,buildScenes,scenePlaces);
+          queueBlueMapState(payload);
+          paintBlueLegend(d.shownNames,d.shownActs,payload);
+          paintTimeline();
+          paintSide(d.acts.filter(a=>(!focusPlayer||a.player===focusPlayer)&&passes(a)));
+          wireMapOptions(); wireDims(); paintFilters(); paintBlueMapChoice();
+        }
+
+        function blueMapPayload(d,seqCandidates,buildScenes,scenePlaces){
+          const centre=blueCamera||{x:view.cx||0,y:64,z:view.cz||0,
+                                    distance:Math.max(90,(view.span||320)/2)};
+          const distance=Math.max(20,+centre.distance||300);
+          const radius=Math.max(160,Math.min(60000,distance*3.2));
+          const nearby=a=>!blueCamera || (Math.abs(a.x-centre.x)<=radius&&
+                                         Math.abs(a.z-centre.z)<=radius);
+          const colour=a=>mapOpts.colour==='player'?playerColor(a.player):
+            (ACTION_COLOR[a.action]||'#9aa3ae');
+          const opacity=a=>ageOpacity(ACT_CATEGORY[a.action]||'things',
+                                      d.cursor-a.at,d.windowMs);
+          const hidden=new Set(mapOpts.sceneEvents?[]:scenePlaces);
+          const actions=d.shownActs.filter(a=>!hidden.has(a)&&nearby(a)&&opacity(a)>0);
+          const cell=mapOpts.cluster?Math.max(1,Math.round(distance/32)):1;
+          const bins=new Map();
+          for(const a of actions){
+            const key=mapOpts.cluster?Math.floor(a.x/cell)+','+Math.floor(a.z/cell):
+              a.x+','+a.y+','+a.z+','+a.at;
+            if(!bins.has(key)) bins.set(key,[]); bins.get(key).push(a);
+          }
+          const groups=[...bins.values()].sort((a,b)=>
+            Math.max(...b.map(x=>x.at))-Math.max(...a.map(x=>x.at))).slice(0,1800);
+          const markers=[], lines=[], players=[], scenes=[], grid=[];
+          blueRefs=new Map();
+          let n=0;
+          for(const group of groups){
+            if(group.length===1 || !mapOpts.cluster){
+              const a=group[0], id='a'+(n++);
+              markers.push({id:id,kind:'action',x:a.x+.5,y:a.y+1.35,z:a.z+.5,
+                color:colour(a),size:mapOpts.mark*.78,opacity:opacity(a),shape:'dot',
+                text:blueActionGlyph(a.action),
+                title:(a.mask?a.mask+' ('+a.player+')':a.player)+' · '+a.action+
+                  (a.count>1?' ×'+a.count:'')+(a.detail?' · '+a.detail:'')+
+                  ' · X '+a.x+' / Y '+a.y+' / Z '+a.z+' · '+fmtAgo(a.at)});
+              blueRefs.set(id,{type:'action',data:a});
+            } else {
+              const total=group.reduce((v,a)=>v+Math.max(1,a.count||1),0);
+              const fresh=group.reduce((a,b)=>a.at>=b.at?a:b), sx=group.reduce((v,a)=>v+a.x,0);
+              const sy=group.reduce((v,a)=>v+a.y,0), sz=group.reduce((v,a)=>v+a.z,0);
+              const id='c'+(n++);
+              markers.push({id:id,kind:'cluster',x:sx/group.length+.5,y:sy/group.length+1.5,
+                z:sz/group.length+.5,color:colour(fresh),size:mapOpts.mark*.72,
+                shape:'cluster',text:total>999?'999+':String(total),
+                title:total+' actions around X '+Math.round(sx/group.length)+' / Y '+
+                  Math.round(sy/group.length)+' / Z '+Math.round(sz/group.length)});
+              blueRefs.set(id,{type:'cluster',data:group});
+            }
+          }
+
+          for(const who of d.shownNames){
+            const full=(d.tracks[who]||[]).filter(p=>p.dim===allDim);
+            const upto=full.filter(p=>p.at<=d.cursor);
+            if(mapOpts.paths){
+              if(full.length>1) lines.push({id:'future-'+who,label:who+' full path',
+                points:thinBluePath(full),color:playerColor(who),width:Math.max(1,mapOpts.path*.55),
+                opacity:.18});
+              if(upto.length>1) lines.push({id:'path-'+who,label:who+' travelled path',
+                points:thinBluePath(upto),color:playerColor(who),width:mapOpts.path,opacity:.94});
+            }
+            if(!upto.length) continue;
+            const last=upto[upto.length-1], id='p-'+who;
+            const gone=!!(d.away[who]&&d.away[who].gone&&d.away[who].at>=last.at-1000);
+            const stillFor=d.cursor-last.at;
+            const idle=!gone&&d.afkSecs>0&&stillFor>d.afkSecs*1000;
+            const icon=(mapOpts.faces&&d.ids[who])?'/api/head?uuid='+
+              encodeURIComponent(d.ids[who])+'&name='+encodeURIComponent(who):'';
+            players.push({id:id,x:last.x+.5,y:last.y+2.2,z:last.z+.5,
+              color:(gone||idle)?'#6d7682':playerColor(who),
+              size:mapOpts.head*(gone?.62:1),text:who+(gone?' · left':idle?' · afk':''),icon:icon,
+              title:who+(gone?' · left here '+fmtAgo(d.away[who].at):
+                idle?' · not moving for '+humanSeconds(Math.round(stillFor/1000)):'')+
+                ' · X '+last.x+' / Y '+last.y+' / Z '+last.z+' · '+fmtAgo(last.at)});
+            blueRefs.set(id,{type:'player',data:{name:who,point:last}});
+          }
+
+          let episodeNo=0;
+          for(const e of seqCandidates.filter(nearby).slice(0,300)){
+            const id='e'+(episodeNo++);
+            scenes.push({id:id,type:'marker',kind:'episode',shape:'scene',
+              text:(hasShape(e)?'3D ':'')+e.kind,
+              x:e.x+.5,y:e.y+2.2,z:e.z+.5,color:SEQUENCE_COLOR[e.kind]||'#ffab33',size:1,
+              title:e.player+' · '+e.headline+' · X '+e.x+' / Y '+e.y+' / Z '+e.z});
+            blueRefs.set(id,{type:'episode',data:e});
+          }
+
+          const cubeKeys=new Set();
+          const putCube=c=>{
+            const key=c.wx+','+c.y+','+c.wz+','+c.put; if(cubeKeys.has(key)) return;
+            cubeKeys.add(key); if(cubeKeys.size>3000) return;
+            scenes.push({id:'b'+cubeKeys.size,type:'box',kind:'block',x:c.wx,y:c.y,z:c.wz,
+              color:c.put?'#ffd34d':'#ff5a5a',fill:c.put?.30:.13,
+              label:c.put?'Placed block':'Broken block',detail:(c.put?'Placed ':'Broke ')+
+                (c.what||'block')+' at '+c.wx+','+c.y+','+c.wz});
+          };
+          if(mapOpts.sceneEvents){
+            for(const e of buildScenes.filter(nearby)){
+              const built=sceneOf(e); if(!built) continue;
+              for(const c of built.cubes) putCube(c);
+              if(cubeKeys.size>3000) break;
+            }
+          }
+          if(blueScene && blueScene.dim===allDim){
+            const built=sceneOf(blueScene);
+            if(built){
+              for(const c of built.cubes) putCube(c);
+              let q=0;
+              for(const m of built.marks.slice(0,500)) scenes.push({id:'fight'+(q++),
+                type:'marker',kind:'fight',shape:'dot',text:'',x:m.wx+.5,y:m.y+1,z:m.wz+.5,
+                color:'#ff3d6e',size:1,title:m.kind+(m.what?' · '+m.what:'')+' · X '+m.wx+
+                  ' / Y '+m.y+' / Z '+m.wz});
+              q=0;
+              for(const p of (built.players||[]).filter(p=>Math.abs(p.x)<=built.radius&&
+                    Math.abs(p.z)<=built.radius).slice(-180)){
+                const id='near'+(q++);
+                scenes.push({id:id,type:'marker',kind:'scene-player',shape:'cluster',
+                  text:p.player.charAt(0),x:p.wx+.5,y:p.y+1.9,z:p.wz+.5,
+                  color:playerColor(p.player),size:.72,title:p.player+' nearby · X '+p.wx+
+                    ' / Y '+p.y+' / Z '+p.wz+' · '+fmtAgo(p.at)});
+              }
+            }
+          }
+
+          if(mapOpts.grid){
+            const steps=[8,16,32,64,128,256,512,1024,2048,4096,8192];
+            let step=steps[steps.length-1], want=distance*.32;
+            for(const s of steps){ if(s>=want){ step=s; break; } }
+            const cx=Math.round(centre.x/step)*step, cz=Math.round(centre.z/step)*step;
+            const y=(blueScene&&blueScene.dim===allDim?blueScene.y:
+              (actions.length?actions.reduce((v,a)=>v+a.y,0)/actions.length:64))+.15;
+            for(let i=-5;i<=5;i++){
+              const x=cx+i*step, z=cz+i*step;
+              grid.push({id:'gx'+i,points:[{x:x,y:y,z:cz-5*step},{x:x,y:y,z:cz+5*step}],
+                color:x===0?'#dfe6ef':'#778394',width:x===0?1.6:.8,opacity:x===0?.55:.26});
+              grid.push({id:'gz'+i,points:[{x:cx-5*step,y:y,z:z},{x:cx+5*step,y:y,z:z}],
+                color:z===0?'#dfe6ef':'#778394',width:z===0?1.6:.8,opacity:z===0?.55:.26});
+              grid.push({id:'gxl'+i,type:'label',x:x,y:y+.4,z:cz-5*step,
+                text:'x '+x,color:'#aab5c3',size:.72,title:'X '+x});
+              grid.push({id:'gzl'+i,type:'label',x:cx-5*step,y:y+.4,z:z,
+                text:'z '+z,color:'#aab5c3',size:.72,title:'Z '+z});
+            }
+          }
+
+          return {dimension:allDim,markers:markers,lines:lines,players:players,scenes:scenes,
+            grid:grid,darkness:mapOpts.dim*.55,focus:blueFocus,
+            counts:{markers:markers.length,scenes:scenes.length,actions:actions.length}};
+        }
+
+        function thinBluePath(points){
+          const stride=Math.max(1,Math.ceil(points.length/500)), out=[];
+          for(let i=0;i<points.length;i+=stride){ const p=points[i];
+            out.push({x:p.x+.5,y:p.y+.2,z:p.z+.5}); }
+          const last=points[points.length-1];
+          if(last && (out.length===0||out[out.length-1].x!==last.x+.5))
+            out.push({x:last.x+.5,y:last.y+.2,z:last.z+.5});
+          return out;
+        }
+
+        function blueActionGlyph(action){
+          const glyph={chat:'…',command:'›',container:'□',death:'×',attack:'⚔',hurt:'!',
+            join:'→',leave:'←',respawn:'↟',item:'◇',interact:'○',use:'·',place:'+',
+            break:'−',afk:'z',kill:'†',craft:'◆',trade:'⇄',drop:'↓',sleep:'☾',portal:'◎',
+            advancement:'★',enchant:'✦',sign:'≡'};
+          return glyph[action]||'·';
+        }
+
+        function queueBlueMapState(state){
+          bluePendingState=state;
+          const wait=90-(Date.now()-blueLastSend);
+          if(wait<=0){ sendBlueMapState(state); return; }
+          if(blueSendTimer) return;
+          blueSendTimer=setTimeout(()=>{ blueSendTimer=null; sendBlueMapState(bluePendingState); },wait);
+        }
+
+        function sendBlueMapState(state){
+          if(!state) return;
+          const frame=$('t-blue-frame');
+          if(!frame||!frame.contentWindow||!blueFrameReady) return;
+          blueLastSend=Date.now();
+          frame.contentWindow.postMessage({source:BLUE_SOURCE,type:'state',state:state},location.origin);
+        }
+
+        function paintBlueLegend(names,acts,payload){
+          const host=$('t-legend'); if(!host) return;
+          const used=[...new Set(acts.map(a=>a.action))];
+          host.innerHTML=names.map(n=>'<span class="pill-who" data-who="'+esc(n)+
+            '" style="cursor:pointer"><i style="background:'+playerColor(n)+'"></i>'+esc(n)+
+            '</span>').join('')+used.map(a=>'<span style="color:'+
+              (ACTION_COLOR[a]||'#9aa3ae')+'">● '+esc(a)+'</span>').join('')+
+            '<span class="muted">'+names.length+' player(s) · '+acts.length+
+            ' action(s) by then · '+payload.counts.markers+' visible 3D mark(s) · terrain by BlueMap'+
+            (focusPlayer?' · showing only '+esc(focusPlayer):'')+'</span>';
+          host.querySelectorAll('.pill-who').forEach(el=>el.onclick=()=>{
+            const n=el.getAttribute('data-who'); focusPlayer=focusPlayer===n?'':n; paintAll();
+          });
+        }
+
+        async function inspectBlueWorld(p){
+          bluePicked='Reading the live block at X '+p.x+' / Y '+p.y+' / Z '+p.z+'…';
+          paintBluePicked();
+          const q='/api/scene/context?dim='+encodeURIComponent(allDim)+'&x='+p.x+'&z='+p.z+
+            '&minY='+(p.y-2)+'&maxY='+(p.y+2)+'&radius=4';
+          const r=await jget(q);
+          if(r.status!==200){
+            bluePicked='Rendered block at X '+p.x+' / Y '+p.y+' / Z '+p.z+
+              ' · live block state unavailable (the chunk may not be loaded)';
+          } else {
+            const exact=(r.body.blocks||[]).find(b=>b.x===p.x&&b.z===p.z&&
+              (b.y===p.y||b.y===p.y-1||b.y===p.y+1));
+            bluePicked=exact?'<strong>'+esc(exact.what)+'</strong> · world now · X '+exact.x+
+              ' / Y '+exact.y+' / Z '+exact.z:'No exposed live block at X '+p.x+' / Y '+p.y+
+              ' / Z '+p.z;
+          }
+          paintBluePicked();
+        }
+
+        function paintBluePicked(){
+          const p=$('t-blue-picked'); if(!p) return;
+          p.innerHTML=bluePicked; p.style.display=bluePicked?'':'none';
+        }
+
+        if(!window.alminBlueMessages){
+          window.alminBlueMessages=true;
+          window.addEventListener('message',e=>{
+            const f=$('t-blue-frame');
+            if(!f||e.source!==f.contentWindow||e.origin!==location.origin||
+               !e.data||e.data.source!==BLUE_SOURCE) return;
+            if(e.data.type==='ready'){
+              blueFrameReady=true; sendBlueMapState(bluePendingState); return;
+            }
+            if(e.data.type==='camera'){
+              blueCamera={x:+e.data.x||0,y:+e.data.y||0,z:+e.data.z||0,
+                          distance:+e.data.distance||300,map:e.data.map||''};
+              if(usingBlueMap()) schedulePaint();
+              return;
+            }
+            if(e.data.type==='worldclick'){ inspectBlueWorld(e.data); return; }
+            if(e.data.type!=='select') return;
+            const ref=blueRefs.get(e.data.id);
+            if(!ref) return;
+            if(ref.type==='episode'){
+              if(hasShape(ref.data)) openBlueScene(ref.data);
+              else jumpTo(ref.data.to,ref.data.dim,ref.data.x,ref.data.z,ref.data.y);
+              return;
+            }
+            if(ref.type==='player'){
+              focusPlayer=focusPlayer===ref.data.name?'':ref.data.name; paintAll(); return;
+            }
+            if(ref.type==='cluster'){
+              const g=ref.data, a=g.reduce((x,y)=>x.at>=y.at?x:y);
+              bluePicked='<strong>'+g.length+' grouped actions</strong> around X '+a.x+
+                ' / Y '+a.y+' / Z '+a.z; paintBluePicked(); return;
+            }
+            const a=ref.data;
+            bluePicked='<strong>'+esc(a.detail||a.action)+'</strong> · '+esc(a.player)+' · '+
+              esc(a.action)+' · X '+a.x+' / Y '+a.y+' / Z '+a.z+' · '+esc(fmtAgo(a.at));
+            paintBluePicked();
+          });
+        }
+
+        """;
+
     private static final String PART3 = """
         // ---- settings ----
         // Two different things live under Settings: Almin's own, and the
@@ -7153,5 +7663,5 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTINSIGHT, PARTSCENE, PART3, PARTSETTINGS);
+        PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTSETTINGS);
 }

@@ -512,6 +512,20 @@ one row.
 
 ### The map
 
+The web Activity tab has two renderers. With no extra mod it uses Almin's
+recorded 2D ground snapshots described below. **Install 3D world map** in the
+Activity heading installs BlueMap as a separate optional Fabric mod; after one
+restart its full rendered world becomes the main canvas, while **Legacy 2D**
+always remains beside it. Timeline/playback, filters, paths, faces, clusters,
+fading, sequences, coordinate grid, side list and fullscreen work with either
+renderer. In the 3D world, build scenes expand at their real X/Y/Z coordinates
+instead of opening over the map. See [the BlueMap integration boundary](docs/BLUEMAP.md)
+for installation, security, removal and the files it owns.
+
+Almin neither compiles against nor redistributes BlueMap. Its integrated web
+server is forced onto an instance-local loopback port and reached only through
+the authenticated Almin origin, including through the existing Caddy proxy.
+
 Both Activity tabs open on a map of **everyone, on one clock**: each tracked
 player's path from above — X across, Z down, the way Minecraft's own maps read
 — with the things they did marked along it. Drag the timeline to move through

@@ -248,6 +248,9 @@ const responses = {
   '/api/map': { every: 30, shots: [
       { at: Date.now() - 55000, dim: 'overworld', minX: -200, minZ: -200, span: 384 },
       { at: Date.now() - 15000, dim: 'overworld', minX: -180, minZ: -190, span: 384 }] },
+  '/api/bluemap': { installed: false, enabled: false, loaded: false, configured: false,
+                    ready: false, restartRequired: false, port: 8100, version: '',
+                    message: 'Install BlueMap to use the 3D world map.', path: '/bluemap/' },
   '/api/scene/context': { dim: 'overworld', x: 23, z: 33, radius: 12,
       minY: 55, maxY: 75, truncated: false,
       blocks: [{ x: 20, y: 63, z: 31, what: 'Stone' },
@@ -419,7 +422,9 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'searchModrinth', 'addModrinth', 'showWaiting', 'showRelaunch',
                     'showAiDiagnostics',
                     'refreshOnce', 'poll', 'loadAll', 'paintAll', 'showAdmins', 'setAdmins',
-                    'togglePlay', 'stopPlay', 'playerColor', 'marker', 'shotFor']) {
+                    'togglePlay', 'stopPlay', 'playerColor', 'marker', 'shotFor',
+                    'loadBlueMapStatus', 'usingBlueMap', 'setBlueMapMode', 'paintBlueMap',
+                    'blueMapPayload', 'openBlueScene', 'inspectBlueWorld']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -2890,6 +2895,62 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   } catch (e) {
     console.log('  FAIL  the model on a mod list  -> ' + e.message);
     failures.push('mod review: ' + e.message);
+  }
+
+  // ---- the optional full-world renderer ----
+  try {
+    responses['/api/bluemap'] = { installed: true, enabled: true, loaded: true,
+      configured: true, ready: true, restartRequired: false, port: 8100,
+      version: '5.23', message: 'connected', path: '/bluemap/' };
+    sandbox.tab = 'activity'; sandbox.render();
+    await sandbox.loadBlueMapStatus(true);
+    await sandbox.loadAll();
+    await sandbox.loadInsights();
+    sandbox.focusPlayer = '';
+    sandbox.clearFilter();
+    sandbox.allDim = 'overworld';
+    sandbox.cursorAt = responses['/api/track'].to;
+    sandbox.cursorSet = true;
+    sandbox.setBlueMapMode('world');
+    sandbox.paintAll();
+
+    const world = sandbox.usingBlueMap() && /t-blue-frame/.test(byId.get('t-map')._html || '');
+    console.log((world ? '  PASS  ' : '  FAIL  ') +
+      'a connected BlueMap becomes the main activity map');
+    if (!world) failures.push('BlueMap did not become the main renderer');
+
+    const payload = sandbox.bluePendingState || {};
+    const carried = (payload.markers || []).length > 0 && (payload.lines || []).length > 0
+      && (payload.grid || []).some((g) => g.type === 'label');
+    console.log((carried ? '  PASS  ' : '  FAIL  ') +
+      'the 3D renderer receives actions, player paths and a labelled coordinate grid');
+    if (!carried) failures.push('BlueMap payload omitted map features');
+
+    const build = sandbox.episodes.find((e) => sandbox.sceneKind(e) === 'build');
+    if (build) {
+      sandbox.allData.tracks[build.player].push({ at: build.from + 1000, dim: build.dim,
+        x: build.x, y: build.y + 7, z: build.z });
+      sandbox.openBlueScene(build);
+    }
+    const scene = sandbox.bluePendingState || {};
+    const inWorld = (scene.scenes || []).some((m) => m.type === 'box')
+      && (scene.scenes || []).some((m) => m.kind === 'scene-player');
+    console.log((inWorld ? '  PASS  ' : '  FAIL  ') +
+      'a selected 3D build is made of world-coordinate blocks and altitude-aware players');
+    if (!inWorld) failures.push('the BlueMap build stayed a badge or lost player altitude');
+
+    sandbox.setBlueMapMode('legacy');
+    sandbox.paintAll();
+    const legacy = !sandbox.usingBlueMap() && /id="t-svg"/.test(byId.get('t-map')._html || '');
+    console.log((legacy ? '  PASS  ' : '  FAIL  ') + 'legacy 2D remains available');
+    if (!legacy) failures.push('legacy map was replaced rather than retained');
+
+    responses['/api/bluemap'] = { installed: false, enabled: false, loaded: false,
+      configured: false, ready: false, restartRequired: false, port: 8100,
+      version: '', message: 'not installed', path: '/bluemap/' };
+  } catch (e) {
+    console.log('  FAIL  the optional full-world renderer  -> ' + e.message);
+    failures.push('BlueMap renderer: ' + e.message);
   }
 
   // ---- saving the model settings ----
