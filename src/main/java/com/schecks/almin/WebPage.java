@@ -2291,6 +2291,41 @@ final class WebPage {
           return Math.max(0.55,0.98-k*0.43);
         }
 
+        // A single SVG or BlueMap line has one opacity, so split a travelled
+        // track into a small number of age bands. This puts movement on the
+        // same clock as its icons without turning every saved sample into its
+        // own DOM node or BlueMap marker. The older end decides a segment's
+        // visibility, which prevents a fresh point after a long gap from
+        // pulling an already-faded trail back onto the map.
+        const TRACK_FADE_STEPS=12;
+        function fadedTrackRuns(points,cursor,windowMs){
+          const runs=[]; let run=null;
+          for(let i=1;i<points.length;i++){
+            const a=points[i-1], b=points[i];
+            const aa=Number(a.at), ba=Number(b.at);
+            const oldest=Math.min(Number.isFinite(aa)?aa:cursor,
+                                  Number.isFinite(ba)?ba:cursor);
+            const raw=ageOpacity('move',Math.max(0,cursor-oldest),windowMs);
+            if(!(raw>0)){ run=null; continue; }
+            const opacity=Math.max(1,Math.min(TRACK_FADE_STEPS,
+              Math.round(raw*TRACK_FADE_STEPS)))/TRACK_FADE_STEPS;
+            if(run&&run.opacity===opacity&&run.last===a){
+              run.points.push(b); run.last=b;
+            } else {
+              run={opacity:opacity,points:[a,b],last:b}; runs.push(run);
+            }
+          }
+          return runs;
+        }
+
+        // During playback the faint guide is only the path still ahead. If it
+        // included the travelled portion too, an expired trail would remain
+        // visible underneath its faded segments.
+        function futureTrackPoints(points,cursor){
+          const first=points.findIndex(p=>Number(p.at)>cursor);
+          return first<0?[]:points.slice(Math.max(0,first-1));
+        }
+
         function filtering(){
           return filt.acts.size>0 || filt.items.size>0 || filt.kinds.size>0;
         }
@@ -3137,25 +3172,31 @@ final class WebPage {
             const full=tracks[n].filter(inDim);
             if(!full.length) return '';
             const upto=full.filter(p=>p.at<=cursor);
+            const future=futureTrackPoints(full,cursor);
             const d=pts=>pts.map((p,i)=>(i?'L':'M')+sx(p.x).toFixed(1)+' '+
               sz(p.z).toFixed(1)).join(' ');
-            // The whole path faintly, so you can see where to scrub to; the
-            // travelled part solid on top of it, over a dark casing so a pale
-            // line does not disappear where it crosses sand.
+            // The path still ahead is faint, so you can see where to scrub.
+            // Travelled segments use the same age curve as movement icons,
+            // over a casing that fades with them rather than darkening old
+            // ground after the coloured line has gone.
             const wide=mapOpts.path;
-            let out=mapOpts.paths
-              ? '<path d="'+d(full)+'" fill="none" stroke="'+c+'" stroke-width="'+
+            let out=mapOpts.paths&&future.length>1
+              ? '<path d="'+d(future)+'" fill="none" stroke="'+c+'" stroke-width="'+
                 (wide*0.7).toFixed(1)+'" stroke-opacity=".16" stroke-linejoin="round" '+
                 'stroke-linecap="round"/>'
               : '';
             if(upto.length){
               if(mapOpts.paths){
-                out+='<path d="'+d(upto)+'" fill="none" stroke="#0a0c10" stroke-width="'+
-                  (wide+2.4).toFixed(1)+'" stroke-opacity=".45" stroke-linejoin="round" '+
-                  'stroke-linecap="round"/>'+
-                  '<path d="'+d(upto)+'" fill="none" stroke="'+c+'" stroke-width="'+
-                  wide.toFixed(1)+'" stroke-opacity=".95" stroke-linejoin="round" '+
-                  'stroke-linecap="round"/>';
+                const faded=fadedTrackRuns(upto,cursor,windowMs);
+                out+=faded.map(r=>'<path d="'+d(r.points)+
+                  '" fill="none" stroke="#0a0c10" stroke-width="'+
+                  (wide+2.4).toFixed(1)+'" stroke-opacity="'+
+                  Math.min(.45,r.opacity*.45).toFixed(2)+'" stroke-linejoin="round" '+
+                  'stroke-linecap="round"/>').join('')+
+                  faded.map(r=>'<path d="'+d(r.points)+'" fill="none" stroke="'+c+
+                  '" stroke-width="'+wide.toFixed(1)+'" stroke-opacity="'+
+                  Math.min(.98,r.opacity).toFixed(2)+'" stroke-linejoin="round" '+
+                  'stroke-linecap="round"/>').join('');
               }
               // Where they were at the cursor, drawn as their own face —
               // square, because a Minecraft head is. The player's colour is
@@ -3363,6 +3404,11 @@ final class WebPage {
           drawCluster();
           paintFilters();
         }
+
+        """;
+
+    /** The map controls, split from the renderer at the JVM's 64KB string limit. */
+    private static final String PARTMAPUI = """
 
         /**
          * The panel of fine adjustments, beside the map rather than in the
@@ -5874,11 +5920,16 @@ final class WebPage {
             const full=(d.tracks[who]||[]).filter(p=>p.dim===allDim);
             const upto=full.filter(p=>p.at<=d.cursor);
             if(mapOpts.paths){
-              if(full.length>1) lines.push({id:'future-'+who,label:who+' full path',
-                points:thinBluePath(full),color:playerColor(who),width:Math.max(1,mapOpts.path*.55),
+              const future=futureTrackPoints(thinBluePath(full),d.cursor);
+              if(future.length>1) lines.push({id:'future-'+who,label:who+' path ahead',
+                points:future,color:playerColor(who),width:Math.max(1,mapOpts.path*.55),
                 opacity:.18});
-              if(upto.length>1) lines.push({id:'path-'+who,label:who+' travelled path',
-                points:thinBluePath(upto),color:playerColor(who),width:mapOpts.path,opacity:.94});
+              let runNo=0;
+              for(const run of fadedTrackRuns(thinBluePath(upto),d.cursor,d.windowMs)){
+                lines.push({id:'path-'+who+'-'+(runNo++),label:who+' travelled path',
+                  points:run.points,color:playerColor(who),width:mapOpts.path,
+                  opacity:Math.min(.98,run.opacity)});
+              }
             }
             if(!upto.length) continue;
             const last=upto[upto.length-1], id='p-'+who;
@@ -5971,10 +6022,12 @@ final class WebPage {
         function thinBluePath(points){
           const stride=Math.max(1,Math.ceil(points.length/500)), out=[];
           for(let i=0;i<points.length;i+=stride){ const p=points[i];
-            out.push({x:p.x+.5,y:p.y+.2,z:p.z+.5}); }
+            out.push({x:p.x+.5,y:p.y+.2,z:p.z+.5,at:p.at}); }
           const last=points[points.length-1];
-          if(last && (out.length===0||out[out.length-1].x!==last.x+.5))
-            out.push({x:last.x+.5,y:last.y+.2,z:last.z+.5});
+          const tail=out[out.length-1];
+          if(last && (!tail||tail.x!==last.x+.5||tail.y!==last.y+.2||
+             tail.z!==last.z+.5||tail.at!==last.at))
+            out.push({x:last.x+.5,y:last.y+.2,z:last.z+.5,at:last.at});
           return out;
         }
 
@@ -7663,5 +7716,5 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTSETTINGS);
+        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTSETTINGS);
 }

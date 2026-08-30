@@ -48,6 +48,10 @@ Almin's: dimensions, timeline and playback, filters, focus, paths and faces,
 action/player colours, clustering, fading, sequence markers, coordinate grid,
 side list, online strip, fullscreen, and refresh interval.
 
+Travelled player paths fade segment by segment on the same clock as movement
+icons. During playback, the faint guide shows only the path still ahead, so an
+old segment cannot remain visible underneath after its activity has faded.
+
 Selecting a build/fight scene while **3D world** is active does not open the
 isometric dialog. Recorded blocks, blows, and nearby player samples are placed
 at their actual X/Y/Z coordinates in the rendered world. **Expand build events**

@@ -522,6 +522,9 @@ renderer. In the 3D world, build scenes expand at their real X/Y/Z coordinates
 instead of opening over the map. See [the BlueMap integration boundary](docs/BLUEMAP.md)
 for installation, security, removal and the files it owns.
 
+Travelled player paths fade segment by segment on the same clock as activity
+marks in both renderers; during playback, the faint guide is only the path ahead.
+
 Almin neither compiles against nor redistributes BlueMap. Its integrated web
 server is forced onto an instance-local loopback port and reached only through
 the authenticated Almin origin, including through the existing Caddy proxy.

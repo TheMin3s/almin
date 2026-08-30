@@ -1531,6 +1531,37 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     return other > 0 ? true : 'a category that was not asked for faded anyway';
   });
 
+  check('player-track segments fade on the same clock as movement icons', () => {
+    sandbox.mapOpts.fade.on = false;
+    const points=[{at:0,x:0,y:64,z:0},{at:500,x:1,y:64,z:0},
+                  {at:1000,x:2,y:64,z:0}];
+    const runs=sandbox.fadedTrackRuns(points,1000,1000);
+    const opacities=runs.map(r=>r.opacity);
+    return opacities.length>1 && opacities[0]<opacities[opacities.length-1]
+      ? true : 'old and new path segments kept the same opacity';
+  });
+
+  check('the movement fade window removes expired track segments', () => {
+    sandbox.mapOpts.fade.on = true;
+    sandbox.mapOpts.fade.minutes = 10;
+    sandbox.mapOpts.fade.cats = ['move'];
+    const minute=60000, points=[{at:0},{at:minute},{at:11*minute},{at:12*minute}];
+    const runs=sandbox.fadedTrackRuns(points,12*minute,minute);
+    sandbox.mapOpts.fade.on = false;
+    sandbox.mapOpts.fade.cats = ['world', 'fight', 'things'];
+    const drawn=runs.flatMap(r=>r.points);
+    return !drawn.includes(points[0]) && !drawn.includes(points[1])
+      && drawn.includes(points[2]) && drawn.includes(points[3])
+      ? true : 'an expired part of the trail was still drawn';
+  });
+
+  check('the playback guide contains only the path still ahead', () => {
+    const points=[{at:1},{at:2},{at:3},{at:4}];
+    const future=sandbox.futureTrackPoints(points,2);
+    return future.length===3 && future[0]===points[1] && future[2]===points[3]
+      ? true : 'the faint guide still included travelled history';
+  });
+
   check('a box is as visible as the freshest thing in it', () => {
     sandbox.mapOpts.cluster = true;
     sandbox.mapOpts.fade.on = true;
@@ -2925,6 +2956,13 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((carried ? '  PASS  ' : '  FAIL  ') +
       'the 3D renderer receives actions, player paths and a labelled coordinate grid');
     if (!carried) failures.push('BlueMap payload omitted map features');
+
+    const pathOpacity=[...new Set((payload.lines||[]).filter(l=>
+      String(l.id||'').startsWith('path-')).map(l=>l.opacity))];
+    const pathFades=pathOpacity.length>1;
+    console.log((pathFades ? '  PASS  ' : '  FAIL  ') +
+      'BlueMap player tracks carry age-banded opacity');
+    if (!pathFades) failures.push('BlueMap paths did not fade by segment age');
 
     const build = sandbox.episodes.find((e) => sandbox.sceneKind(e) === 'build');
     if (build) {
