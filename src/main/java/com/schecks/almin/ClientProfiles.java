@@ -49,9 +49,26 @@ import java.util.UUID;
 public final class ClientProfiles {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    /** One mod on one client, and what has happened to it. */
-    public record Mod(String id, String version, long firstSeen, long removedAt) {
+    /**
+     * One mod on one client, and what has happened to it.
+     *
+     * <p>{@code parent} is the mod that ships this one inside its own jar, or
+     * "" for a jar the player installed themselves. A modern client is mostly
+     * not mods: it is Fabric API's forty modules and a dozen bundled
+     * libraries, and listing those beside the six things somebody actually
+     * chose buries the answer to "what is this client running".
+     */
+    public record Mod(String id, String version, long firstSeen, long removedAt,
+                      String parent) {
+
+        public Mod(String id, String version, long firstSeen, long removedAt) {
+            this(id, version, firstSeen, removedAt, "");
+        }
+
         public boolean gone() { return removedAt > 0; }
+
+        /** Whether this is something the player installed rather than something bundled. */
+        public boolean own() { return parent == null || parent.isEmpty(); }
     }
 
     /** One client, as of its last join. */
@@ -106,34 +123,42 @@ public final class ClientProfiles {
         Map<String, Mod> was = new LinkedHashMap<>();
         if (before != null) for (Mod m : before.mods()) was.put(m.id(), m);
 
-        Map<String, String> nowHas = new LinkedHashMap<>();
+        // "id@version" or "id@version^parent". The second form is newer; a
+        // client that predates it simply reports no parent, which reads as
+        // "the player installed this", and that is the safe way round.
+        Map<String, String[]> nowHas = new LinkedHashMap<>();
         for (String entry : said.mods()) {
-            int at = entry.lastIndexOf('@');
-            String modId = at > 0 ? entry.substring(0, at) : entry;
-            String version = at > 0 ? entry.substring(at + 1) : "";
+            String rest = entry;
+            String parent = "";
+            int caret = rest.lastIndexOf('^');
+            if (caret > 0) { parent = rest.substring(caret + 1); rest = rest.substring(0, caret); }
+            int at = rest.lastIndexOf('@');
+            String modId = at > 0 ? rest.substring(0, at) : rest;
+            String version = at > 0 ? rest.substring(at + 1) : "";
             if (modId.isBlank()) continue;
-            nowHas.put(modId, version);
+            nowHas.put(modId, new String[] {version, parent});
         }
 
         List<Mod> merged = new ArrayList<>();
         List<String> added = new ArrayList<>();
-        for (Map.Entry<String, String> e : nowHas.entrySet()) {
+        for (Map.Entry<String, String[]> e : nowHas.entrySet()) {
+            String version = e.getValue()[0], parent = e.getValue()[1];
             Mod old = was.get(e.getKey());
             if (old == null) {
-                merged.add(new Mod(e.getKey(), e.getValue(), now, 0));
+                merged.add(new Mod(e.getKey(), version, now, 0, parent));
                 // Only new if this client has been seen before; the first
                 // sighting is not "they installed forty mods".
-                if (before != null) added.add(e.getKey());
+                if (before != null && parent.isEmpty()) added.add(e.getKey());
             } else {
                 // Coming back clears the removal: a mod toggled off and on is
                 // not a mod that left.
-                merged.add(new Mod(e.getKey(), e.getValue(), old.firstSeen(), 0));
+                merged.add(new Mod(e.getKey(), version, old.firstSeen(), 0, parent));
             }
         }
         for (Mod old : was.values()) {
             if (nowHas.containsKey(old.id())) continue;
             merged.add(old.gone() ? old
-                : new Mod(old.id(), old.version(), old.firstSeen(), now));
+                : new Mod(old.id(), old.version(), old.firstSeen(), now, old.parent()));
         }
 
         profiles.put(id, new Profile(id, name, now,
@@ -237,7 +262,7 @@ public final class ClientProfiles {
                     for (var el : o.getAsJsonArray("mods")) {
                         JsonObject m = el.getAsJsonObject();
                         mods.add(new Mod(str(m, "id"), str(m, "version"),
-                            num(m, "firstSeen"), num(m, "removedAt")));
+                            num(m, "firstSeen"), num(m, "removedAt"), str(m, "parent")));
                     }
                 }
                 profiles.put(id, new Profile(id, str(o, "name"), num(o, "at"),
@@ -276,6 +301,7 @@ public final class ClientProfiles {
                     j.addProperty("version", m.version());
                     j.addProperty("firstSeen", m.firstSeen());
                     j.addProperty("removedAt", m.removedAt());
+                    j.addProperty("parent", m.parent() == null ? "" : m.parent());
                     mods.add(j);
                 }
                 o.add("mods", mods);

@@ -341,7 +341,14 @@ public final class WebUi {
         http.createContext("/api/map", guard("/api/map", ui::handleMap));
         http.createContext("/api/head", guard("/api/head", ui::handleHead));
         http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
+        http.createContext("/api/insights/find", guard("/api/insights/find", ui::handleFind));
         http.createContext("/api/ai/key", guard("/api/ai/key", ui::handleAiKey));
+        http.createContext("/api/client/review", guard("/api/client/review", ui::handleModReview));
+        http.createContext("/api/servermods", guard("/api/servermods", ui::handleServerMods));
+        http.createContext("/api/servermods/upload",
+            guard("/api/servermods/upload", ui::handleServerModUpload));
+        http.createContext("/api/servermods/change",
+            guard("/api/servermods/change", ui::handleServerModChange));
         http.createContext("/api/properties", guard("/api/properties", ui::handleProperties));
         http.createContext("/api/blocks", guard("/api/blocks", ui::handleBlocks));
         http.createContext("/api/item", guard("/api/item", ui::handleItem));
@@ -1208,6 +1215,142 @@ public final class WebUi {
         }
     }
 
+    // ---------- routes: mods on this server ----------
+
+    /**
+     * The jars in this server's own {@code mods/} folder.
+     *
+     * <p>Separate from {@code /api/mods}, which is the list of suggestions
+     * sent to players. The two used to share a tab and a heading, and "add a
+     * mod" meant two different acts depending on which half of the page you
+     * were looking at.
+     */
+    private void handleServerMods(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!requireServer(ex)) return;
+            List<ServerMods.Installed> list = onServer(() -> ServerMods.list(server), List.of());
+            JsonObject o = new JsonObject();
+            JsonArray arr = new JsonArray();
+            for (ServerMods.Installed m : list) {
+                JsonObject j = new JsonObject();
+                j.addProperty("file", m.file());
+                j.addProperty("id", m.modId());
+                j.addProperty("name", m.name());
+                j.addProperty("version", m.version());
+                j.addProperty("bytes", m.bytes());
+                j.addProperty("modified", m.modified());
+                j.addProperty("loaded", m.loaded());
+                j.addProperty("enabled", m.enabled());
+                j.addProperty("ours", m.ours());
+                arr.add(j);
+            }
+            o.add("mods", arr);
+            o.addProperty("maxBytes", ServerMods.MAX_BYTES);
+            o.addProperty("folder", "mods/");
+            json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Puts a jar into {@code mods/}.
+     *
+     * <p>The same guards the offer upload uses — a bare {@code .jar} name, a
+     * capped body, and a file that has to really be a Fabric mod before it is
+     * kept — and it is written to a temporary file first, so nothing
+     * half-received is ever visible in the folder Fabric reads.
+     */
+    private void handleServerModUpload(HttpExchange ex) throws IOException {
+        Path tmp = null;
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+
+            String name = queryParam(ex, "name");
+            Path dir = onServer(() -> ServerMods.dir(server), null);
+            if (dir == null) { json(ex, 409, err("This server has no mods/ folder.")); return; }
+            if (onServer(() -> ServerMods.resolve(server, name), null) == null) {
+                json(ex, 400, err("Filename must be a plain .jar name, e.g. sodium-0.5.11.jar"));
+                return;
+            }
+            boolean replace = "1".equals(queryParam(ex, "replace"));
+
+            long max = ServerMods.MAX_BYTES;
+            tmp = Files.createTempFile(dir, ".almin-upload-", ".part");
+            long written;
+            try (var in = ex.getRequestBody(); var out = Files.newOutputStream(tmp)) {
+                byte[] buf = new byte[64 * 1024];
+                long total = 0;
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    total += n;
+                    if (total > max) {
+                        json(ex, 413, err("File exceeds the " + (max / (1024 * 1024)) + " MB limit."));
+                        return;
+                    }
+                    out.write(buf, 0, n);
+                }
+                written = total;
+            }
+            if (written == 0) { json(ex, 400, err("Empty upload.")); return; }
+            if (!UpdateChecker.looksLikeValidMod(tmp)) {
+                json(ex, 400, err("That file isn't a Fabric mod jar (no fabric.mod.json inside)."));
+                return;
+            }
+            Path staged = tmp;
+            ServerMods.Result r =
+                onServer(() -> ServerMods.install(server, staged, name, replace),
+                    ServerMods.Result.fail("The server didn't answer in time."));
+            if (r.ok()) tmp = null;
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", r.ok());
+            o.addProperty("message", r.message());
+            o.addProperty("bytes", written);
+            json(ex, r.ok() ? 200 : 400, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            if (tmp != null) {
+                try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            }
+            ex.close();
+        }
+    }
+
+    /** Turns a server mod on or off, or deletes it. */
+    private void handleServerModChange(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject b = readBody(ex);
+            String file = b.has("file") ? b.get("file").getAsString() : "";
+            String what = b.has("action") ? b.get("action").getAsString() : "";
+            ServerMods.Result r = switch (what) {
+                case "enable" -> onServer(() -> ServerMods.setEnabled(server, file, true),
+                    ServerMods.Result.fail("The server didn't answer in time."));
+                case "disable" -> onServer(() -> ServerMods.setEnabled(server, file, false),
+                    ServerMods.Result.fail("The server didn't answer in time."));
+                case "delete" -> onServer(() -> ServerMods.delete(server, file),
+                    ServerMods.Result.fail("The server didn't answer in time."));
+                default -> ServerMods.Result.fail("Unknown action.");
+            };
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", r.ok());
+            o.addProperty("message", r.message());
+            json(ex, r.ok() ? 200 : 400, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
     // ---------- routes: advertised mods ----------
 
     /** The current offer list plus the three settings that govern it. */
@@ -1849,7 +1992,9 @@ public final class WebUi {
                 return;
             }
 
-            if (!"add".equals(action)) { json(ex, 400, err("Unknown action.")); return; }
+            // "add" advertises it to players; "server" installs it here.
+            boolean toServer = "server".equals(action);
+            if (!"add".equals(action) && !toServer) { json(ex, 400, err("Unknown action.")); return; }
 
             String link = body.has("link") ? body.get("link").getAsString().trim() : "";
             boolean required = body.has("required") && body.get("required").getAsBoolean();
@@ -1866,6 +2011,32 @@ public final class WebUi {
 
             AlminLog.info("[almin] fetching {} {} from Modrinth for MC {}",
                 found.slug(), found.version(), gameVersion);
+
+            if (toServer) {
+                // Downloaded into modfiles/ first and then moved, so a failed
+                // or half-finished download is never seen by Fabric.
+                FileFetcher.FetchResult got =
+                    FileFetcher.fetch(found.url(), target, server.getServerDirectory());
+                if (!got.ok()) { json(ex, 400, err("Download failed: " + got.message())); return; }
+                if (!UpdateChecker.looksLikeValidMod(target)) {
+                    try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+                    json(ex, 400, err("That download isn't a Fabric mod jar."));
+                    return;
+                }
+                ServerMods.Result put =
+                    onServer(() -> ServerMods.install(server, target, found.filename(), true),
+                        ServerMods.Result.fail("The server didn't answer in time."));
+                if (!put.ok()) {
+                    try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+                }
+                JsonObject out = new JsonObject();
+                out.addProperty("ok", put.ok());
+                out.addProperty("message", put.message());
+                out.addProperty("bytes", got.bytes());
+                json(ex, put.ok() ? 200 : 400, out.toString());
+                return;
+            }
+
             FileFetcher.FetchResult fetched =
                 FileFetcher.fetch(found.url(), target, server.getServerDirectory());
             if (!fetched.ok()) { json(ex, 400, err("Download failed: " + fetched.message())); return; }
@@ -2238,6 +2409,8 @@ public final class WebUi {
         try {
             if (!requireAuth(ex)) return;
             boolean run = "POST".equals(ex.getRequestMethod());
+            JsonObject body = run ? readBody(ex) : new JsonObject();
+            AiInsights.Scope scope = scopeOf(ex, body);
 
             List<ActivityLog.Entry> rows = ActivityLog.recent(MAP_ROWS);
             List<Episodes.Episode> episodes = Episodes.of(rows);
@@ -2246,6 +2419,7 @@ public final class WebUi {
             JsonObject root = new JsonObject();
             root.add("episodes", episodesJson(episodes));
             root.add("ai", aiStatusJson());
+            root.addProperty("scope", scope.key());
 
             AiInsights.Report report;
             if (run) {
@@ -2259,19 +2433,144 @@ public final class WebUi {
                     from = Math.min(from, e.at());
                     to = Math.max(to, e.at());
                 }
-                List<ActivityLog.Entry> chat = new java.util.ArrayList<>();
-                for (int i = rows.size() - 1; i >= 0; i--) {
-                    if ("chat".equals(rows.get(i).action())) chat.add(rows.get(i));
-                }
                 int online = serverRunning
                     ? onServer(() -> server.getPlayerCount(), 0) : 0;
-                report = AiInsights.summarise(episodes, chat,
+                report = AiInsights.summarise(scope, episodes, rows,
                     from == Long.MAX_VALUE ? to : from, to, online, true);
             } else {
-                report = AiInsights.cached();
+                report = AiInsights.cached(scope);
             }
             if (report != null) root.add("report", reportJson(report));
             json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Which subject the panel is asking about.
+     *
+     * <p>Read from the query string for a GET and the body for a POST, so the
+     * same three fields work for "what is cached for this player" and "go and
+     * ask about this player".
+     */
+    private static AiInsights.Scope scopeOf(HttpExchange ex, JsonObject body) {
+        String kind = pick(ex, body, "scope");
+        if ("player".equals(kind)) {
+            String who = pick(ex, body, "player");
+            if (!who.isEmpty()) return AiInsights.Scope.of(who);
+        } else if ("area".equals(kind)) {
+            int x = number(pick(ex, body, "x"), 0);
+            int z = number(pick(ex, body, "z"), 0);
+            int r = Math.max(16, Math.min(8192, number(pick(ex, body, "r"), 256)));
+            return AiInsights.Scope.area(pick(ex, body, "dim"), x, z, r);
+        }
+        return AiInsights.Scope.all();
+    }
+
+    private static String pick(HttpExchange ex, JsonObject body, String key) {
+        if (body != null && body.has(key) && !body.get(key).isJsonNull()
+            && body.get(key).isJsonPrimitive()) {
+            return body.get(key).getAsString().trim();
+        }
+        String q = queryParam(ex, key);
+        return q == null ? "" : q.trim();
+    }
+
+    private static int number(String s, int fallback) {
+        try {
+            return s == null || s.isEmpty() ? fallback : (int) Math.round(Double.parseDouble(s));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * "Show me what I am looking for", turned into the panel's own filter.
+     *
+     * <p>Answers with a filter rather than a list of rows on purpose — see
+     * {@link AiInsights.Lens}. The route holds nothing: the panel applies what
+     * comes back to controls the person can then see and change.
+     */
+    private void handleFind(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject body = readBody(ex);
+            String question = body.has("question") ? body.get("question").getAsString() : "";
+            if (!AlminConfig.get().aiEnabled) {
+                json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
+                return;
+            }
+            List<ActivityLog.Entry> rows = ActivityLog.recent(MAP_ROWS);
+            List<Episodes.Episode> episodes = Episodes.of(rows);
+            episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
+            long from = Long.MAX_VALUE, to = 0;
+            for (ActivityLog.Entry e : rows) {
+                from = Math.min(from, e.at());
+                to = Math.max(to, e.at());
+            }
+            AiInsights.Lens lens = AiInsights.look(question, episodes, rows,
+                from == Long.MAX_VALUE ? to : from, to);
+            JsonObject o = new JsonObject();
+            o.addProperty("question", lens.question());
+            o.addProperty("reply", lens.reply());
+            o.addProperty("error", lens.error() == null ? "" : lens.error());
+            o.add("players", strings(lens.players()));
+            o.add("actions", strings(lens.actions()));
+            o.add("items", strings(lens.items()));
+            o.add("kinds", strings(lens.kinds()));
+            JsonArray eps = new JsonArray();
+            for (Long at : lens.episodes()) eps.add(at);
+            o.add("episodes", eps);
+            json(ex, lens.ok() ? 200 : 400, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    private static JsonArray strings(List<String> list) {
+        JsonArray arr = new JsonArray();
+        for (String s : list) arr.add(s);
+        return arr;
+    }
+
+    /**
+     * What the model makes of one client's mod list.
+     *
+     * <p>Never automatic. The rest of the AI work runs on a timer once it is
+     * switched on; this one is a person deciding to point a model at another
+     * person's computer, and that should be a deliberate act every time.
+     */
+    private void handleModReview(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject body = readBody(ex);
+            java.util.UUID id = Heads.parseUuid(body.has("uuid")
+                ? body.get("uuid").getAsString() : "");
+            if (id == null) { json(ex, 400, err("Not a UUID.")); return; }
+            ClientProfiles.Profile p = ClientProfiles.of(id);
+            if (p == null) { json(ex, 404, err("That client has not reported anything.")); return; }
+            AiInsights.ModReview review = AiInsights.review(p.name(), p.present(), p.removed());
+            JsonObject o = new JsonObject();
+            o.addProperty("generated", review.generated());
+            o.addProperty("summary", review.summary());
+            o.addProperty("error", review.error() == null ? "" : review.error());
+            JsonArray flags = new JsonArray();
+            for (AiInsights.ModFlag f : review.flags()) {
+                JsonObject j = new JsonObject();
+                j.addProperty("id", f.id());
+                j.addProperty("level", f.level());
+                j.addProperty("why", f.why());
+                flags.add(j);
+            }
+            o.add("flags", flags);
+            json(ex, review.ok() ? 200 : 400, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
         } finally {
@@ -2343,6 +2642,18 @@ public final class WebUi {
             means.add(j);
         }
         o.add("sequences", means);
+        JsonArray found = new JsonArray();
+        for (AiInsights.Found f : r.found()) {
+            JsonObject j = new JsonObject();
+            j.addProperty("from", f.from());
+            j.addProperty("to", f.to());
+            j.addProperty("player", f.player());
+            j.addProperty("label", f.label());
+            j.addProperty("why", f.why());
+            found.add(j);
+        }
+        o.add("patterns", found);
+        o.addProperty("scope", r.scope());
         return o;
     }
 
@@ -2446,6 +2757,7 @@ public final class WebUi {
         o.addProperty("version", m.version());
         o.addProperty("firstSeen", m.firstSeen());
         o.addProperty("removedAt", m.removedAt());
+        o.addProperty("parent", m.parent() == null ? "" : m.parent());
         o.addProperty("restricted", banned.contains(m.id().toLowerCase(java.util.Locale.ROOT)));
         return o;
     }

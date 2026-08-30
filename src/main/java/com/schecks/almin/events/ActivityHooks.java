@@ -3,6 +3,9 @@ package com.schecks.almin.events;
 import com.schecks.almin.ActivityLog;
 import com.schecks.almin.AlminConfig;
 import com.schecks.almin.AlminLog;
+import net.fabricmc.fabric.api.entity.event.v1.EntitySleepEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityCombatEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityLevelChangeEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
@@ -27,9 +30,11 @@ import net.minecraft.world.level.block.state.BlockState;
  * "carry on". Nothing here can cancel an interaction, so a bug in this file
  * cannot stop a player doing something — it can only fail to write it down.
  *
- * <p>Two actions are not events at all and arrive from mixins instead:
- * commands ({@code CommandActivityMixin}) and opening a container
- * ({@code OpenMenuActivityMixin}).
+ * <p>Several actions are not events at all and arrive from mixins instead:
+ * commands, opening a container, crafting, trading, dropping, enchanting,
+ * writing on a sign, and earning an advancement. Each of those has its own
+ * mixin next to this file, for the same reason — the game has the moment and
+ * Fabric has no event for it.
  */
 public final class ActivityHooks {
     private ActivityHooks() {}
@@ -157,6 +162,41 @@ public final class ActivityHooks {
             }
             return InteractionResult.PASS;
         });
+
+        // What a player killed. Separate from 'attack', which is every swing:
+        // forty swings and one kill is a fight, and forty kills is a farm. It
+        // is also the row that answers "who killed my horse".
+        ServerEntityCombatEvents.AFTER_KILLED_OTHER_ENTITY.register((level, killer, killed, src) -> {
+            if (killer instanceof ServerPlayer p && combat() && killed != null) {
+                safely("kill", () -> ActivityLog.recordFolded(p, "kill", nameOf(killed)));
+            }
+        });
+
+        // Sleeping. Small, and the clearest marker in the log of where
+        // somebody actually lives: a bed is a place people come back to.
+        EntitySleepEvents.START_SLEEPING.register((entity, pos) -> {
+            if (entity instanceof ServerPlayer p && progress()) {
+                safely("sleep", () -> ActivityLog.recordBlock(p, "sleep", "went to bed", pos));
+            }
+        });
+
+        // Going through a portal, or dying out of the End. Recorded in the
+        // dimension arrived in, which is where the next thing they do will be.
+        ServerEntityLevelChangeEvents.AFTER_PLAYER_CHANGE_LEVEL.register((p, from, to) -> {
+            if (progress()) {
+                safely("portal", () -> ActivityLog.record(p, "portal",
+                    "from " + dimName(from) + " to " + dimName(to)));
+            }
+        });
+    }
+
+    /** The short name of a level, as the activity map spells dimensions. */
+    private static String dimName(net.minecraft.server.level.ServerLevel level) {
+        try {
+            return level.dimension().identifier().getPath();
+        } catch (Throwable t) {
+            return "?";
+        }
     }
 
     // ---------- placing a block ----------
@@ -212,6 +252,10 @@ public final class ActivityHooks {
 
     private static boolean items() {
         return AlminConfig.get().activityItems;
+    }
+
+    private static boolean progress() {
+        return AlminConfig.get().activityProgress;
     }
 
     /** A player's account name, or an entity's type name. */

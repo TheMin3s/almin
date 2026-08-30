@@ -1773,19 +1773,99 @@ final class WebPage {
                 esc(fmtAgo(c.at))+'. A modified client can say anything, so this is a '+
                 'support tool rather than proof of anything.</p>';
               const mods=c.mods||[], gone=c.removed||[];
-              html+='<h3 class="csec">Installed ('+mods.length+')</h3><div id="cl-mods"></div>';
+              const own=mods.filter(m=>!groupOf(m)), bundles=bundlesOf(mods);
+              html+='<div class="bartitle" style="margin:16px 0 2px">'+
+                '<h3 class="csec" style="margin:0">Installed ('+own.length+')</h3>'+
+                '<span class="spacer"></span>'+
+                '<button class="btn" id="cl-ask" title="Ask the model what these mods do">'+
+                'Ask about these</button></div>'+
+                '<div id="cl-review"></div>'+
+                '<div id="cl-mods"></div><div id="cl-bundled"></div>';
               if(gone.length){
                 html+='<h3 class="csec">Removed in the last '+(c.historyDays||7)+
                   ' days ('+gone.length+')</h3><div id="cl-gone"></div>';
               }
               body.innerHTML=html;
-              paintMods($('cl-mods'),mods,c.at,false);
+              clientReview=null;
+              paintMods($('cl-mods'),own,c.at,false);
+              paintBundles($('cl-bundled'),bundles,c.at);
               if(gone.length) paintMods($('cl-gone'),gone,c.at,true);
+              const ask=$('cl-ask');
+              if(ask) ask.onclick=()=>reviewMods(p,c);
             });
           });
         }
 
-        /** One list of client mods: new ones marked, removed ones dated. */
+        /**
+         * Which mod ships this one, if it is not one somebody installed.
+         *
+         * <p>The client says so where it can. Where it cannot — an older
+         * client mod that predates the field — every {@code fabric-*} module
+         * is Fabric API, which is by far the largest case and the one the list
+         * was drowning in.
+         */
+        function groupOf(m){
+          const id=m.id||'';
+          // Fabric API is itself called fabric-api, so the fallback below
+          // would fold the parent into its own children and leave the list
+          // one short with nothing to say why.
+          const g = m.parent ? m.parent : (/^fabric-/.test(id) ? 'fabric-api' : '');
+          return g===id ? '' : g;
+        }
+
+        /** Bundled mods, gathered under whatever ships them, biggest group first. */
+        function bundlesOf(list){
+          const by={};
+          for(const m of list){
+            const g=groupOf(m);
+            if(!g) continue;
+            (by[g]=by[g]||[]).push(m);
+          }
+          return Object.keys(by).sort((a,b)=>by[b].length-by[a].length).map(k=>({
+            parent:k, mods:by[k].sort((a,b)=>a.id.localeCompare(b.id))}));
+        }
+
+        /**
+         * The bundled mods, folded away.
+         *
+         * <p>Fabric API alone is forty entries, and a client running six mods
+         * looked like a client running fifty. They are still here — a
+         * restricted mod bundled inside another one is exactly the thing you
+         * would want to find — but they are one line until asked for.
+         */
+        function paintBundles(box,groups,at){
+          if(!box) return;
+          box.innerHTML='';
+          for(const g of groups){
+            const wrap=document.createElement('div');
+            wrap.style.margin='6px 0 0';
+            const flagged=g.mods.filter(m=>m.restricted).length;
+            const head=document.createElement('button');
+            head.className='btn';
+            head.style.width='100%';
+            head.style.textAlign='left';
+            let open=flagged>0;      // never hide a restricted mod behind a fold
+            const label=()=> (open?'▾ ':'▸ ')+'Bundled inside '+g.parent+
+              ' ('+g.mods.length+')'+(flagged?' — '+flagged+' restricted':'');
+            head.textContent=label();
+            const list=document.createElement('div');
+            const draw=()=>{ head.textContent=label();
+              list.style.display=open?'':'none';
+              if(open) paintMods(list,g.mods,at,false); else list.innerHTML=''; };
+            head.onclick=()=>{ open=!open; draw(); };
+            wrap.append(head,list);
+            box.appendChild(wrap);
+            draw();
+          }
+        }
+
+        /**
+         * One list of client mods: new ones marked, removed ones dated.
+         *
+         * <p>Both dates are shown rather than one relative age. "since 4d 2h
+         * ago" answers a question nobody asked; "since 12 Aug" is the one that
+         * lines up with when something started going wrong.
+         */
         function paintMods(box,list,at,removed){
           if(!box) return;
           box.innerHTML='';
@@ -1795,17 +1875,86 @@ final class WebPage {
             // is the only definition that does not call every mod new the
             // first time a client is seen.
             const fresh=!removed && m.firstSeen>=at-1000;
+            const flag=clientReview && clientReview.by ? clientReview.by[m.id] : null;
             row.className='cmod'+(fresh?' fresh':'')+(removed?' gone':'')+
-              (m.restricted?' banned':'');
+              (m.restricted?' banned':'')+
+              (flag&&flag.level==='concern'?' banned':'');
+            const when = removed
+              ? 'gone '+(fmtWhen(m.removedAt)||fmtAgo(m.removedAt))
+              : (fresh?'new':'since '+(fmtWhen(m.firstSeen)||fmtAgo(m.firstSeen)));
             row.innerHTML=(fresh?'<i class="plus">+</i>':(removed?'<i class="minus">−</i>':''))+
               '<code>'+esc(m.id)+'</code>'+
               (m.version?'<span class="ver">'+esc(m.version)+'</span>':'')+
               (m.restricted?'<span class="ban">restricted</span>':'')+
-              '<span class="when">'+esc(removed?('gone '+fmtAgo(m.removedAt))
-                                              :(fresh?'new':'since '+fmtAgo(m.firstSeen)))+
-              '</span>';
+              (flag&&flag.level!=='fine'
+                ? '<span class="ban" style="background:'+
+                  (flag.level==='concern'?'rgba(255,90,110,.18)':'rgba(255,193,77,.16)')+
+                  ';color:'+(flag.level==='concern'?'#ff9aa8':'#ffc14d')+'">'+
+                  esc(flag.level==='unknown'?'unrecognised':flag.level)+'</span>'
+                : '')+
+              '<span class="when">'+esc(when)+'</span>';
+            const title=[];
+            if(!removed && m.firstSeen) title.push('first seen '+fmtAgo(m.firstSeen));
+            if(removed && m.removedAt) title.push('last seen '+fmtAgo(m.removedAt));
+            if(flag && flag.why) title.push(flag.why);
+            if(title.length) row.title=title.join(' · ');
             box.appendChild(row);
           }
+        }
+
+        // ---- a second opinion on a mod list ----
+        let clientReview=null;
+
+        /**
+         * Asks the model what one client's mods are.
+         *
+         * <p>Never automatic, and never part of loading the page. Pointing a
+         * language model at a named person's computer is a decision, so it is
+         * a button somebody presses.
+         */
+        async function reviewMods(p,c){
+          const btn=$('cl-ask'), box=$('cl-review');
+          if(!box) return;
+          btn.disabled=true; btn.textContent='Reading…';
+          box.innerHTML='<div class="note">asking the model…</div>';
+          const r=await jpost('/api/client/review',{uuid:p.uuid});
+          btn.disabled=false; btn.textContent='Ask again';
+          if(r.status!==200){
+            box.innerHTML='<div class="msg err">'+
+              esc((r.body&&(r.body.error||r.body.message))||'failed')+'</div>';
+            return;
+          }
+          const flags=r.body.flags||[];
+          clientReview={by:{}};
+          for(const f of flags) clientReview.by[f.id]=f;
+          const notable=flags.filter(f=>f.level==='concern'||f.level==='watch');
+          box.innerHTML=
+            (r.body.summary?'<div class="summary">'+esc(r.body.summary)+'</div>':'')+
+            (notable.length
+              ? '<div id="cl-flags" style="margin-top:8px"></div>'
+              : '<div class="note" style="margin-top:8px">Nothing on the list stood out to '+
+                'the model.</div>')+
+            '<p class="muted" style="margin:8px 0 10px;font-size:11.5px">Written by a model '+
+            'from a list the client sent about itself. A modified client can report anything, '+
+            'and a model can be wrong about what a mod does \u2014 so this is somewhere to '+
+            'start looking, and it is not evidence of anything.</p>';
+          const list=$('cl-flags');
+          if(list){
+            for(const f of notable){
+              const row=document.createElement('div');
+              row.className='moment';
+              row.innerHTML='<span class="lb">'+esc(f.id)+'</span>'+
+                '<span class="muted">'+esc(f.level==='concern'?'an advantage':'depends on '+
+                  'your rules')+'</span>'+
+                (f.why?'<span class="wy">'+esc(f.why)+'</span>':'');
+              list.appendChild(row);
+            }
+          }
+          // The rows themselves now carry the flag, so redraw them.
+          const own=(c.mods||[]).filter(m=>!groupOf(m));
+          paintMods($('cl-mods'),own,c.at,false);
+          paintBundles($('cl-bundled'),bundlesOf(c.mods||[]),c.at);
+          if((c.removed||[]).length) paintMods($('cl-gone'),c.removed,c.at,true);
         }
 
         async function sendMask(name,mask,clear){
@@ -1824,7 +1973,10 @@ final class WebPage {
                                death:'#ff6b6b', attack:'#ff9a5e', hurt:'#ffbc8f',
                                join:'#6df06d', leave:'#aab4c2', respawn:'#a8f5a8',
                                item:'#ffe066', interact:'#b7a4ff', use:'#a3b0c2',
-                               place:'#6fe6bd', 'break':'#ffc55e', afk:'#9aa5b4' };
+                               place:'#6fe6bd', 'break':'#ffc55e', afk:'#9aa5b4',
+                               kill:'#ff3d6e', craft:'#c6f24e', trade:'#4fd6d6',
+                               drop:'#cfd6e0', sleep:'#7b8cff', portal:'#ff7ad9',
+                               advancement:'#ffef8f', enchant:'#b98cff', sign:'#e0c08a' };
         function activityPanel(){
           const wrap=document.createElement('div');
           wrap.innerHTML='<p class="muted">What players have been doing. '+
@@ -1855,8 +2007,16 @@ final class WebPage {
             '<section id="t-insights">'+
               '<div class="bartitle"><h2>What happened</h2>'+
               '<span class="spacer"></span>'+
+              '<span class="dims" id="i-scope"></span>'+
               '<button class="btn" id="i-run">Summarise</button></div>'+
+              '<div class="term" id="i-askbar" style="margin:2px 0 10px">'+
+                '<input id="i-ask" placeholder="what are you looking for? ' +
+                  'e.g. anyone digging near spawn last night">'+
+                '<button class="btn" id="i-askgo">Find</button>'+
+                '<button class="btn" id="i-askclear">Clear</button></div>'+
+              '<div id="i-asked"></div>'+
               '<div id="i-ai"></div>'+
+              '<div id="i-found"></div>'+
               '<div id="i-eps"><div class="note">reading the log…</div></div>'+
             '</section>'+
             '<div id="a-admins" class="note" style="margin:12px 0"></div>'+
@@ -1883,6 +2043,10 @@ final class WebPage {
             $('t-filter').onclick=()=>{ filterOpen=!filterOpen; paintFilters(); paintAll(); };
             $('t-livepill').onclick=()=>{ $('t-line').scrollIntoView({block:'nearest'}); };
             $('i-run').onclick=()=>runSummary(true);
+            $('i-askgo').onclick=runAsk;
+            $('i-askclear').onclick=()=>{ $('i-ask').value=''; asked=null;
+              clearFilter(); paintAsked(); paintFilters(); paintAll(); paintInsights(); };
+            $('i-ask').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); runAsk(); } };
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
@@ -2005,18 +2169,22 @@ final class WebPage {
         let filterOpen=false, filterOpenAct='';
 
         const CATEGORIES=[
-          {key:'world',  name:'The world', acts:['place','break','use']},
-          {key:'fight',  name:'Fighting', acts:['attack','hurt','death']},
+          {key:'world',  name:'The world', acts:['place','break','use','sign']},
+          {key:'fight',  name:'Fighting', acts:['attack','hurt','death','kill']},
           {key:'talk',   name:'Talking', acts:['chat','command']},
-          {key:'move',   name:'Coming and going', acts:['join','leave','respawn','afk','mask']},
-          {key:'things', name:'Things', acts:['item','interact','container']}];
+          {key:'move',   name:'Coming and going',
+           acts:['join','leave','respawn','afk','mask','portal','sleep']},
+          {key:'things', name:'Things',
+           acts:['item','interact','container','craft','trade','drop']},
+          {key:'marks',  name:'Milestones', acts:['advancement','enchant']}];
 
         /** Which group an action belongs to, for anything that works by group. */
         const ACT_CATEGORY={};
         for(const c of CATEGORIES) for(const a of c.acts) ACT_CATEGORY[a]=c.key;
 
         /** Actions that have a thing attached worth listing one by one. */
-        const DETAILED=new Set(['place','break','use','attack','interact','item']);
+        const DETAILED=new Set(['place','break','use','attack','interact','item',
+                                'kill','craft','trade','drop','sign','advancement']);
 
         /**
          * How visible something of a given age should be, or zero for gone.
@@ -2441,6 +2609,35 @@ final class WebPage {
             case 'afk':       return '<circle cx="'+x+'" cy="'+y+'" r="6" fill="none" stroke="'+c+
                                      '" stroke-width="1.5" stroke-dasharray="2.6 2.2"/>'+
                                      li(-1.8,-3,-1.8,3,2)+li(1.8,-3,1.8,3,2);
+            // Something killed: crossed bones behind a skull. Deliberately
+            // close to 'attack', which is crossed swords — one is a swing and
+            // the other is the swing that landed.
+            case 'kill':      return li(-6,-6,6,6,1.5)+li(-6,6,6,-6,1.5)+dot(4.2);
+            // A crafting grid: a square divided in four.
+            case 'craft':     return sq(5,false)+li(0,-5,0,5,1.3)+li(-5,0,5,0,1.3);
+            // Two arrows passing each other.
+            case 'trade':     return li(-6,-2.6,5,-2.6,1.8)+li(2.4,-5,5.4,-2.6,1.8)+
+                                     li(2.4,-0.2,5.4,-2.6,1.8)+li(6,2.6,-5,2.6,1.8)+
+                                     li(-2.4,0.2,-5.4,2.6,1.8)+li(-2.4,5,-5.4,2.6,1.8);
+            // Something put down: an arrow onto the ground.
+            case 'drop':      return li(0,-6,0,2,2)+li(-3,-1,0,2,2)+li(3,-1,0,2,2)+
+                                     li(-5,5.4,5,5.4,2);
+            // Asleep.
+            case 'sleep':     return li(-4,-4.4,4,-4.4,2)+li(4,-4.4,-4,4.4,2)+li(-4,4.4,4,4.4,2);
+            // A portal: a doorway that is taller than it is wide.
+            case 'portal':    return '<ellipse cx="'+x+'" cy="'+y+'" rx="4" ry="6.2" fill="none" '+
+                                     'stroke="'+c+'" stroke-width="2"/>'+dot(1.5);
+            case 'advancement': return poly([[0,-6.4],[1.7,-2],[6.4,-2],[2.7,0.9],[4,5.4],
+                                             [0,2.7],[-4,5.4],[-2.7,0.9],[-6.4,-2],[-1.7,-2]],true);
+            // A sparkle, four-pointed.
+            case 'enchant':   return '<path d="M'+x+' '+(y-6.4)+'L'+(x+1.5)+' '+(y-1.5)+'L'+(x+6.4)+
+                                     ' '+y+'L'+(x+1.5)+' '+(y+1.5)+'L'+x+' '+(y+6.4)+'L'+(x-1.5)+
+                                     ' '+(y+1.5)+'L'+(x-6.4)+' '+y+'L'+(x-1.5)+' '+(y-1.5)+
+                                     'Z" fill="'+c+'" stroke="#0b0d11" stroke-width="1"/>';
+            // A sign on a post.
+            case 'sign':      return '<rect x="'+(x-5.4)+'" y="'+(y-5.6)+'" width="10.8" '+
+                                     'height="7" rx="1" fill="'+c+'" stroke="#0b0d11" '+
+                                     'stroke-width="1.2"/>'+li(0,1.4,0,6,2);
             default:          return dot(4.8);
           }
         }
@@ -2463,7 +2660,12 @@ final class WebPage {
           tree:'#7bd88f', shaft:'#8fd8ff', tunnel:'#8fd8ff', mine:'#a9b4c2',
           dig:'#c9a227', clear:'#ffab33', build:'#ffd479', farm:'#9ade7b',
           loot:'#d6a8ff', travel:'#9fd0ff', pace:'#ffc14d', busy:'#9aa3ae',
-          about:'#7a8595'};
+          about:'#7a8595',
+          // The one that has to be seen from across the map.
+          hazard:'#ff3b30', grind:'#ff5c8a', tower:'#ffd479', bridge:'#e0c08a',
+          redstone:'#ff6b6b', craft:'#c6f24e', trade:'#4fd6d6', sign:'#e0c08a',
+          camp:'#7b8cff', milestone:'#ffef8f', dump:'#cfd6e0', roam:'#9fd0ff',
+          flight:'#8fd8ff'};
 
         /**
          * One tool, drawn.
@@ -2510,6 +2712,41 @@ final class WebPage {
                                    'stroke-linecap="round"/>'+
                                    '<circle cx="-1.6" cy="-1" r="1.2" fill="#0b0d11"/>'+
                                    '<circle cx="1.6" cy="-1" r="1.2" fill="#0b0d11"/>';
+            // A flame, for the handful of blocks that ruin an afternoon.
+            case 'flame':   return '<path d="M0 -7.2q1.2 3 3.2 4.6a4.6 4.6 0 1 1 -6.4 0'+
+                                   'q0.5 -0.7 1 -1.7q0.8 1.2 2 1.6q-0.7 -2.4 0.2 -4.5z" fill="'+
+                                   c+'"/><path d="M0 -1.2q1.5 1.5 1.5 2.7a1.5 1.5 0 0 1 -3 0'+
+                                   'q0 -1.2 1.5 -2.7z" fill="#0a0c10"/>';
+            // A spark of redstone: a dot with legs.
+            case 'spark':   return '<circle cx="0" cy="0" r="2.4" fill="'+c+'"/>'+
+                                   li(0,-6,0,-3,1.7)+li(0,3,0,6,1.7)+li(-6,0,-3,0,1.7)+
+                                   li(3,0,6,0,1.7);
+            // A crafting grid.
+            case 'grid':    return '<rect x="-5.4" y="-5.4" width="10.8" height="10.8" rx="1" '+
+                                   'fill="none" stroke="'+c+'" stroke-width="1.6"/>'+
+                                   li(0,-5.4,0,5.4,1.3)+li(-5.4,0,5.4,0,1.3);
+            // A coin, for trading.
+            case 'coin':    return '<circle cx="0" cy="0" r="5.2" fill="none" stroke="'+c+
+                                   '" stroke-width="1.8"/>'+li(0,-2.6,0,2.6,1.6)+
+                                   li(-2,-2.6,2,-2.6,1.5)+li(-2,2.6,2,2.6,1.5);
+            // A sign on its post.
+            case 'signpost': return '<rect x="-5.4" y="-5.8" width="10.8" height="7" rx="1" '+
+                                   'fill="'+c+'"/>'+li(0,1.2,0,6,2);
+            // A bed seen from the side.
+            case 'bed':     return '<path d="M-6 3.2v-4.4h8a3 3 0 0 1 3 3v1.4z" fill="'+c+'"/>'+
+                                   li(-6,3.6,6,3.6,1.6)+li(-4.4,-1.4,-4.4,-3.6,1.6);
+            case 'star':    return '<path d="M0 -6.4L1.7 -2L6.4 -2L2.7 0.9L4 5.4L0 2.7L-4 5.4'+
+                                   'L-2.7 0.9L-6.4 -2L-1.7 -2Z" fill="'+c+'"/>';
+            // Something falling.
+            case 'drop':    return li(0,-6,0,1.6,2.2)+li(-3.2,-1.6,0,1.6,2.2)+
+                                   li(3.2,-1.6,0,1.6,2.2)+li(-5,5,5,5,2.2);
+            // A compass needle, for wandering.
+            case 'compass': return '<circle cx="0" cy="0" r="5.6" fill="none" stroke="'+c+
+                                   '" stroke-width="1.6"/>'+
+                                   '<path d="M0 -4.2L2 1L0 0L-2 1Z" fill="'+c+'"/>';
+            // A wing, for anything moving faster than a person can run.
+            case 'wing':    return '<path d="M-6 -3q6 -1.4 11 4.4q-6 1.4 -11 -4.4z" fill="'+c+
+                                   '"/>'+li(-6,-3,-6,4,1.8);
             default:        return '<circle cx="0" cy="0" r="3.6" fill="'+c+'"/>';
           }
         }
@@ -2523,7 +2760,9 @@ final class WebPage {
          */
         const TOOL_ITEM={pickaxe:'iron_pickaxe', axe:'iron_axe', shovel:'iron_shovel',
           hoe:'iron_hoe', sword:'iron_sword', hammer:'iron_axe', chest:'', boots:'iron_boots',
-          loop:'', skull:''};
+          loop:'', skull:'', flame:'flint_and_steel', spark:'redstone', grid:'crafting_table',
+          coin:'emerald', signpost:'oak_sign', bed:'red_bed', star:'', drop:'',
+          compass:'compass', wing:'elytra'};
         let toolTextures=false;
 
         /** A sequence badge: the tool on a dark disc, centred on (x, y). */
@@ -2545,7 +2784,13 @@ final class WebPage {
         const SEQUENCE_TOOL={fight:'sword', pvp:'sword', death:'skull', tree:'axe',
           shaft:'pickaxe', tunnel:'pickaxe', mine:'pickaxe', dig:'pickaxe',
           clear:'shovel', build:'hammer', farm:'hoe', loot:'chest',
-          travel:'boots', pace:'loop', busy:'chest', about:'loop'};
+          travel:'boots', pace:'loop', busy:'chest', about:'loop',
+          hazard:'flame', grind:'sword', tower:'hammer', bridge:'hammer',
+          redstone:'spark', craft:'grid', trade:'coin', sign:'signpost',
+          camp:'bed', milestone:'star', dump:'drop', roam:'compass', flight:'wing',
+          // What the model found rather than what the rules did. A different
+          // shape on purpose: it is a claim, not a count.
+          found:'star'};
 
         function stopPlay(){
           if(playTimer){ clearInterval(playTimer); playTimer=null; }
@@ -2624,6 +2869,10 @@ final class WebPage {
         }
 
         function paintAll(){
+          // The summary's subject follows the map: focusing somebody or
+          // zooming into a corner changes what "Summarise" would mean, and
+          // the control has to say so at the moment it changes.
+          paintScopeChips();
           const box=$('t-map'); if(!box || !allData) return;
           // How big a viewBox unit currently is on screen, measured from the
           // map that is still there. Markers are sized in viewBox units, so
@@ -3872,11 +4121,47 @@ final class WebPage {
         // down to y 11" is a sentence the log never contained. The summary on
         // top of them is optional and off by default.
         let episodes=[], aiStatus=null, aiReport=null, summarising=false;
+        // Which of the three subjects the summary is about. 'view' follows the
+        // map, so zooming in and pressing Summarise asks about what is on
+        // screen rather than about the whole server again.
+        let aiScope='all';
+        let asked=null, asking=false;
+
+        /**
+         * What the map is currently showing, as a scope the server understands.
+         *
+         * <p>The radius comes from the view itself, so "summarise this" means
+         * the same thing as "what I can see" without anybody drawing a box.
+         */
+        function scopeNow(){
+          if(aiScope==='player' && focusPlayer){
+            return {scope:'player', player:focusPlayer};
+          }
+          if(aiScope==='view'){
+            const span=Math.max(32,Math.round(view.span||512));
+            return {scope:'area', dim:allDim||'', x:Math.round(view.cx||0),
+                    z:Math.round(view.cz||0), r:Math.round(span/2)};
+          }
+          return {scope:'all'};
+        }
+
+        function scopeQuery(){
+          const q=scopeNow();
+          return Object.keys(q).map(k=>k+'='+encodeURIComponent(q[k])).join('&');
+        }
+
+        /** Whether the map is zoomed in far enough for "this view" to mean anything. */
+        function zoomedIn(){
+          return !!(view.set && view.span && view.span<=1400);
+        }
 
         async function loadInsights(){
           const box=$('i-eps'); if(!box) return;
           lastInsight=Date.now();
-          const r=await jget('/api/insights');
+          // A scope nobody can be in any more falls back rather than sticking:
+          // un-focusing a player should not leave the button asking about them.
+          if(aiScope==='player' && !focusPlayer) aiScope='all';
+          const r=await jget('/api/insights?'+scopeQuery());
           if(r.status!==200){ box.innerHTML='<div class="note">unavailable</div>'; return; }
           episodes=r.body.episodes||[];
           aiStatus=r.body.ai||null;
@@ -3889,7 +4174,7 @@ final class WebPage {
           summarising=true;
           paintInsights();
           try {
-            const r=await jpost('/api/insights',{});
+            const r=await jpost('/api/insights',scopeNow());
             if(r.status===200){
               episodes=r.body.episodes||episodes;
               aiStatus=r.body.ai||aiStatus;
@@ -3905,8 +4190,114 @@ final class WebPage {
           }
         }
 
+        /**
+         * "What are you looking for", answered as a filter.
+         *
+         * <p>What comes back is set into the panel's own filter controls, not
+         * applied invisibly. The person can then see what was decided for
+         * them, widen it, or throw it away — none of which is possible with a
+         * list of results that appeared from nowhere.
+         */
+        async function runAsk(){
+          const inp=$('i-ask'); if(!inp || asking) return;
+          const q=(inp.value||'').trim();
+          if(!q){ asked={error:'Say what you are looking for first.'}; paintAsked(); return; }
+          asking=true; asked={pending:true,question:q}; paintAsked();
+          try {
+            const r=await jpost('/api/insights/find',{question:q});
+            if(r.status!==200){
+              asked={question:q,error:(r.body&&(r.body.error||r.body.reply))||'failed'};
+              return;
+            }
+            asked=r.body;
+            applyLens(r.body);
+          } catch(e){
+            asked={question:q,error:'failed — '+e.message};
+          } finally {
+            asking=false;
+            paintAsked();
+            paintFilters();
+            paintAll();
+            paintInsights();
+          }
+        }
+
+        /** Sets the filter controls to what the model picked out. */
+        function applyLens(lens){
+          clearFilter();
+          for(const a of (lens.actions||[])) if(ACT_CATEGORY[a]) filt.acts.add(a);
+          for(const i of (lens.items||[])) filt.items.add(i);
+          for(const k of (lens.kinds||[])) filt.kinds.add(k);
+          // One player named and no others is a focus, which the map already
+          // knows how to do and does better than a filter would.
+          const who=lens.players||[];
+          focusPlayer = who.length===1 ? who[0] : '';
+        }
+
+        function paintAsked(){
+          const box=$('i-asked'); if(!box) return;
+          if(!asked){ box.innerHTML=''; return; }
+          if(asked.pending){
+            box.innerHTML='<div class="note">reading the log for “'+esc(asked.question)+'”…</div>';
+            return;
+          }
+          if(asked.error){
+            box.innerHTML='<div class="msg err">'+esc(asked.error)+'</div>';
+            return;
+          }
+          const bits=[];
+          if((asked.players||[]).length) bits.push((asked.players||[]).join(', '));
+          if((asked.actions||[]).length) bits.push((asked.actions||[]).join(', '));
+          if((asked.kinds||[]).length) bits.push((asked.kinds||[]).join(', '));
+          const n=(asked.items||[]).length;
+          if(n) bits.push(n+' particular thing'+(n===1?'':'s'));
+          box.innerHTML='<div class="note">'+
+            (asked.reply?esc(asked.reply)+' ':'')+
+            (bits.length?'<b>Filtered to:</b> '+esc(bits.join(' · '))+'. '
+                        :'<b>Nothing was filtered out.</b> ')+
+            'Change it in <b>Filter</b>, or press Clear.</div>';
+        }
+
+        /**
+         * Patterns the rules could not have found.
+         *
+         * <p>Kept in its own block above the episode list and labelled as the
+         * model's, because the two are different kinds of claim. An episode is
+         * counted from the log and is true. One of these is something a model
+         * thought it saw across an evening, and the only honest way to show it
+         * is separately, with the times it is talking about.
+         */
+        function paintFound(){
+          const box=$('i-found'); if(!box) return;
+          box.innerHTML='';
+          const found=(aiReport&&aiReport.patterns)||[];
+          if(!found.length) return;
+          const sec=document.createElement('div');
+          sec.innerHTML='<h3 style="font-size:11px;text-transform:uppercase;'+
+            'letter-spacing:.9px;color:var(--brand);margin:14px 0 4px">'+
+            'Patterns the model noticed</h3>'+
+            '<p class="muted" style="margin:0 0 6px;font-size:11.5px">Not counted from the '+
+            'log like the list below — spotted across it, and worth checking rather than '+
+            'believing.</p>';
+          box.appendChild(sec);
+          for(const f of found){
+            const row=document.createElement('div');
+            row.className='moment';
+            row.innerHTML='<span class="lb">'+esc(f.label)+'</span>'+
+              (f.player?'<span class="muted">'+esc(f.player)+'</span>':'')+
+              (f.why?'<span class="wy">'+esc(f.why)+'</span>':'')+
+              '<span class="tm" style="margin-left:auto;color:var(--mute)">'+
+              esc(fmtAgo(f.to))+'</span>';
+            row.title='From '+(fmtWhen(f.from)||fmtAgo(f.from))+
+              ' to '+(fmtWhen(f.to)||fmtAgo(f.to));
+            row.onclick=()=>jumpTo(f.to,'',undefined,undefined);
+            box.appendChild(row);
+          }
+        }
+
         function paintInsights(){
           paintAiBox();
+          paintFound();
           const box=$('i-eps'); if(!box) return;
           box.innerHTML='';
           if(!episodes.length){
@@ -3973,12 +4364,44 @@ final class WebPage {
          * needs to be told which of "not switched on", "no key", "no address"
          * and "the service said no" they are looking at.
          */
+        /**
+         * The three subjects the summary can be about.
+         *
+         * <p>"This view" only appears once the map is actually zoomed into
+         * something, and "This player" only once one is focused: a chip that
+         * would mean the same as "everything" is a chip that teaches people
+         * the control does nothing.
+         */
+        function paintScopeChips(){
+          const box=$('i-scope'); if(!box) return;
+          const choices=[{k:'all', label:'Everything'}];
+          if(focusPlayer) choices.push({k:'player', label:focusPlayer});
+          if(zoomedIn()) choices.push({k:'view', label:'This view'});
+          if(!choices.some(c=>c.k===aiScope)) aiScope='all';
+          box.innerHTML='';
+          for(const c of choices){
+            const b=document.createElement('button');
+            b.textContent=c.label;
+            if(aiScope===c.k) b.className='on';
+            b.title = c.k==='view'
+              ? 'Summarise only what is on the map right now'
+              : (c.k==='player' ? 'Summarise only '+c.label : 'Summarise the whole server');
+            b.onclick=()=>{ aiScope=c.k; loadInsights(); };
+            box.appendChild(b);
+          }
+        }
+
         function paintAiBox(){
+          paintScopeChips();
           const box=$('i-ai'), run=$('i-run'); if(!box) return;
           const on=aiStatus && aiStatus.enabled;
+          const bar=$('i-askbar');
+          if(bar) bar.style.display=on?'':'none';
           if(run){
             run.disabled=summarising || !on;
-            run.textContent=summarising?'Thinking…':'Summarise';
+            run.textContent=summarising?'Thinking…'
+              :(aiScope==='player'?'Summarise '+focusPlayer
+               :aiScope==='view'?'Summarise this view':'Summarise');
             run.title=on?'Ask the model to read the episodes below'
                         :'Turn on ai-enabled in Settings first';
           }
@@ -4022,7 +4445,9 @@ final class WebPage {
           }
           html+='<p class="muted" style="margin-top:10px;font-size:11.5px">'+
             'Written by a model from the list below — it can be wrong, and it is not '+
-            'evidence of anything. '+esc(fmtAgo(aiReport.generated))+'.</p>';
+            'evidence of anything. '+esc(fmtAgo(aiReport.generated))+
+            (aiScope==='player'?' · about '+esc(focusPlayer)
+             :aiScope==='view'?' · about what is on the map':'')+'.</p>';
           box.innerHTML=html;
 
           const list=$('i-moments');
@@ -5387,43 +5812,233 @@ final class WebPage {
         // ---- mods ----
         let modsData=null, modSettingsOpen=false;
 
+        /**
+         * Two lists, and they are not the same kind of thing.
+         *
+         * <p>The top one is this machine: jars in the server's own
+         * <code>mods/</code> folder, which the server loads at start. The
+         * bottom one is other people's machines: suggestions sent to joining
+         * players, which they can decline. For a long time only the second one
+         * existed, under the heading "Mods", and "add a mod" therefore meant
+         * something quite different from what most people came here to do.
+         */
         function modsPanel(){
           const wrap=document.createElement('div');
           wrap.innerHTML=
-            '<p class="muted">Mods this server suggests when someone joins. '+
-            'Nothing is installed without the player agreeing.</p>'+
+            '<p class="muted">Two separate lists: what this server runs, and what it '+
+            'suggests to the people who join it.</p>'+
+            '<section>'+
             '<div class="bartitle">'+
-              '<h2 id="m-count">Advertised mods</h2>'+
+              '<h2 id="sm-count">On this server</h2>'+
               '<span class="spacer"></span>'+
-              '<button class="btn go" id="m-add">'+ICON.plus+' Add mod</button>'+
+              '<button class="btn go" id="sm-add">'+ICON.plus+' Install a mod</button>'+
+            '</div>'+
+            '<p class="muted">Jars in <code>mods/</code>, loaded by this server itself. '+
+            'Nothing here is hot-loaded \u2014 adding, removing or turning one off takes '+
+            'effect at the next start.</p>'+
+            '<div class="browser" id="srvmodlist"></div>'+
+            '<div class="msg" id="sm-msg"></div>'+
+            '</section>'+
+            '<section style="margin-top:20px">'+
+            '<div class="bartitle">'+
+              '<h2 id="m-count">Offered to players</h2>'+
+              '<span class="spacer"></span>'+
+              '<button class="btn go" id="m-add">'+ICON.plus+' Offer a mod</button>'+
               '<button class="btn cog" id="m-cog" title="Settings for offering mods">'+
                 ICON.cog+'</button>'+
             '</div>'+
+            '<p class="muted">Client mods this server suggests when someone joins. They run '+
+            'on the player\u2019s computer, not this one, and nothing is installed without '+
+            'that player agreeing to it.</p>'+
             '<div id="m-settings"></div>'+
             '<div class="browser" id="modlist"></div>'+
             '<div id="m-unused" style="margin-top:14px"></div>'+
-            '<div class="msg" id="m-msg"></div>';
+            '<div class="msg" id="m-msg"></div>'+
+            '</section>'+
+            '<div id="m-restricted" style="margin-top:20px"></div>';
           setTimeout(()=>{
+            $('sm-add').onclick=()=>menuUnder($('sm-add'),addServerModMenu());
+            $('srvmodlist').oncontextmenu=e=>{
+              if(e.target.closest('.modrow')) return;
+              menuAt(e,addServerModMenu());
+            };
             $('m-add').onclick=()=>menuUnder($('m-add'),addModMenu());
             $('m-cog').onclick=()=>{ modSettingsOpen=!modSettingsOpen; renderModSettings(); };
             $('modlist').oncontextmenu=e=>{
               if(e.target.closest('.modrow')) return;
               menuAt(e,addModMenu());
             };
+            loadServerMods();
             loadMods();
           },0);
           return wrap;
         }
 
-        /** The three ways of adding a mod, all landing on the one list. */
+        /** The three ways of offering a mod, all landing on the one list. */
         function addModMenu(){
           return [
-            {header:'Add a mod'},
-            {label:'Search Modrinth…',icon:ICON.globe,hint:'easiest',run:modrinthDialog},
+            {header:'Offer a mod to players'},
+            {label:'Search Modrinth…',icon:ICON.globe,hint:'easiest',
+             run:()=>modrinthDialog('offer')},
             {label:'Upload a jar…',icon:ICON.box,hint:'hosted here',run:uploadModDialog},
             {label:'Advertise a link…',icon:ICON.edit,hint:'by hand',
              run:()=>editModDialog(null)}
           ];
+        }
+
+        /** The two ways of putting a jar in this server's own mods folder. */
+        function addServerModMenu(){
+          return [
+            {header:'Install on this server'},
+            {label:'Search Modrinth…',icon:ICON.globe,hint:'easiest',
+             run:()=>modrinthDialog('server')},
+            {label:'Upload a jar…',icon:ICON.box,hint:'from this computer',
+             run:uploadServerModDialog}
+          ];
+        }
+
+        // ---- mods this server runs ----
+        let serverModsData=null;
+
+        async function loadServerMods(){
+          const box=$('srvmodlist'); if(!box) return;
+          const r=await jget('/api/servermods');
+          if(r.status!==200){
+            box.innerHTML='<div class="fempty">'+esc(r.body.error||'unavailable')+'</div>';
+            return;
+          }
+          serverModsData=r.body;
+          const mods=r.body.mods||[];
+          const count=$('sm-count');
+          if(count) count.textContent='On this server'+(mods.length?' ('+mods.length+')':'');
+          box.innerHTML='';
+          if(!mods.length){
+            box.innerHTML='<div class="fempty">Nothing in <code>mods/</code> \u2014 which '+
+              'cannot be true while Almin is answering, so this server\u2019s folder is '+
+              'somewhere else.</div>';
+            return;
+          }
+          for(const m of mods) box.appendChild(serverModRow(m));
+        }
+
+        function serverModRow(m){
+          const row=document.createElement('div'); row.className='modrow';
+          const letter=document.createElement('span'); letter.className='modicon';
+          letter.textContent=((m.name||m.file||'?').trim().charAt(0)||'?').toUpperCase();
+          if(!m.enabled) letter.style.opacity='.45';
+          row.appendChild(letter);
+          const body=document.createElement('div'); body.className='body';
+          // Three states worth telling apart: running, sitting there waiting
+          // for a restart, and switched off. A list that only says "installed"
+          // cannot answer "why is it not working".
+          const state = !m.enabled ? '<span class="chip">Off</span>'
+            : m.loaded ? '<span class="chip jar">Loaded</span>'
+            : '<span class="chip req">Waiting for a restart</span>';
+          body.innerHTML='<div class="ttl">'+esc(m.name||m.file)+
+            (m.version?' <span class="muted" style="font-weight:400">'+esc(m.version)+
+              '</span>':'')+' '+state+
+            (m.ours?' <span class="chip">Almin</span>':'')+'</div>'+
+            '<div class="sub" title="'+esc(m.file)+'">'+
+              (m.id?'<code>'+esc(m.id)+'</code> · ':'')+esc(m.file)+
+              (m.bytes?' · '+fmtBytes(m.bytes):'')+'</div>';
+          const acts=document.createElement('div'); acts.className='acts';
+          if(!m.ours){
+            const flip=document.createElement('button'); flip.className='btn';
+            flip.textContent=m.enabled?'Turn off':'Turn on';
+            flip.onclick=()=>changeServerMod(m,m.enabled?'disable':'enable');
+            const more=document.createElement('button'); more.className='btn cog';
+            more.innerHTML='&#8943;'; more.title='More';
+            more.onclick=()=>menuUnder(more,serverModMenu(m));
+            acts.append(flip,more);
+          } else {
+            const note=document.createElement('span'); note.className='muted';
+            note.style.fontSize='11.5px'; note.textContent='updated from the panel';
+            acts.appendChild(note);
+          }
+          row.append(body,acts);
+          if(!m.ours) row.oncontextmenu=ev=>menuAt(ev,serverModMenu(m));
+          return row;
+        }
+
+        function serverModMenu(m){
+          return [{header:m.name||m.file},
+            {label:m.enabled?'Turn off':'Turn on',
+             run:()=>changeServerMod(m,m.enabled?'disable':'enable')},
+            'sep',
+            {label:'Delete the jar…',icon:ICON.trash,danger:true,
+             run:()=>deleteServerModDialog(m)}];
+        }
+
+        async function changeServerMod(m,action){
+          const r=await jpost('/api/servermods/change',{file:m.file,action:action});
+          const msg=$('sm-msg');
+          if(msg){ msg.className='msg '+(r.status===200?'ok':'err');
+            msg.textContent=(r.body&&(r.body.message||r.body.error))||'failed'; }
+          loadServerMods();
+        }
+
+        function deleteServerModDialog(m){
+          modal('Delete a jar',(body,close)=>{
+            body.innerHTML='<p>Delete <code>'+esc(m.file)+'</code> from this server\u2019s '+
+              '<code>mods/</code>?</p>'+
+              '<p class="muted">The running server is unaffected until it restarts. If you '+
+              'only want to test whether this mod is the problem, <b>Turn off</b> does the '+
+              'same thing and can be undone.</p>'+
+              '<div class="row2"><button class="btn danger" id="sd-go">Delete</button>'+
+              '<button class="btn" id="sd-no">Cancel</button></div>'+
+              '<div class="msg" id="sd-msg"></div>';
+            $('sd-no').onclick=close;
+            $('sd-go').onclick=async()=>{
+              const r=await jpost('/api/servermods/change',{file:m.file,action:'delete'});
+              if(r.status===200){ close(); loadServerMods();
+                const msg=$('sm-msg');
+                if(msg){ msg.className='msg ok'; msg.textContent=r.body.message||'Deleted.'; } }
+              else { const x=$('sd-msg'); x.className='msg err';
+                x.textContent=(r.body&&(r.body.error||r.body.message))||'delete failed'; }
+            };
+          });
+        }
+
+        function uploadServerModDialog(){
+          modal('Install a jar on this server',(body,close)=>{
+            body.innerHTML='<p class="muted">Goes into this server\u2019s <code>mods/</code> '+
+              'folder. Fabric reads that folder once, while the game is starting, so the mod '+
+              'does nothing until the server restarts \u2014 and a mod that will not start '+
+              'takes the server with it, so restart when you can watch the console.</p>'+
+              '<input type="file" id="sm-file" accept=".jar" multiple>'+
+              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:10px">'+
+              '<input type="checkbox" id="sm-replace" style="width:auto"> '+
+              'Replace a jar of the same name</label>'+
+              '<div class="row2"><button class="btn go" id="sm-upgo">Install</button></div>'+
+              '<div class="msg" id="sm-upmsg"></div>';
+            $('sm-upgo').onclick=()=>uploadServerMods(close);
+          });
+        }
+
+        async function uploadServerMods(close){
+          const inp=$('sm-file'), msg=$('sm-upmsg'), btn=$('sm-upgo');
+          if(!inp.files||!inp.files.length){
+            msg.className='msg err'; msg.textContent='Choose a .jar first.'; return; }
+          btn.disabled=true;
+          const done=[]; let failed='';
+          const replace=$('sm-replace').checked?'&replace=1':'';
+          for(const f of inp.files){
+            msg.className='msg'; msg.textContent='Installing '+f.name+'…';
+            try{
+              const r=await fetch('/api/servermods/upload?name='+encodeURIComponent(f.name)+replace,
+                {method:'POST',credentials:'same-origin',
+                 headers:{'Content-Type':'application/octet-stream'},body:f});
+              const b=await r.json().catch(()=>({}));
+              if(r.status!==200){ failed=f.name+': '+(b.error||b.message||'install failed'); break; }
+              done.push(b.message||f.name);
+            }catch(e){ failed=f.name+': install failed — '+e.message; break; }
+          }
+          btn.disabled=false;
+          loadServerMods();
+          if(failed){ msg.className='msg err'; msg.textContent=failed; return; }
+          close();
+          const out=$('sm-msg');
+          if(out){ out.className='msg ok'; out.textContent=done.join(' '); }
         }
 
         /** The settings that govern offering mods, behind the cog. */
@@ -5440,17 +6055,27 @@ final class WebPage {
             cfgToggle('require-client-mod','Almin required to play',
                       modsData.requireClientMod,loadMods));
           box.appendChild(sec);
-          box.appendChild(restrictedSection());
         }
 
         /**
          * Mods players are asked not to run.
          *
-         * <p>Hidden unless the Almin client mod is required, because without it
-         * there is no mod list to check and the rule would only ever land on
-         * whoever was honest enough to be visible. <code>mods-show-restricted</code>
-         * puts it back for anyone who wants it anyway.
+         * <p>Lives below the list it is about rather than inside the cog above
+         * it. It is a list in its own right — the third one on this page — and
+         * hiding a list inside a settings toggle is how it never got found.
+         *
+         * <p>Still gated on the Almin client mod being required, because
+         * without it there is no mod list to check and the rule would only
+         * ever land on whoever was honest enough to be visible.
+         * <code>mods-show-restricted</code> puts it back for anyone who wants
+         * it anyway.
          */
+        function renderRestricted(){
+          const box=$('m-restricted'); if(!box || !modsData) return;
+          box.innerHTML='';
+          box.appendChild(restrictedSection());
+        }
+
         function restrictedSection(){
           const sec=document.createElement('section');
           sec.style.margin='0 0 13px';
@@ -5715,34 +6340,47 @@ final class WebPage {
             out.textContent='Added '+added.join(', ')+' to the list.'; }
         }
 
-        function modrinthDialog(){
-          modal('Add from Modrinth',(body)=>{
+        /**
+         * @param where 'offer' to advertise it to players, 'server' to install
+         *              it here. The same search, and two quite different acts
+         *              at the end of it — so the dialog says which one it is
+         *              in its title and in its wording.
+         */
+        function modrinthDialog(where){
+          const here=where==='server';
+          modal(here?'Install from Modrinth':'Offer a mod from Modrinth',(body)=>{
             body.innerHTML='<p class="muted">Almin downloads the build that fits the Minecraft '+
               'version this server runs and reads the mod id out of the jar, which is the part '+
-              'that is easy to get wrong by hand. Search, or paste a link like '+
+              'that is easy to get wrong by hand. '+
+              (here?'It goes into this server\u2019s <code>mods/</code> folder and loads at the '+
+                    'next start.'
+                  :'It is offered to players, who can decline it.')+
+              ' Search, or paste a link like '+
               '<code>https://modrinth.com/mod/modmenu</code>.</p>'+
               '<div class="term"><input id="mr-q" '+
                 'placeholder="search Modrinth, or paste a project link">'+
               '<button class="btn" id="mr-go">Search</button>'+
-              '<button class="btn go" id="mr-add">Add link</button></div>'+
-              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:9px">'+
-              '<input type="checkbox" id="mr-req" style="width:auto"> '+
-              'Mark anything added as required</label>'+
+              '<button class="btn go" id="mr-add">'+(here?'Install link':'Add link')+
+              '</button></div>'+
+              (here?''
+                  :'<label class="muted" style="display:flex;gap:8px;align-items:center;'+
+                   'margin-top:9px"><input type="checkbox" id="mr-req" style="width:auto"> '+
+                   'Mark anything added as required</label>')+
               '<div class="msg" id="mr-msg"></div>'+
               '<div id="mr-hits"></div>';
-            $('mr-go').onclick=searchModrinth;
-            $('mr-add').onclick=()=>addModrinth($('mr-q').value.trim());
+            $('mr-go').onclick=()=>searchModrinth(where);
+            $('mr-add').onclick=()=>addModrinth($('mr-q').value.trim(),where);
             $('mr-q').onkeydown=e=>{
-              if(e.key==='Enter'){ e.preventDefault(); searchModrinth(); } };
+              if(e.key==='Enter'){ e.preventDefault(); searchModrinth(where); } };
             $('mr-q').focus();
           },{wide:true});
         }
 
-        async function searchModrinth(){
+        async function searchModrinth(where){
           const q=$('mr-q').value.trim(), msg=$('mr-msg'), box=$('mr-hits');
           if(!q){ msg.className='msg err'; msg.textContent='Type something to search for.'; return; }
           // A pasted link is not a search; it is the thing itself.
-          if(/modrinth\\.com\\//i.test(q)) return addModrinth(q);
+          if(/modrinth\\.com\\//i.test(q)) return addModrinth(q,where);
           msg.className='msg'; msg.textContent='Searching…'; box.innerHTML='';
           const r=await jpost('/api/mods/modrinth',{action:'search',query:q});
           if(r.status!==200){ msg.className='msg err';
@@ -5776,22 +6414,25 @@ final class WebPage {
               '<div class="sub">'+esc(h.description)+'</div>';
             const acts=document.createElement('div'); acts.className='acts';
             const add=document.createElement('button'); add.className='btn go';
-            add.textContent='Add'; add.onclick=()=>addModrinth(h.slug);
+            add.textContent=where==='server'?'Install':'Offer';
+            add.onclick=()=>addModrinth(h.slug,where);
             acts.appendChild(add);
             row.append(body,acts);
             list.appendChild(row);
           }
           box.appendChild(list);
         }
-        async function addModrinth(link){
+        async function addModrinth(link,where){
           const msg=$('mr-msg');
+          const here=where==='server';
           if(!link){ msg.className='msg err'; msg.textContent='Paste a link or search first.'; return; }
           msg.className='msg'; msg.textContent='Fetching '+link+'…';
+          const req=$('mr-req');
           const r=await jpost('/api/mods/modrinth',
-            {action:'add',link:link,required:$('mr-req').checked});
+            {action:here?'server':'add',link:link,required:!!(req&&req.checked)});
           msg.className='msg '+(r.status===200?'ok':'err');
           msg.textContent=r.body.message||r.body.error||'failed';
-          if(r.status===200){ $('mr-q').value=''; loadMods(); }
+          if(r.status===200){ $('mr-q').value=''; if(here) loadServerMods(); else loadMods(); }
         }
 
         async function loadMods(){
@@ -5804,7 +6445,7 @@ final class WebPage {
           modsData=r.body;
           const mods=r.body.mods||[];
           const count=$('m-count');
-          if(count) count.textContent='Advertised mods'+(mods.length?' ('+mods.length+')':'');
+          if(count) count.textContent='Offered to players'+(mods.length?' ('+mods.length+')':'');
           box.innerHTML='';
           if(!mods.length){
             box.innerHTML='<div class="fempty">Nothing advertised yet — '+
@@ -5814,6 +6455,7 @@ final class WebPage {
           }
           paintUnusedJars(r.body.unusedFiles||[]);
           renderModSettings();
+          renderRestricted();
         }
 
         /**

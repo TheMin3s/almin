@@ -69,7 +69,19 @@ public final class Episodes {
     private static String toolFor(String kind, Stats s) {
         return switch (kind) {
             case "pvp", "fight" -> "sword";
+            case "grind" -> "sword";
+            case "hazard" -> "flame";
             case "death" -> "skull";
+            case "tower", "bridge" -> "hammer";
+            case "redstone" -> "spark";
+            case "craft" -> "grid";
+            case "trade" -> "coin";
+            case "sign" -> "signpost";
+            case "camp" -> "bed";
+            case "milestone" -> "star";
+            case "dump" -> "drop";
+            case "roam" -> "compass";
+            case "flight" -> "wing";
             case "tree" -> "axe";
             case "farm" -> "hoe";
             case "build" -> "hammer";
@@ -159,17 +171,26 @@ public final class Episodes {
     private static final class Stats {
         int breaks, places, attacks, hurts, deaths, containers, items, interacts, uses;
         int chats, commands, afk, joins;
+        int kills, crafts, trades, drops, sleeps, portals, awards, enchants, signs;
         int logs, leaves, ores, crops, stone, dirt, sand;
+        /** Placed blocks that are dangerous on their own: lava, fire, TNT. */
+        int hazards;
+        /** Placed redstone components — the signature of wiring rather than building. */
+        int wiring;
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
         long from = Long.MAX_VALUE, to = 0;
         final Map<String, Integer> broke = new HashMap<>();
         final Map<String, Integer> built = new HashMap<>();
         final Map<String, Integer> foes = new HashMap<>();
+        final Map<String, Integer> made = new HashMap<>();
         String deathMessage = "";
+        String award = "";
+        String wrote = "";
 
         int events() { return breaks + places + attacks + hurts + deaths + containers
-                            + items + interacts + uses; }
+                            + items + interacts + uses + kills + crafts + trades + drops
+                            + sleeps + portals + awards + enchants + signs; }
         int spanX() { return maxX - minX; }
         int spanY() { return maxY - minY; }
         int spanZ() { return maxZ - minZ; }
@@ -186,8 +207,19 @@ public final class Episodes {
             String d = e.detail() == null ? "" : e.detail().toLowerCase(Locale.ROOT);
             switch (e.action()) {
                 case "break" -> { s.breaks += n; bump(s.broke, e.detail(), n); material(s, d, n); }
-                case "place" -> { s.places += n; bump(s.built, e.detail(), n); }
-                case "use" -> s.uses += n;
+                case "place" -> { s.places += n; bump(s.built, e.detail(), n); placed(s, d, n); }
+                case "kill" -> { s.kills += n; bump(s.foes, e.detail(), n); }
+                case "craft" -> { s.crafts += n; bump(s.made, e.detail(), n); }
+                case "trade" -> { s.trades += n; bump(s.made, e.detail(), n); }
+                case "drop" -> s.drops += n;
+                case "sleep" -> s.sleeps += n;
+                case "portal" -> s.portals += n;
+                case "advancement" -> { s.awards += n; if (s.award.isEmpty() && e.detail() != null)
+                                            s.award = e.detail(); }
+                case "enchant" -> s.enchants += n;
+                case "sign" -> { s.signs += n; if (s.wrote.isEmpty() && e.detail() != null)
+                                     s.wrote = e.detail(); }
+                case "use" -> { s.uses += n; if (hazardous(d)) s.hazards += n; }
                 case "attack" -> { s.attacks += n; bump(s.foes, e.detail(), n); }
                 case "hurt" -> { s.hurts += n; bump(s.foes, before(e.detail()), n); }
                 case "death" -> { s.deaths += n; if (s.deathMessage.isEmpty() && e.detail() != null)
@@ -224,6 +256,39 @@ public final class Episodes {
         else if (lower.contains("dirt") || lower.contains("grass block")
                  || lower.contains("gravel") || lower.contains("mud")) s.dirt += n;
         else if (lower.contains("sand")) s.sand += n;
+    }
+
+    /**
+     * What kind of block a placement was, where the name gives it away.
+     *
+     * <p>Only two questions are asked of a placed block, because only two have
+     * an answer worth a different sentence: is it dangerous on its own, and is
+     * it wiring. Everything else is "a block", and the geometry says more
+     * about it than the material does.
+     */
+    private static void placed(Stats s, String lower, int n) {
+        if (hazardous(lower)) s.hazards += n;
+        else if (lower.contains("redstone") || lower.contains("repeater")
+                 || lower.contains("comparator") || lower.contains("observer")
+                 || lower.contains("piston") || lower.contains("hopper")
+                 || lower.contains("dropper") || lower.contains("dispenser")
+                 || lower.contains("lever") || lower.contains("tripwire")) s.wiring += n;
+    }
+
+    /**
+     * Whether a block or an item is one of the few that are trouble by
+     * themselves.
+     *
+     * <p>Deliberately short. The point is not to guess at intent — pouring
+     * lava is a legitimate way to make obsidian — but to make the handful of
+     * things that ruin someone's afternoon impossible to miss in a list of
+     * four hundred rows. Matched on whole phrases rather than "fire", so a
+     * campfire is not an alarm.
+     */
+    private static boolean hazardous(String l) {
+        return l.contains("lava") || l.contains("tnt") || l.contains("flint and steel")
+            || l.contains("fire charge") || l.contains("respawn anchor")
+            || l.contains("end crystal");
     }
 
     private static boolean isCrop(String l) {
@@ -273,7 +338,17 @@ public final class Episodes {
 
         int mins = (int) Math.max(1, Math.round((s.to - s.from) / 60000.0));
 
-        if (s.deaths > 0) {
+        if (s.hazards >= 2 && s.hazards * 3 >= s.places + s.uses) {
+            // Above everything, including a death in the same run: lava in
+            // somebody's house is the row an admin is looking for, and it is
+            // the one most easily buried under four hundred ordinary ones.
+            // Not an accusation — pouring lava is how you make obsidian — but
+            // it should never take searching to find.
+            kind = "hazard";
+            headline = "Placed " + plural(s.hazards, "lava, fire or TNT block")
+                + " around " + s.cx() + "," + s.cz() + " at y " + s.cy();
+            weight = 95;
+        } else if (s.deaths > 0) {
             kind = "death";
             headline = s.deathMessage.isEmpty()
                 ? any.player() + " died"
@@ -287,6 +362,15 @@ public final class Episodes {
                 ? "Traded blows with " + foe
                 : "Fought off " + plural(s.attacks + s.hurts, "hit") + " around " + foe;
             weight = pvp ? 88 : 52;
+        } else if (s.kills >= 10 && s.spanXZ() <= 24) {
+            // Ten of anything killed in one small place is not hunting.
+            String foe = top(s.foes);
+            kind = "grind";
+            headline = "Killed " + plural(s.kills, "mob")
+                + (foe.isEmpty() ? "" : ", mostly " + foe)
+                + (s.spanXZ() <= 2 ? ", all on one spot"
+                                   : ", without moving more than " + plural(s.spanXZ(), "block"));
+            weight = 48;
         } else if (s.logs >= 4 && s.spanXZ() <= 12 && s.spanY() >= 3) {
             kind = "tree";
             int trees = Math.max(1, Math.round(s.logs / 6f));
@@ -318,6 +402,25 @@ public final class Episodes {
             kind = "clear";
             headline = "Cleared " + s.spanX() + "×" + s.spanZ() + " of ground at y " + s.cy();
             weight = 58;
+        } else if (s.wiring >= 6 && s.wiring * 2 >= s.places) {
+            kind = "redstone";
+            headline = "Wired something up — " + plural(s.wiring, "redstone part")
+                + " at " + s.cx() + "," + s.cz();
+            weight = 40;
+        } else if (s.places >= 8 && s.spanY() >= 8 && s.spanXZ() <= 3) {
+            // The opposite of a shaft, and just as recognisable: one column of
+            // blocks going up. Usually someone pillaring to get a view, and
+            // occasionally someone getting over a wall.
+            kind = "tower";
+            headline = "Pillared up from y " + s.minY + " to y " + s.maxY;
+            weight = 38;
+        } else if (s.places >= 12 && s.spanY() <= 2
+                   && Math.max(s.spanX(), s.spanZ())
+                      >= 4 * Math.max(1, Math.min(s.spanX(), s.spanZ()))) {
+            kind = "bridge";
+            int len = Math.max(s.spanX(), s.spanZ());
+            headline = "Laid a " + len + "-block path " + axis(s) + " at y " + s.cy();
+            weight = 34;
         } else if (s.places >= 8) {
             kind = "build";
             String of = top(s.built);
@@ -341,6 +444,39 @@ public final class Episodes {
             kind = "loot";
             headline = "Went through " + plural(s.containers, "container");
             weight = 30;
+        } else if (s.crafts >= 8) {
+            String of = top(s.made);
+            kind = "craft";
+            headline = "Crafted " + plural(s.crafts, "thing")
+                + (of.isEmpty() ? "" : ", mostly " + of);
+            weight = 24;
+        } else if (s.trades >= 4) {
+            kind = "trade";
+            headline = "Traded " + plural(s.trades, "time") + " with villagers";
+            weight = 28;
+        } else if (s.signs >= 1) {
+            kind = "sign";
+            headline = s.signs == 1
+                ? "Wrote on a sign — \u201c" + trim(s.wrote) + "\u201d"
+                : "Wrote on " + plural(s.signs, "sign");
+            weight = 44;
+        } else if (s.awards >= 1) {
+            kind = "milestone";
+            headline = s.awards == 1
+                ? "Earned " + (s.award.isEmpty() ? "an advancement" : s.award)
+                : "Earned " + plural(s.awards, "advancement");
+            weight = 26;
+        } else if (s.sleeps >= 1) {
+            kind = "camp";
+            headline = "Slept at " + s.cx() + "," + s.cz();
+            weight = 20;
+        } else if (s.drops >= 6) {
+            // Everything on the floor in one place is either a handover or
+            // somebody clearing out, and both are worth a row of their own.
+            kind = "dump";
+            headline = "Dropped " + plural(s.drops, "stack") + " on the ground at "
+                + s.cx() + "," + s.cz();
+            weight = 42;
         } else if (s.interacts + s.items >= 8) {
             kind = "busy";
             headline = "Busy with things — " + plural(s.interacts + s.items, "interaction");
@@ -449,6 +585,19 @@ public final class Episodes {
         }
         String uuid = idOf(name);
 
+        double seconds = Math.max(1, (b.at() - a.at()) / 1000.0);
+        double speed = walked / seconds;
+
+        // Faster than anybody walks. Sprinting is about 5.6 blocks a second,
+        // a boat on ice or an elytra is several times that, and the log has
+        // no idea which — so this says the speed and not the vehicle.
+        if (speed >= 11 && net >= 300) {
+            return new Episode("flight",
+                "Covered " + Math.round(net) + " blocks at " + Math.round(speed)
+                    + " blocks a second — flying or riding something",
+                name, uuid, b.dim(), a.at(), b.at(), b.x(), b.y(), b.z(),
+                (int) Math.round(net), 0, pts.size(), 36, "wing");
+        }
         if (net >= 200 && walked >= net * 0.9) {
             // Marked where they arrived, not at the midpoint of the walk. The
             // middle of a journey is usually open ocean or the inside of a
@@ -459,6 +608,17 @@ public final class Episodes {
                     + " to " + b.x() + "," + b.z() + ", " + plural(mins, "minute"),
                 name, uuid, b.dim(), a.at(), b.at(), b.x(), b.y(), b.z(),
                 (int) Math.round(net), 0, pts.size(), 24, "boots");
+        }
+        // Wandering: a long way walked over a wide area that ends up near
+        // where it started. Not a journey and not pacing — someone looking for
+        // something, or seeing what is out there.
+        if (walked >= 500 && net < walked / 2.5 && radius >= 80) {
+            return new Episode("roam",
+                "Wandered " + Math.round(walked) + " blocks around " + b.x() + "," + b.z()
+                    + " — as far as " + plural(radius, "block") + " out, over "
+                    + plural(mins, "minute"),
+                name, uuid, b.dim(), a.at(), b.at(), b.x(), b.y(), b.z(), radius, 0,
+                pts.size(), 20, "compass");
         }
         if (walked >= 220 && net < walked / 6 && radius <= 40 && mins >= 3) {
             return new Episode("pace",

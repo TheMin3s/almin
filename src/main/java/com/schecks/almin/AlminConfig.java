@@ -135,8 +135,18 @@ public final class AlminConfig {
     public boolean activityBlocks = true;
     /** Include combat: damage taken, hits landed, deaths. */
     public boolean activityCombat = true;
-    /** Include item use, entity interaction and containers. */
+    /** Include item use, entity interaction, containers, crafting and trades. */
     public boolean activityItems = true;
+    /**
+     * Include the milestones: advancements, sleeping, enchanting, and going
+     * through a portal.
+     *
+     * <p>Cheap — nobody earns an advancement four hundred times a minute — and
+     * out of proportion to its cost when reading a session back. "Entered the
+     * Nether, 19:12" explains the two hours of tunnelling under it far better
+     * than the tunnelling explains itself.
+     */
+    public boolean activityProgress = true;
     /**
      * Seconds between position samples for the movement map. 0 turns the map
      * off. A player standing still is never sampled twice.
@@ -390,8 +400,10 @@ public final class AlminConfig {
             c -> c.activityBlocks, (c, v) -> c.activityBlocks = (Boolean) v),
         boolKey("activity-combat", "Include damage, hits and deaths in the activity log",
             c -> c.activityCombat, (c, v) -> c.activityCombat = (Boolean) v),
-        boolKey("activity-items", "Include item use, entity interaction and containers",
+        boolKey("activity-items", "Include item use, entity interaction, containers, crafting and trades",
             c -> c.activityItems, (c, v) -> c.activityItems = (Boolean) v),
+        boolKey("activity-progress", "Include advancements, sleeping, enchanting and portal trips",
+            c -> c.activityProgress, (c, v) -> c.activityProgress = (Boolean) v),
         intKey("activity-track-seconds", "Seconds between position samples for the map (0 = no map)", 0, 300,
             c -> c.activityTrackSeconds, (c, v) -> c.activityTrackSeconds = (Integer) v),
         intKey("activity-afk-seconds", "Seconds of not moving before a player counts as away (0 = never)", 0, 600,

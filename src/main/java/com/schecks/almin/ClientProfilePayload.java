@@ -16,7 +16,9 @@ import java.util.List;
  * server looks wrong: which mods are on that client, and what is it running on.
  *
  * <h3>What is in it, and what is deliberately not</h3>
- * The mod list, the Minecraft and loader versions, the launcher's own name for
+ * The mod list — each entry {@code id@version}, with {@code ^parent} appended
+ * when the loader says that mod is bundled inside another — the Minecraft and
+ * loader versions, the launcher's own name for
  * itself, and the shape of the machine — operating system, version,
  * architecture, processor count, how much memory Java was given. That is what
  * a support question needs.

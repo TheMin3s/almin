@@ -4,15 +4,21 @@
   "package": "com.schecks.almin.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "AdvancementActivityMixin",
     "BlockPlaceActivityMixin",
     "CommandActivityMixin",
+    "CraftActivityMixin",
+    "DropActivityMixin",
     "EditBookMixin",
+    "EnchantActivityMixin",
     "OpenMenuActivityMixin",
     "PlayerDisplayNameMixin",
     "PlayerEntityMixin",
     "PlayerInfoMaskMixin",
     "PlayerListMixin",
-    "ServerPlayerHurtMixin"
+    "ServerPlayerHurtMixin",
+    "SignActivityMixin",
+    "TradeActivityMixin"
   ],
   "injectors": {
     "defaultRequire": 1
