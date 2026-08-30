@@ -82,6 +82,25 @@ public class EpisodeTests {
         check("  and it says how big and of what: " + (e == null ? "-" : e.headline()),
             e != null && e.headline().contains("high") && e.headline().contains("Oak Planks"));
 
+        // A nearby click/player event and one stray placement used to become
+        // part of the build's box, turning this 4x2 wall into "45 across and
+        // 120 high". Only the connected block heap is work geometry.
+        clock = T;
+        List<ActivityLog.Entry> small = new ArrayList<>();
+        for (int y = 64; y <= 65; y++)
+            for (int x = 100; x < 104; x++)
+                small.add(row("Alex", "place", "Oak Planks", x, y, 100, 1));
+        small.add(row("Alex", "place", "Oak Planks", 145, 176, 100, 1));
+        for (int i = 0; i < 4; i++)
+            small.add(row("Alex", "interact", "Chest", 140, 176, 100, 1));
+        e = only(small);
+        check("unrelated coordinates do not inflate a small build",
+            e != null && e.kind().equals("build") && e.spanXZ() == 3 && e.spanY() == 1
+                && e.x() >= 101 && e.x() <= 102 && e.y() == 64);
+        check("block dimensions count blocks rather than coordinate gaps: "
+                + (e == null ? "-" : e.headline()),
+            e != null && e.headline().contains("4 across and 2 high"));
+
         // ---- a floor is not a building ----
         // Twenty by twenty at one height. It used to be twenty by one, which
         // is not a floor at all — it is a path, and is now classified as one.

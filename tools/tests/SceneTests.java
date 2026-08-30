@@ -43,7 +43,7 @@ public class SceneTests {
                 && page.contains("data-sc-what"),
             "the coordinate or inspection layer is missing");
         check("recorded players keep Y as well as X and Z",
-            page.contains("players.push({player:who,x:p.x-e.x,y:p.y,z:p.z-e.z")
+            page.contains("players.push({player:who,x:p.x-cx,y:p.y,z:p.z-cz")
                 && page.contains("function scenePlayer")
                 && page.contains("p.wx+','+p.y+','+p.wz"),
             "player altitude is not carried through the scene");

@@ -358,7 +358,7 @@ final class WebPage {
           /* What a stretch of work built, in isometric. */
           .scene{background:#0b0d11;border:1px solid var(--line);border-radius:10px;
                  overflow:hidden}
-          .scene svg{display:block}
+          .scene svg{display:block;width:100%;height:min(420px,52dvh)}
           .scenebar{display:flex;gap:9px;align-items:center;margin-top:10px;flex-wrap:wrap}
           .scenebar .btn{padding:5px 11px;font-size:12.5px}
           .scenebar input[type=range]{flex:1;min-width:140px;accent-color:var(--brand);padding:0}
@@ -470,11 +470,14 @@ final class WebPage {
 
           /* ---- overlays, menus, chips ---- */
           .scrim{position:fixed;inset:0;background:rgba(6,8,11,.74);z-index:40;display:flex;
-                 align-items:flex-start;justify-content:center;padding:38px 16px;overflow:auto}
+                 align-items:flex-start;justify-content:center;padding:clamp(8px,4vh,38px) 16px;
+                 overflow:hidden}
           .modal{background:var(--card);border:1px solid var(--line);border-radius:14px;
                  width:min(880px,100%);padding:17px 20px 20px;
-                 box-shadow:0 24px 60px rgba(0,0,0,.55)}
+                 box-shadow:0 24px 60px rgba(0,0,0,.55);max-height:calc(100dvh - 16px);
+                 display:flex;flex-direction:column;overflow:hidden}
           .modal.wide{width:min(1100px,100%)}
+          .modal #modal-body{min-height:0;overflow:auto;overscroll-behavior:contain}
           .modal h3{margin:0;font-size:15.5px;font-weight:650}
           .mtop{display:flex;align-items:center;gap:10px;margin-bottom:13px}
           .mtop .btn{margin-left:auto}
@@ -483,6 +486,7 @@ final class WebPage {
           .modal label.f{display:block;font-size:11.5px;text-transform:uppercase;
                          letter-spacing:.8px;color:var(--mute);font-weight:600;margin:11px 0 4px}
           .modal .row2{display:flex;gap:8px;align-items:center;margin-top:13px;flex-wrap:wrap}
+          @media(max-height:700px){.scene svg{height:min(330px,45dvh)}}
           select{background:#0b0d11;border:1px solid var(--line);color:var(--ink);
                  border-radius:8px;padding:9px 11px;font:inherit;width:100%;outline:none}
           select:focus{border-color:var(--brand)}
@@ -4716,23 +4720,25 @@ final class WebPage {
          */
         function sceneOf(e){
           const acts=(allData&&allData.actions)||[];
-          const half=SCENE_MAX/2;
           const want=sceneKind(e);
           const cubes=[], marks=[];
           for(const a of acts){
             if(a.player!==e.player || a.dim!==e.dim) continue;
             if(a.at<e.from-1000 || a.at>e.to+1000) continue;
-            if(Math.abs(a.x-e.x)>half || Math.abs(a.z-e.z)>half) continue;
+            // Enough slack to recover an old episode centre polluted by a
+            // nearby outlier, but not enough to borrow work from an unrelated
+            // episode elsewhere in the world.
+            if(Math.abs(a.x-e.x)>SCENE_MAX*2 || Math.abs(a.z-e.z)>SCENE_MAX*2) continue;
             // Only what this picture is about. A fight scene that also drew
             // the wall somebody built beside it was two events in one frame,
             // and the wall decided the scale.
             if(want==='build' && (a.action==='place'||a.action==='break')){
-              cubes.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at, wx:a.x, wz:a.z,
+              cubes.push({x:a.x, y:a.y, z:a.z, at:a.at, wx:a.x, wz:a.z,
                           put:a.action==='place', what:a.detail||'', n:Math.max(1,a.count||1)});
             } else if(want==='fight' &&
                       (a.action==='attack'||a.action==='hurt'||a.action==='death'
                        ||a.action==='kill')){
-              marks.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at, wx:a.x, wz:a.z,
+              marks.push({x:a.x, y:a.y, z:a.z, at:a.at, wx:a.x, wz:a.z,
                           kind:a.action, what:a.detail||''});
             }
           }
@@ -4740,15 +4746,21 @@ final class WebPage {
 
           const all=cubes.length;
           const near=cubes.length?largestHeap(cubes):[];
-          const kept=near.length?near:cubes;
+          const keptAbs=near.length?near:cubes;
+          const focus=keptAbs.length?keptAbs:marks;
+          const minX=Math.min(...focus.map(c=>c.x)), maxX=Math.max(...focus.map(c=>c.x));
+          const minZ=Math.min(...focus.map(c=>c.z)), maxZ=Math.max(...focus.map(c=>c.z));
+          const cx=Math.round((minX+maxX)/2), cz=Math.round((minZ+maxZ)/2);
+          const kept=keptAbs.map(c=>({...c,x:c.x-cx,z:c.z-cz}));
+          const localMarks=marks.map(c=>({...c,x:c.x-cx,z:c.z-cz}));
           const dropped=all-kept.length;
 
-          const extent=kept.concat(marks).reduce((n,c)=>
+          const extent=kept.concat(localMarks).reduce((n,c)=>
             Math.max(n,Math.abs(c.x),Math.abs(c.z)),0);
           // A little setting around a small build, while a wide one can use
           // the full 64-block scene. Fixed 64-wide framing made a doorway a
           // speck even though there was nothing else to show.
-          const radius=Math.max(12,Math.min(SCENE_MAX/2,Math.ceil(extent+8)));
+          const radius=Math.max(8,Math.min(SCENE_MAX/2,Math.ceil(extent+6)));
 
           // Tracks are actual player positions (including altitude), unlike a
           // block action whose coordinates name the block. Kept solely on the
@@ -4759,22 +4771,24 @@ final class WebPage {
           for(const who of Object.keys(tracks)){
             for(const p of tracks[who]||[]){
               if(p.dim!==e.dim || p.at<e.from-samplePad || p.at>e.to+samplePad) continue;
-              players.push({player:who,x:p.x-e.x,y:p.y,z:p.z-e.z,wx:p.x,wz:p.z,at:p.at});
+              players.push({player:who,x:p.x-cx,y:p.y,z:p.z-cz,wx:p.x,wz:p.z,at:p.at});
               if(players.length>=2000) break;
             }
             if(players.length>=2000) break;
           }
           players.sort((a,b)=>a.at-b.at);
 
-          const shapeYs=kept.concat(marks).map(c=>c.y);
+          const shapeYs=kept.concat(localMarks).map(c=>c.y);
           const contextMinY=Math.min(...shapeYs), contextMaxY=Math.max(...shapeYs);
-          const nearbyPlayers=players.filter(p=>Math.abs(p.x)<=radius&&Math.abs(p.z)<=radius);
-          const ys=shapeYs.concat(nearbyPlayers.map(c=>c.y));
-          const minY=Math.min(...ys), maxY=Math.max(...ys);
+          // A player flying far above a four-block edit remains a real sample,
+          // but is not part of the edit's geometry and must not shrink it to a
+          // speck. scenePeopleAt applies the same vertical-neighbour rule.
+          const minY=contextMinY, maxY=contextMaxY;
           kept.sort((a,b)=>a.at-b.at);
-          marks.sort((a,b)=>a.at-b.at);
+          localMarks.sort((a,b)=>a.at-b.at);
           const use=kept.slice(0,SCENE_CUBES);
-          return {ep:e, look:want, cubes:use, marks:marks, players:players,
+          return {ep:e, look:want, cubes:use, marks:localMarks, players:players,
+                  cx:cx,cz:cz,
                   minY:minY, maxY:maxY, radius:radius, samplePad:samplePad, turn:0,
                   contextMinY:contextMinY, contextMaxY:contextMaxY,
                   upto:Math.max(1,want==='fight'?marks.length:use.length),
@@ -4795,8 +4809,9 @@ final class WebPage {
          *
          * <p>Single-link clustering with a real distance test — the grid is
          * only there so this does not compare every block to every other one.
-         * The group containing the middle wins, since that is where the
-         * episode said the work was; failing that, the biggest.
+         * The largest group wins. Episode centres used to include unrelated
+         * rows, so using that centre to choose the group recreated the very
+         * outlier bug this clustering is meant to remove.
          */
         function largestHeap(cubes){
           if(cubes.length<2) return cubes;
@@ -4830,12 +4845,9 @@ final class WebPage {
             groups.get(root).push(c);
           });
           if(groups.size<2) return cubes;
-          // The middle is where the episode said the work was.
           let best=null, bestScore=-1;
           for(const g of groups.values()){
-            let near=Infinity;
-            for(const c of g) near=Math.min(near,Math.abs(c.x)+Math.abs(c.z));
-            const score=g.length*100-near;
+            const score=g.reduce((n,c)=>n+Math.max(1,c.n||1),0);
             if(score>bestScore){ bestScore=score; best=g; }
           }
           return best||cubes;
@@ -4848,11 +4860,12 @@ final class WebPage {
           scene=built;
           // Fetched once per scene and kept on it: turning the view or
           // dragging the slider must not go back to the network.
-          loadTerrain(e,t=>{ if(scene===built){ scene.terrain=t; paintScene(); } });
+          loadTerrain(e,built,t=>{ if(scene===built){ scene.terrain=t; paintScene(); } });
           loadSceneContext(e,built);
           modal('What was built here', body=>{
             body.innerHTML='<p class="muted" style="margin:0 0 10px">'+
-              esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+' '+e.x+','+e.y+','+e.z+
+              esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+' '+built.cx+','+
+              built.contextMinY+','+built.cz+
               '</p>'+
               '<div class="scene" id="sc-box"></div>'+
               '<div class="scenebar">'+
@@ -4905,7 +4918,7 @@ final class WebPage {
         /** Live, already-loaded blocks around a historical activity scene. */
         async function loadSceneContext(e,built){
           const q='/api/scene/context?dim='+encodeURIComponent(e.dim)+
-            '&x='+e.x+'&z='+e.z+'&radius='+built.radius+
+            '&x='+built.cx+'&z='+built.cz+'&radius='+built.radius+
             '&minY='+(built.contextMinY-8)+'&maxY='+(built.contextMaxY+8);
           try {
             const r=await jget(q);
@@ -4914,7 +4927,7 @@ final class WebPage {
               built.world=[]; paintScene(); return;
             }
             built.world=r.body.blocks.map(b=>({
-              x:(+b.x)-e.x,y:+b.y,z:(+b.z)-e.z,wx:+b.x,wz:+b.z,
+              x:(+b.x)-built.cx,y:+b.y,z:(+b.z)-built.cz,wx:+b.x,wz:+b.z,
               what:b.what||'a block',state:'world'
             })).filter(b=>Number.isFinite(b.x)&&Number.isFinite(b.y)&&Number.isFinite(b.z));
             built.worldTruncated=!!r.body.truncated;
@@ -4981,7 +4994,8 @@ final class WebPage {
             // A sampling tick can fall just after the first build event. Use
             // that nearest sample until an earlier one exists.
             if(!found) found=points[0];
-            if(found && Math.abs(found.x)<=scene.radius && Math.abs(found.z)<=scene.radius)
+            if(found && Math.abs(found.x)<=scene.radius && Math.abs(found.z)<=scene.radius
+               && found.y>=scene.contextMinY-24 && found.y<=scene.contextMaxY+24)
               out.push(found);
           }
           return out;
@@ -5106,15 +5120,15 @@ final class WebPage {
             (p[1]-3).toFixed(1)+'" fill="#aeb9c8" font-size="9" text-anchor="'+anchor+
             '" paint-order="stroke" stroke="#0b0d11" stroke-width="3">'+esc(text)+'</text>';
           const out=[];
-          const minX=scene.ep.x-radius, maxX=scene.ep.x+radius;
-          const minZ=scene.ep.z-radius, maxZ=scene.ep.z+radius;
+          const minX=scene.cx-radius, maxX=scene.cx+radius;
+          const minZ=scene.cz-radius, maxZ=scene.cz+radius;
           for(let wx=Math.ceil(minX/step)*step;wx<=maxX;wx+=step){
-            const dx=wx-scene.ep.x;
+            const dx=wx-scene.cx;
             const a=point({x:dx,z:-radius},floor), b=point({x:dx,z:radius},floor);
             out.push(line(a,b,wx%16===0?'major':'minor'),label(b,'x '+wx,'middle'));
           }
           for(let wz=Math.ceil(minZ/step)*step;wz<=maxZ;wz+=step){
-            const dz=wz-scene.ep.z;
+            const dz=wz-scene.cz;
             const a=point({x:-radius,z:dz},floor), b=point({x:radius,z:dz},floor);
             out.push(line(a,b,wz%16===0?'major':'minor'),label(b,'z '+wz,'middle'));
           }
@@ -5210,9 +5224,10 @@ final class WebPage {
          * with no shape file simply comes back not ready and the scene is the
          * blocks alone.
          */
-        function loadTerrain(e,then){
+        function loadTerrain(e,built,then){
           const patch=shotsFor(e.dim,e.to).find(p=>
-            p.minX<=e.x && p.minX+p.span>e.x && p.minZ<=e.z && p.minZ+p.span>e.z);
+            p.minX<=built.cx && p.minX+p.span>built.cx &&
+            p.minZ<=built.cz && p.minZ+p.span>built.cz);
           if(!patch){ then(null); return; }
           const url=a=>'/api/map?at='+patch.at+'&dim='+encodeURIComponent(e.dim)+a;
           const colour=new Image(), shape=new Image();
@@ -5235,8 +5250,8 @@ final class WebPage {
               // One image pixel is span/n blocks; at the default that is one.
               const per=patch.span/n;
               then({ready:true, at:(dx,dz)=>{
-                const px=Math.floor((e.x+dx-patch.minX)/per);
-                const pz=Math.floor((e.z+dz-patch.minZ)/per);
+                const px=Math.floor((built.cx+dx-patch.minX)/per);
+                const pz=Math.floor((built.cz+dz-patch.minZ)/per);
                 if(px<0||pz<0||px>=n||pz>=c.height) return null;
                 const i=(pz*n+px)*4;
                 if(cd[i+3]<128 || hd[i+3]<128) return null;

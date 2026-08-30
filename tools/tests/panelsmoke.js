@@ -1782,6 +1782,26 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     return /translate\('\+tx/.test(body) ? true : 'it is not centred on what is in it';
   });
 
+  check('a distant outlier and high player do not shrink a small block scene', () => {
+    const savedData = sandbox.allData, savedScene = sandbox.scene;
+    const at = Date.now(), actions = [];
+    for (let x = 100; x < 104; x++) actions.push({ at: at + x, player: 'B',
+      dim: 'overworld', action: 'place', detail: 'Oak Planks', x: x, y: 64, z: 100,
+      count: 1 });
+    actions.push({ at: at + 200, player: 'B', dim: 'overworld', action: 'place',
+      detail: 'Oak Planks', x: 145, y: 176, z: 100, count: 1 });
+    sandbox.allData = { trackSeconds: 5, actions: actions, tracks: {
+      Flyer: [{ at: at + 150, dim: 'overworld', x: 102, y: 176, z: 100 }]
+    }};
+    sandbox.scene = sandbox.sceneOf({ kind: 'build', events: 20, player: 'B',
+      dim: 'overworld', from: at, to: at + 300, x: 122, y: 120, z: 100 });
+    const people = sandbox.scenePeopleAt(at + 300);
+    const good = sandbox.scene && sandbox.scene.cubes.length === 4
+      && sandbox.scene.maxY === 64 && sandbox.scene.radius <= 10 && people.length === 0;
+    sandbox.scene = savedScene; sandbox.allData = savedData;
+    return good ? true : 'the outlier still controlled the frame';
+  });
+
   // ---- tools ----
   check('the game’s own tool textures are used when there are any', () => {
     sandbox.toolTextures = true;

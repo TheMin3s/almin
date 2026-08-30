@@ -109,6 +109,9 @@ public final class Episodes {
     /** Below this many events a run is noise, unless somebody died in it. */
     private static final int MIN_EVENTS = 4;
 
+    /** Blocks farther apart than this are separate pieces of work. */
+    private static final int WORK_GAP = 12;
+
     /** Ceiling on returned episodes, so a busy week cannot flood the panel. */
     private static final int MAX_EPISODES = 240;
 
@@ -329,8 +332,18 @@ public final class Episodes {
      * said at all — no row knows it was part of a tunnel.
      */
     private static Episode classify(List<ActivityLog.Entry> run) {
-        Stats s = measure(run);
-        if (s.events() < MIN_EVENTS && s.deaths == 0) return null;
+        Stats all = measure(run);
+        if (all.events() < MIN_EVENTS && all.deaths == 0) return null;
+
+        // A run can contain a block placed at the build and, seconds later, a
+        // chest opened or another block changed dozens of blocks away. Those
+        // coordinates must not turn a four-block wall into a 120-block-tall
+        // "building". Geometry and material counts come only from the largest
+        // connected heap of block edits; combat and other event rules still
+        // see the whole run.
+        List<ActivityLog.Entry> workRows = mainWork(run);
+        Stats work = workRows.isEmpty() ? all : measure(workRows);
+        Stats s = all;
 
         ActivityLog.Entry any = run.get(0);
         String kind, headline;
@@ -371,70 +384,82 @@ public final class Episodes {
                 + (s.spanXZ() <= 2 ? ", all on one spot"
                                    : ", without moving more than " + plural(s.spanXZ(), "block"));
             weight = 48;
-        } else if (s.logs >= 4 && s.spanXZ() <= 12 && s.spanY() >= 3) {
+        } else if (work.logs >= 4 && work.spanXZ() <= 12 && work.spanY() >= 3) {
+            s = work;
             kind = "tree";
             int trees = Math.max(1, Math.round(s.logs / 6f));
             headline = trees == 1
                 ? "Chopped down a tree" + (s.leaves > 0 ? " and cleared the leaves" : "")
                 : "Chopped down about " + trees + " trees";
             weight = 34;
-        } else if (s.breaks >= 8 && s.spanY() >= 8 && s.spanXZ() <= 4) {
+        } else if (work.breaks >= 8 && work.spanY() >= 8 && work.spanXZ() <= 4) {
+            s = work;
             kind = "shaft";
             headline = "Dug a shaft from y " + s.maxY + " down to y " + s.minY;
             weight = 44;
-        } else if (s.breaks >= 12 && s.spanY() <= 4
-                   && Math.max(s.spanX(), s.spanZ()) >= 4 * Math.max(1, Math.min(s.spanX(), s.spanZ()))) {
+        } else if (work.breaks >= 12 && work.spanY() <= 4
+                   && Math.max(work.spanX(), work.spanZ())
+                      >= 4 * Math.max(1, Math.min(work.spanX(), work.spanZ()))) {
+            s = work;
             kind = "tunnel";
             int len = Math.max(s.spanX(), s.spanZ());
             headline = "Tunnelled " + len + " blocks " + axis(s) + " at y " + s.cy();
             weight = 46;
-        } else if (s.breaks >= 10 && s.cy() < 50) {
+        } else if (work.breaks >= 10 && work.cy() < 50) {
+            s = work;
             kind = "mine";
             headline = "Mined " + plural(s.breaks, "block") + " around y " + s.cy()
                 + (s.ores > 0 ? ", hitting " + plural(s.ores, "ore") : "");
             weight = s.ores > 0 ? 40 : 26;
-        } else if (s.crops >= 6) {
+        } else if (work.crops >= 6) {
+            s = work;
             kind = "farm";
             headline = "Worked a field — " + plural(s.crops, "crop") + " over "
                 + plural(mins, "minute");
             weight = 22;
-        } else if (s.breaks >= 20 && s.spanY() <= 4 && s.spanXZ() >= 8) {
+        } else if (work.breaks >= 20 && work.spanY() <= 4 && work.spanXZ() >= 8) {
+            s = work;
             kind = "clear";
             headline = "Cleared " + s.spanX() + "×" + s.spanZ() + " of ground at y " + s.cy();
             weight = 58;
-        } else if (s.wiring >= 6 && s.wiring * 2 >= s.places) {
+        } else if (work.wiring >= 6 && work.wiring * 2 >= work.places) {
+            s = work;
             kind = "redstone";
             headline = "Wired something up — " + plural(s.wiring, "redstone part")
                 + " at " + s.cx() + "," + s.cz();
             weight = 40;
-        } else if (s.places >= 8 && s.spanY() >= 8 && s.spanXZ() <= 3) {
+        } else if (work.places >= 8 && work.spanY() >= 8 && work.spanXZ() <= 3) {
+            s = work;
             // The opposite of a shaft, and just as recognisable: one column of
             // blocks going up. Usually someone pillaring to get a view, and
             // occasionally someone getting over a wall.
             kind = "tower";
             headline = "Pillared up from y " + s.minY + " to y " + s.maxY;
             weight = 38;
-        } else if (s.places >= 12 && s.spanY() <= 2
-                   && Math.max(s.spanX(), s.spanZ())
-                      >= 4 * Math.max(1, Math.min(s.spanX(), s.spanZ()))) {
+        } else if (work.places >= 12 && work.spanY() <= 2
+                   && Math.max(work.spanX(), work.spanZ())
+                      >= 4 * Math.max(1, Math.min(work.spanX(), work.spanZ()))) {
+            s = work;
             kind = "bridge";
             int len = Math.max(s.spanX(), s.spanZ());
             headline = "Laid a " + len + "-block path " + axis(s) + " at y " + s.cy();
             weight = 34;
-        } else if (s.places >= 8) {
+        } else if (work.places >= 8) {
+            s = work;
             kind = "build";
             String of = top(s.built);
-            if (s.spanY() <= 1) {
+            if (s.spanY() == 0) {
                 headline = "Laid " + plural(s.places, "block") + " flat"
                     + (of.isEmpty() ? "" : " of " + of) + " — a floor or a path";
                 weight = 30;
             } else {
-                headline = "Built something " + Math.max(1, s.spanXZ()) + " across and "
-                    + Math.max(1, s.spanY()) + " high"
+                headline = "Built something " + (s.spanXZ() + 1) + " across and "
+                    + (s.spanY() + 1) + " high"
                     + (of.isEmpty() ? "" : ", mostly " + of);
                 weight = 60;
             }
-        } else if (s.breaks >= 10) {
+        } else if (work.breaks >= 10) {
+            s = work;
             kind = "dig";
             String of = top(s.broke);
             headline = "Broke " + plural(s.breaks, "block")
@@ -490,6 +515,80 @@ public final class Episodes {
         return new Episode(kind, headline, any.player(), any.uuid(), any.dim(),
             s.from, s.to, s.cx(), s.cy(), s.cz(), s.spanXZ(), s.spanY(), s.events(), weight,
             toolFor(kind, s));
+    }
+
+    /**
+     * The connected heap of place/break rows that best represents one run.
+     * Package-private so the AI diagram can use exactly the same geometry as
+     * the headline and the browser scene.
+     */
+    static List<ActivityLog.Entry> mainWork(List<ActivityLog.Entry> run) {
+        List<ActivityLog.Entry> blocks = new ArrayList<>();
+        for (ActivityLog.Entry e : run) {
+            if ("place".equals(e.action()) || "break".equals(e.action())) blocks.add(e);
+        }
+        if (blocks.size() < 2) return blocks;
+
+        int[] owner = new int[blocks.size()];
+        for (int i = 0; i < owner.length; i++) owner[i] = i;
+        Map<String, List<Integer>> bins = new HashMap<>();
+        for (int i = 0; i < blocks.size(); i++) {
+            ActivityLog.Entry e = blocks.get(i);
+            int gx = Math.floorDiv(e.x(), WORK_GAP);
+            int gy = Math.floorDiv(e.y(), WORK_GAP);
+            int gz = Math.floorDiv(e.z(), WORK_GAP);
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        List<Integer> near = bins.get(bin(gx + dx, gy + dy, gz + dz));
+                        if (near == null) continue;
+                        for (int j : near) {
+                            ActivityLog.Entry o = blocks.get(j);
+                            if (Math.abs(e.x() - o.x()) <= WORK_GAP
+                                && Math.abs(e.y() - o.y()) <= WORK_GAP
+                                && Math.abs(e.z() - o.z()) <= WORK_GAP) {
+                                join(owner, i, j);
+                            }
+                        }
+                    }
+                }
+            }
+            bins.computeIfAbsent(bin(gx, gy, gz), k -> new ArrayList<>()).add(i);
+        }
+
+        Map<Integer, List<ActivityLog.Entry>> groups = new HashMap<>();
+        Map<Integer, Integer> weights = new HashMap<>();
+        for (int i = 0; i < blocks.size(); i++) {
+            int root = find(owner, i);
+            ActivityLog.Entry e = blocks.get(i);
+            groups.computeIfAbsent(root, k -> new ArrayList<>()).add(e);
+            weights.merge(root, Math.max(1, e.count()), Integer::sum);
+        }
+        int best = -1, most = -1;
+        long latest = Long.MIN_VALUE;
+        for (Map.Entry<Integer, List<ActivityLog.Entry>> group : groups.entrySet()) {
+            int weight = weights.getOrDefault(group.getKey(), group.getValue().size());
+            long end = group.getValue().stream().mapToLong(ActivityLog.Entry::at).max().orElse(0);
+            if (weight > most || (weight == most && end > latest)) {
+                best = group.getKey(); most = weight; latest = end;
+            }
+        }
+        return best < 0 ? blocks : groups.get(best);
+    }
+
+    private static String bin(int x, int y, int z) { return x + "," + y + "," + z; }
+
+    private static int find(int[] owner, int i) {
+        while (owner[i] != i) {
+            owner[i] = owner[owner[i]];
+            i = owner[i];
+        }
+        return i;
+    }
+
+    private static void join(int[] owner, int a, int b) {
+        int ra = find(owner, a), rb = find(owner, b);
+        if (ra != rb) owner[rb] = ra;
     }
 
     /** Which way a tunnel runs, from which axis is longer. */
