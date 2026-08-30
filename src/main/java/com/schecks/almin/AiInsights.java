@@ -800,12 +800,28 @@ public final class AiInsights {
         String url = base + "/chat/completions";
         String apiKey = key();
 
-        JsonObject reply = post(url, body, req -> {
+        Headers auth = req -> {
             // A local runner usually wants no key at all, and sending an empty
             // bearer header upsets some of them.
             if (!apiKey.isEmpty()) req.header("Authorization", "Bearer " + apiKey);
             return req;
-        });
+        };
+        JsonObject reply;
+        try {
+            reply = post(url, body, auth);
+        } catch (IOException e) {
+            // Newer OpenAI-shaped models renamed max_tokens to
+            // max_completion_tokens and reject the old name outright, while
+            // everything already deployed only understands the old one. There
+            // is no way to know which is in front of you but to be told, so
+            // the rename is done on being told, once.
+            String said = e.getMessage() == null ? "" : e.getMessage();
+            if (!said.contains("max_completion_tokens")) throw e;
+            body.remove("max_tokens");
+            body.addProperty("max_completion_tokens", 2000);
+            AlminLog.info("[almin] this model wants max_completion_tokens; asking again");
+            reply = post(url, body, auth);
+        }
 
         if (!reply.has("choices") || !reply.get("choices").isJsonArray()
             || reply.getAsJsonArray("choices").isEmpty()) {
