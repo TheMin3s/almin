@@ -127,7 +127,7 @@ public final class AlminConfig {
      */
     public int activityRetentionMinutes = 7200;
     /** Ceiling on the log, oldest dropped first, so a busy server can't grow it forever. */
-    public int activityMaxEntries = 20000;
+    public int activityMaxEntries = 120000;
     /**
      * Include block edits. On by default, folded into counted rows; turn it off
      * if you only care about chat, commands, containers and deaths.
@@ -394,7 +394,7 @@ public final class AlminConfig {
             c -> c.activityIncludeAdmins, (c, v) -> c.activityIncludeAdmins = (Boolean) v),
         intKey("activity-retention-minutes", "How long an activity row is kept before it is deleted (5 days by default)", 5, 43200,
             c -> c.activityRetentionMinutes, (c, v) -> c.activityRetentionMinutes = (Integer) v),
-        intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 50000,
+        intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 400000,
             c -> c.activityMaxEntries, (c, v) -> c.activityMaxEntries = (Integer) v),
         boolKey("activity-blocks", "Include block breaks and uses in the activity log",
             c -> c.activityBlocks, (c, v) -> c.activityBlocks = (Boolean) v),
@@ -434,7 +434,7 @@ public final class AlminConfig {
             c -> c.modsRestrictedKick, (c, v) -> c.modsRestrictedKick = (Boolean) v),
         boolKey("ai-enabled", "Let a language model summarise the activity log (sends player activity to the chosen service)",
             c -> c.aiEnabled, (c, v) -> c.aiEnabled = (Boolean) v),
-        textKey("ai-provider", "anthropic, openai, or local (anything speaking the OpenAI chat API at ai-base-url)",
+        textKey("ai-provider", "anthropic, openai, google, local, or custom (any OpenAI-compatible address in ai-base-url)",
             c -> c.aiProvider, (c, v) -> c.aiProvider = (String) v),
         textKey("ai-model", "Model name as that service spells it",
             c -> c.aiModel, (c, v) -> c.aiModel = (String) v),
@@ -452,7 +452,7 @@ public final class AlminConfig {
      * time the file is read, and so a value someone chose on purpose is only
      * ever overwritten if it is still sitting on the old default.
      */
-    private static final int CONFIG_VERSION = 1;
+    private static final int CONFIG_VERSION = 2;
     /** Version of the defaults this file was last written against. */
     public int configVersion = 0;
 
@@ -521,6 +521,12 @@ public final class AlminConfig {
         // v1: the activity log now keeps five days rather than one.
         if (cfg.configVersion < 1 && cfg.activityRetentionMinutes == 1440) {
             cfg.activityRetentionMinutes = 7200;
+        }
+        // v2: block edits and fights are no longer folded into counted rows,
+        // so the same afternoon is many more rows than it used to be. A
+        // ceiling chosen for the folded log would now throw away most of it.
+        if (cfg.configVersion < 2 && cfg.activityMaxEntries == 20000) {
+            cfg.activityMaxEntries = 120000;
         }
         cfg.configVersion = CONFIG_VERSION;
     }

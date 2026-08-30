@@ -277,7 +277,7 @@ public final class ActivityLog {
      * eating, clicking an entity.
      */
     public static void recordFolded(ServerPlayer player, String action, String detail) {
-        record(player, action, detail, true);
+        record(player, action, detail, folds(action));
     }
 
     private static void record(ServerPlayer player, String action, String detail, boolean fold) {
@@ -289,15 +289,39 @@ public final class ActivityLog {
     }
 
     /**
-     * Records a block edit, which is the one action frequent enough to need
-     * folding: a player clearing an area produces one row per swing otherwise.
+     * Actions that are always kept one row per thing that happened.
+     *
+     * <p>Folding replaces the previous row with a count and moves it to where
+     * the latest one was, which is fine for "ate nine steaks" and destroys the
+     * only interesting thing about a block edit: <em>where</em> it was. A wall
+     * of twenty-five planks was arriving as two or three rows with a count on
+     * them, so the isometric view drew two or three cubes and the shape of
+     * what somebody built was simply not in the log any more.
+     *
+     * <p>The same goes for a fight. Nine swings in one place and nine swings
+     * spread over forty blocks are different events, and a count cannot tell
+     * them apart.
+     *
+     * <p>Everything else still folds. Eating, clicking an entity and using an
+     * item happen many times a second and are not worth a row each.
+     */
+    private static final java.util.Set<String> NEVER_FOLDED =
+        java.util.Set.of("place", "break", "attack", "hurt", "kill", "sign");
+
+    static boolean folds(String action) { return !NEVER_FOLDED.contains(action); }
+
+    /**
+     * Records a block edit, at the block rather than at the player.
+     *
+     * <p>Placements and breaks are never folded — see {@link #NEVER_FOLDED}.
+     * Uses still are: right-clicking a chest forty times is one fact.
      */
     public static void recordBlock(ServerPlayer player, String action, String block, BlockPos pos) {
         AlminConfig cfg = AlminConfig.get();
         if (!cfg.activityLog || !cfg.activityBlocks) return;
         if (!watched(player)) return;
         store(player.getGameProfile().name(), player.getUUID().toString(),
-            action, block, player, pos, true);
+            action, block, player, pos, folds(action));
     }
 
     /**
@@ -388,16 +412,26 @@ public final class ActivityLog {
         return entries.size();
     }
 
-    /** Throws the log away now, rather than waiting for it to expire. */
+    /**
+     * Throws the log away now, rather than waiting for it to expire.
+     *
+     * <p>The map is the same record seen another way, so it goes too — the
+     * paths, and the pictures of the ground they were drawn over. Use
+     * {@link #wipe()} to take only the rows.
+     */
     public static boolean clear() {
+        boolean ok = wipe();
+        PlayerTracks.clear();
+        WorldSnapshots.clear();
+        return ok;
+    }
+
+    /** The rows and nothing else, for a panel that offers the three separately. */
+    public static boolean wipe() {
         synchronized (ActivityLog.class) {
             entries.clear();
         }
-        // The map is the same record seen another way; it goes too — the
-        // paths, and the pictures of the ground they were drawn over.
-        PlayerTracks.clear();
         Afk.clear();
-        WorldSnapshots.clear();
         pending.clear();
         pendingCount.set(0);
         Path f = file;

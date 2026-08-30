@@ -617,7 +617,23 @@ final class WebPage {
         }
 
         let openMenu=null, openScrim=null, onScrimClose=null;
-        function closeMenu(){ if(openMenu){ openMenu.remove(); openMenu=null; } }
+        /**
+         * The listener that dismisses the open menu, held so it can be taken
+         * off again.
+         *
+         * <p>It used to be added with {@code {once:true}} and never removed.
+         * A menu closed any other way — Escape, or clicking one of its own
+         * items — left that listener armed, and the very next click anywhere
+         * spent it. So the click that opened the *next* menu reached the
+         * leftover listener a moment after that menu was built, and closed it
+         * on the spot. One menu in two worked, which is exactly what a
+         * finicky button feels like.
+         */
+        let menuDismiss=null;
+        function closeMenu(){
+          if(menuDismiss){ document.removeEventListener('click',menuDismiss); menuDismiss=null; }
+          if(openMenu){ openMenu.remove(); openMenu=null; }
+        }
         function closeModal(){
           if(!openScrim) return;
           openScrim.remove(); openScrim=null;
@@ -659,7 +675,13 @@ final class WebPage {
           m.style.top=Math.max(6,Math.min(y,window.innerHeight-r.height-6))+'px';
           openMenu=m;
           // Added next tick, or the very click that opened this would close it.
-          setTimeout(()=>document.addEventListener('click',closeMenu,{once:true}),0);
+          // Tied to this menu: if it has already gone by the time the tick
+          // comes round, nothing is armed.
+          const dismiss=()=>closeMenu();
+          menuDismiss=dismiss;
+          setTimeout(()=>{
+            if(menuDismiss===dismiss && openMenu===m) document.addEventListener('click',dismiss);
+          },0);
           return m;
         }
         function menuUnder(btn,items){
@@ -2024,7 +2046,7 @@ final class WebPage {
             '<input id="a-filter" placeholder="filter by player, action, detail or place" '+
             'style="flex:1;min-width:200px">'+
             '<button class="btn" id="a-refresh">Refresh</button>'+
-            '<button class="btn danger" id="a-clear">Clear log</button></div>'+
+            '<button class="btn danger" id="a-clear">Start again\u2026</button></div>'+
             '<div id="a-meta" class="muted" style="margin-bottom:8px"></div>'+
             '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">'+
             '<span class="muted">One player’s path</span>'+
@@ -4477,10 +4499,31 @@ final class WebPage {
         let scene=null;
 
         /** Whether this stretch has enough shape in it to be worth drawing. */
-        function hasShape(e){
-          return e && e.events>=8 &&
-            ['build','shaft','tunnel','mine','dig','clear','tree','farm'].includes(e.kind);
+        /** Stretches whose shape is made of blocks. */
+        const SCENE_BUILD=['build','shaft','tunnel','mine','dig','clear','tree','farm',
+                           'tower','bridge','redstone','hazard'];
+
+        /** Stretches whose shape is made of blows. */
+        const SCENE_FIGHT=['fight','pvp','grind','death'];
+
+        /**
+         * Whether a stretch has enough shape in it to be worth drawing, and
+         * which of the two pictures it is.
+         *
+         * <p>They are separate on purpose. A fight and a building that
+         * happened in the same place are two events, and drawing them in one
+         * scene made a picture of neither: the blows floated over a wall that
+         * had nothing to do with them, and the wall was drawn at whatever
+         * scale the blows demanded.
+         */
+        function sceneKind(e){
+          if(!e) return '';
+          if(SCENE_FIGHT.includes(e.kind)) return e.events>=3 ? 'fight' : '';
+          if(SCENE_BUILD.includes(e.kind)) return e.events>=8 ? 'build' : '';
+          return '';
         }
+
+        function hasShape(e){ return sceneKind(e)!==''; }
 
         /**
          * Everything one stretch of work touched, as blocks.
@@ -4494,23 +4537,29 @@ final class WebPage {
         function sceneOf(e){
           const acts=(allData&&allData.actions)||[];
           const half=SCENE_MAX/2;
+          const want=sceneKind(e);
           const cubes=[], marks=[];
           for(const a of acts){
             if(a.player!==e.player || a.dim!==e.dim) continue;
             if(a.at<e.from-1000 || a.at>e.to+1000) continue;
             if(Math.abs(a.x-e.x)>half || Math.abs(a.z-e.z)>half) continue;
-            if(a.action==='place'||a.action==='break'){
+            // Only what this picture is about. A fight scene that also drew
+            // the wall somebody built beside it was two events in one frame,
+            // and the wall decided the scale.
+            if(want==='build' && (a.action==='place'||a.action==='break')){
               cubes.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at, wx:a.x, wz:a.z,
                           put:a.action==='place', what:a.detail||'', n:Math.max(1,a.count||1)});
-            } else if(a.action==='attack'||a.action==='hurt'||a.action==='death'){
-              marks.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at,
+            } else if(want==='fight' &&
+                      (a.action==='attack'||a.action==='hurt'||a.action==='death'
+                       ||a.action==='kill')){
+              marks.push({x:a.x-e.x, y:a.y, z:a.z-e.z, at:a.at, wx:a.x, wz:a.z,
                           kind:a.action, what:a.detail||''});
             }
           }
           if(!cubes.length && !marks.length) return null;
 
           const all=cubes.length;
-          const near=largestHeap(cubes);
+          const near=cubes.length?largestHeap(cubes):[];
           const kept=near.length?near:cubes;
           const dropped=all-kept.length;
 
@@ -4518,11 +4567,10 @@ final class WebPage {
           const minY=Math.min(...ys), maxY=Math.max(...ys);
           kept.sort((a,b)=>a.at-b.at);
           marks.sort((a,b)=>a.at-b.at);
-          const inside=marks.filter(m=>kept.some(c=>Math.abs(c.x-m.x)<=SCENE_GAP
-            && Math.abs(c.z-m.z)<=SCENE_GAP));
           const use=kept.slice(0,SCENE_CUBES);
-          return {ep:e, cubes:use, marks:inside.length?inside:marks,
-                  minY:minY, maxY:maxY, turn:0, upto:Math.max(1,use.length),
+          return {ep:e, look:want, cubes:use, marks:marks,
+                  minY:minY, maxY:maxY, turn:0,
+                  upto:Math.max(1,want==='fight'?marks.length:use.length),
                   dropped:dropped, timer:null};
         }
 
@@ -4604,17 +4652,25 @@ final class WebPage {
                 '<button class="btn go" id="sc-play">Replay</button>'+
                 '<button class="btn" id="sc-ground">Ground</button>'+
                 '<input type="range" id="sc-at" min="1" max="'+
-                  Math.max(1,built.cubes.length)+'" value="'+
-                  Math.max(1,built.cubes.length)+'">'+
+                  Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length)+
+                  '" value="'+
+                  Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length)+'">'+
                 '<span class="muted num" id="sc-count"></span>'+
               '</div>'+
               '<div class="scenekey">'+
-                '<span><i style="border:2px solid #ffd34d;background:#6b5a2a"></i>placed</span>'+
-                '<span><i style="border:2px solid #ff5a5a;background:transparent"></i>broken</span>'+
-                (built.marks.length?'<span><i style="background:#ff3b3b"></i>something was hit</span>':'')+
-                '<span class="muted">Blocks are drawn in their own colours, and the ground '+
-                'around them is the world as the last snapshot found it \u2014 its own '+
-                'colours, at its own heights.</span>'+
+                (built.look==='fight'
+                  ? '<span><i style="background:#ff3b3b"></i>something was hit</span>'+
+                    '<span class="muted">A fight on its own. Blocks anyone happened to '+
+                    'place or break nearby belong to a different picture, so they are not '+
+                    'in this one \u2014 the ground is the world as the last snapshot found '+
+                    'it.</span>'
+                  : '<span><i style="border:2px solid #ffd34d;background:#6b5a2a"></i>placed'+
+                    '</span>'+
+                    '<span><i style="border:2px solid #ff5a5a;background:transparent"></i>'+
+                    'broken</span>'+
+                    '<span class="muted">Blocks are drawn in their own colours, and the '+
+                    'ground around them is the world as the last snapshot found it '+
+                    '\u2014 its own colours, at its own heights.</span>')+
               '</div>';
             setTimeout(()=>{
               $('sc-left').onclick=()=>{ scene.turn=(scene.turn+3)%4; paintScene(); };
@@ -4640,14 +4696,15 @@ final class WebPage {
           if(!scene) return;
           if(scene.timer){ stopScene(); return; }
           const b=$('sc-play'); if(b){ b.textContent='Pause'; b.className='btn on'; }
-          if(scene.upto>=scene.cubes.length) scene.upto=1;
-          const step=Math.max(1,Math.round(scene.cubes.length/120));
+          const total=sceneSteps();
+          if(scene.upto>=total) scene.upto=1;
+          const step=Math.max(1,Math.round(total/120));
           scene.timer=setInterval(()=>{
             if(!scene){ return; }
-            scene.upto=Math.min(scene.cubes.length,scene.upto+step);
+            scene.upto=Math.min(total,scene.upto+step);
             const at=$('sc-at'); if(at) at.value=scene.upto;
             paintScene();
-            if(scene.upto>=scene.cubes.length) stopScene();
+            if(scene.upto>=total) stopScene();
           },60);
         }
 
@@ -4663,12 +4720,23 @@ final class WebPage {
          * scene rather than from a guess, so a scene never runs off the edge
          * of its own window.
          */
+        /** How many steps this scene has, which depends on what it is made of. */
+        function sceneSteps(){
+          if(!scene) return 1;
+          return Math.max(1, scene.look==='fight' ? scene.marks.length : scene.cubes.length);
+        }
+
         function paintScene(){
           const box=$('sc-box'); if(!box || !scene) return;
           const W=760, H=420;
-          const shown=scene.cubes.slice(0,scene.upto);
-          const upTo=shown.length?shown[shown.length-1].at:scene.ep.to;
-          const marks=scene.marks.filter(m=>m.at<=upTo);
+          // A fight has no blocks to step through, so the blows are the
+          // steps. Replaying one used to jump straight to the end, because
+          // playback counted cubes and there were none.
+          const fight=scene.look==='fight';
+          const shown=fight?[]:scene.cubes.slice(0,scene.upto);
+          const marks=fight
+            ? scene.marks.slice(0,scene.upto)
+            : scene.marks.filter(m=>m.at<=(shown.length?shown[shown.length-1].at:scene.ep.to));
           const all=shown.concat(marks);
           if(!all.length){ box.innerHTML=''; return; }
 
@@ -5111,15 +5179,60 @@ final class WebPage {
           if(m%60===0) return (m/60)+(m/60===1?' hour':' hours');
           return m+' minutes';
         }
-        async function clearActivity(){
-          if(!confirm('Delete the whole activity log?\\n\\nIt goes from memory and from disk, '+
-                      'and cannot be recovered.')) return;
-          const r=await jpost('/api/activity',{action:'clear'});
-          const msg=$('a-msg'); msg.className='msg '+(r.status===200?'ok':'err');
-          msg.textContent=r.status===200?'Cleared.':(r.body.error||'failed');
-          trackData=null;
-          loadActivity(); loadTrackList();
-          const box=$('a-map'); if(box) box.innerHTML='';
+        /**
+         * Throwing the records away, one kind at a time.
+         *
+         * <p>Three switches rather than one button. Almin's records live in
+         * <code>config/almin/</code> rather than in the world folder, so that
+         * they survive a server that will not start — which means deleting the
+         * world does not delete them, and the map goes on drawing terrain
+         * nobody can visit. Almin notices a new world on its own and clears
+         * them; this is here for the case it cannot see, which is a world
+         * regenerated from the same seed under the same name.
+         */
+        function clearActivity(){
+          modal('Start again',(body,close)=>{
+            body.innerHTML=
+              '<p class="muted">Almin keeps its records beside the mod rather than inside '+
+              'the world, so that a server which will not start still has a log you can '+
+              'read. The cost is that deleting the world does not delete them.</p>'+
+              '<p class="muted">A new world is spotted on its own, by its seed and name, '+
+              'and clears all three. Regenerating with the same seed under the same name '+
+              'looks exactly like a restart from here \u2014 which is what these are for.</p>'+
+              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:10px">'+
+              '<input type="checkbox" id="rs-actions" style="width:auto" checked> '+
+              '<span><b>What people did</b> \u2014 the activity log, and the summary made '+
+              'from it</span></label>'+
+              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
+              '<input type="checkbox" id="rs-paths" style="width:auto" checked> '+
+              '<span><b>Where they walked</b> \u2014 every recorded path</span></label>'+
+              '<label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px">'+
+              '<input type="checkbox" id="rs-pics" style="width:auto" checked> '+
+              '<span><b>The ground</b> \u2014 the pictures the map is drawn on</span></label>'+
+              '<div class="row2"><button class="btn danger" id="rs-go">Delete them</button>'+
+              '<button class="btn" id="rs-no">Cancel</button></div>'+
+              '<div class="msg" id="rs-msg"></div>';
+            $('rs-no').onclick=close;
+            $('rs-go').onclick=async()=>{
+              const want={actions:$('rs-actions').checked, paths:$('rs-paths').checked,
+                          pictures:$('rs-pics').checked};
+              if(!want.actions && !want.paths && !want.pictures){
+                const x=$('rs-msg'); x.className='msg err';
+                x.textContent='Nothing is ticked.'; return;
+              }
+              const r=await jpost('/api/reset',want);
+              if(r.status!==200){
+                const x=$('rs-msg'); x.className='msg err';
+                x.textContent=(r.body&&(r.body.error||r.body.message))||'failed'; return;
+              }
+              close();
+              const msg=$('a-msg');
+              if(msg){ msg.className='msg ok'; msg.textContent=r.body.message||'Cleared.'; }
+              trackData=null; allData=null; shots=[]; episodes=[]; aiReport=null;
+              loadActivity(); loadTrackList(); loadAll(); loadInsights();
+              const box=$('a-map'); if(box) box.innerHTML='';
+            };
+          });
         }
 
         """;
@@ -5203,9 +5316,13 @@ final class WebPage {
                 '<option value="local">On this machine (Ollama, llama.cpp, LM Studio)</option>'+
                 '<option value="anthropic">Anthropic</option>'+
                 '<option value="openai">OpenAI</option>'+
+                '<option value="google">Google (Gemini)</option>'+
+                '<option value="custom">Somewhere else \u2014 any OpenAI-compatible address'+
+                '</option>'+
               '</select></label>'+
               '<label id="s-aiurlrow"><span>Address</span>'+
                 '<input id="s-aiurl" placeholder="http://127.0.0.1:11434/v1"></label>'+
+              '<div id="s-aihint" class="note" style="display:none"></div>'+
               '<label><span>Model</span>'+
                 '<input id="s-aimodel" placeholder="qwen2.5:3b"></label>'+
               '<label><span>API key</span>'+
@@ -5317,19 +5434,40 @@ final class WebPage {
         function aiFormChanged(){
           const prov=$('s-aiprov'); if(!prov) return;
           prov.almTouched=true;
-          const local=prov.value==='local';
-          // A hosted provider has one address and it is not a setting.
+          const local=prov.value==='local', custom=prov.value==='custom';
+          // Anthropic and OpenAI have one address each and it is not a
+          // setting. Everything else is wherever the admin says — including
+          // Gemini, whose address only moves for a proxy.
           const row=$('s-aiurlrow');
-          if(row) row.style.display=local?'':'none';
+          if(row) row.style.display=(local||custom||prov.value==='google')?'':'none';
           // A model name that belongs to the provider they just picked, so the
           // common case is one dropdown and a button.
           const model=$('s-aimodel');
           if(model && !model.value.trim()){
             model.placeholder=local?'qwen2.5:3b'
-              :(prov.value==='anthropic'?'claude-haiku-4-5':'gpt-4o-mini');
+              :prov.value==='anthropic'?'claude-haiku-4-5'
+              :prov.value==='google'?'gemini-2.0-flash'
+              :custom?'the name that service uses'
+              :'gpt-4o-mini';
           }
           const url=$('s-aiurl');
           if(url && local && !url.value.trim()) url.value='http://127.0.0.1:11434/v1';
+          if(url) url.placeholder=local?'http://127.0.0.1:11434/v1'
+            :prov.value==='google'?'https://generativelanguage.googleapis.com/v1beta'
+            :'https://openrouter.ai/api/v1';
+          // The whole point of "somewhere else" is that it is not one of the
+          // three names above, so it has to say what it will accept.
+          const hint=$('s-aihint');
+          if(hint){
+            hint.style.display=custom?'':'none';
+            if(custom){
+              hint.innerHTML='Anything that speaks the OpenAI chat API \u2014 OpenRouter, '+
+                'Groq, Together, DeepSeek, Mistral, vLLM, or a model on another machine '+
+                'on your network. Give the base address, up to and including '+
+                '<code>/v1</code>; Almin adds <code>/chat/completions</code>. The key is '+
+                'sent as a bearer token if you set one, and left out if you do not.';
+            }
+          }
 
           const on=$('s-aion');
           if(on){
@@ -5356,7 +5494,11 @@ final class WebPage {
           const prov=$('s-aiprov'); if(!prov) return ['a provider'];
           const missing=[];
           if(!($('s-aimodel').value||'').trim()) missing.push('a model');
-          if(prov.value==='local' && !($('s-aiurl').value||'').trim()) missing.push('an address');
+          // Only the two providers that have no fixed address of their own.
+          // Gemini has one and it is filled in for you; the key is never part
+          // of this test, because a local model does not want one.
+          const needsUrl=prov.value==='local' || prov.value==='custom';
+          if(needsUrl && !($('s-aiurl').value||'').trim()) missing.push('an address');
           return missing;
         }
         function aiReady(){ return aiMissing().length===0; }

@@ -49,6 +49,10 @@ public class Almin implements ModInitializer {
             PlayerTracks.init(server);
             BlockTextures.init(server);
         });
+        // Once the levels are loaded, and not before: the check needs the
+        // overworld's seed, and while the server is still starting there is
+        // no overworld to ask.
+        ServerLifecycleEvents.SERVER_STARTED.register(WorldReset::check);
         // Boot-time update check — runs after config is loaded. With auto-update
         // enabled (the default) it downloads, installs and restarts into a newer
         // version on its own; otherwise it just logs a single "update available"

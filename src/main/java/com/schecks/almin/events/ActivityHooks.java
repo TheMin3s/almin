@@ -89,6 +89,13 @@ public final class ActivityHooks {
         UseBlockCallback.EVENT.register((player, level, hand, hit) -> {
             if (!level.isClientSide() && player instanceof ServerPlayer p) {
                 safely("use", () -> {
+                    // The callback runs once per hand. When the main hand
+                    // placed a block, the off-hand pass arrives afterwards
+                    // with the placement already written and no pending row
+                    // left to replace — so it used to be filed as a use, and
+                    // every placement produced two rows: "place Oak Planks"
+                    // and "use Oak Planks with Oak Planks" beside it.
+                    if (placedThisTick.contains(p.getUUID())) return;
                     ItemStack held = p.getItemInHand(hand);
                     BlockPos pos = hit.getBlockPos();
                     String what = blockName(level.getBlockState(pos));
@@ -101,6 +108,7 @@ public final class ActivityHooks {
 
         // Anything still held back once the tick is over was a use after all.
         ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (!placedThisTick.isEmpty()) placedThisTick.clear();
             if (pending.isEmpty()) return;
             safely("use-flush", ActivityHooks::flushPending);
         });
@@ -222,12 +230,24 @@ public final class ActivityHooks {
         new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
+     * Who has already placed a block this tick.
+     *
+     * <p>Cleared at the end of every tick, alongside the pending uses it
+     * exists to suppress. A player can place more than one block in a tick,
+     * and each of those is still its own row — this only stops the second
+     * <em>hand</em> of one interaction being counted as a separate act.
+     */
+    private static final java.util.Set<java.util.UUID> placedThisTick =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * Called from {@code BlockPlaceActivityMixin} when a block actually goes
      * down. Replaces the held-back use, so one right-click is one row.
      */
     public static void placed(ServerPlayer player, BlockState state, BlockPos pos) {
         safely("place", () -> {
             pending.remove(player.getUUID());
+            placedThisTick.add(player.getUUID());
             ActivityLog.recordBlock(player, "place", blockName(state), pos);
         });
     }

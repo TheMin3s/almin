@@ -331,6 +331,7 @@ public final class WebUi {
         http.createContext("/api/password", guard("/api/password", ui::handlePassword));
         http.createContext("/api/update", guard("/api/update", ui::handleUpdate));
         http.createContext("/api/clearlog", guard("/api/clearlog", ui::handleClearLog));
+        http.createContext("/api/reset", guard("/api/reset", ui::handleReset));
         http.createContext("/api/players", guard("/api/players", ui::handlePlayers));
         http.createContext("/api/mask", guard("/api/mask", ui::handleMask));
         http.createContext("/api/file/upload", guard("/api/file/upload", ui::handleFileUpload));
@@ -1796,6 +1797,40 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             boolean ok = AlminLog.clear();
             json(ex, ok ? 200 : 409, ok ? "{\"ok\":true}" : err("No log file open, or it could not be written."));
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Throws away the records the panel draws, one kind at a time.
+     *
+     * <p>Three separate switches rather than one button, because they answer
+     * different questions: the rows are what people did, the paths are where
+     * they walked, and the pictures are what the ground looked like. Wanting
+     * a clean map is not the same as wanting to forget the afternoon.
+     */
+    private void handleReset(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject b = readBody(ex);
+            boolean actions = b.has("actions") && b.get("actions").getAsBoolean();
+            boolean paths = b.has("paths") && b.get("paths").getAsBoolean();
+            boolean pictures = b.has("pictures") && b.get("pictures").getAsBoolean();
+            if (!actions && !paths && !pictures) {
+                json(ex, 400, err("Nothing was selected."));
+                return;
+            }
+            WorldReset.Cleared done = onServer(() -> WorldReset.wipe(actions, paths, pictures),
+                new WorldReset.Cleared(false, false, false, "The server didn't answer in time."));
+            AlminLog.info("[almin] web reset: {} (by {})", done.message(), clientKey(ex));
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", done.actions() || done.paths() || done.pictures());
+            o.addProperty("message", "Done \u2014 " + done.message() + ".");
+            json(ex, 200, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
         } finally {

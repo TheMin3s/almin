@@ -375,11 +375,18 @@ public final class AiInsights {
         if (!cfg.aiEnabled) return "Summaries are off (ai-enabled).";
         String provider = provider(cfg);
         if (cfg.aiModel == null || cfg.aiModel.isBlank()) return "No model set (ai-model).";
-        if (provider.equals("local")) {
+        if (addressed(provider)) {
             if (cfg.aiBaseUrl == null || cfg.aiBaseUrl.isBlank()) {
-                return "No address for the local model (ai-base-url).";
+                return provider.equals("local")
+                    ? "No address for the local model (ai-base-url)."
+                    : "No address for the service (ai-base-url).";
             }
-            return endpointProblem(cfg.aiBaseUrl);
+            String bad = endpointProblem(cfg.aiBaseUrl);
+            if (!bad.isEmpty()) return bad;
+            // A key is optional here on purpose: a model on this machine
+            // usually wants none, and a service that does will say 401 in
+            // words rather than being guessed at from here.
+            return "";
         }
         if (!hasKey()) return "No API key set for " + provider + ".";
         return "";
@@ -388,9 +395,23 @@ public final class AiInsights {
     private static String provider(AlminConfig cfg) {
         String p = cfg.aiProvider == null ? "" : cfg.aiProvider.trim().toLowerCase(Locale.ROOT);
         return switch (p) {
-            case "anthropic", "openai", "local" -> p;
+            case "anthropic", "openai", "local", "custom", "google" -> p;
             default -> "local";
         };
+    }
+
+    /**
+     * Whether this provider is somewhere else, reachable at an address the
+     * admin gives.
+     *
+     * <p>{@code local} and {@code custom} are the same request to the same
+     * shape of API; they differ only in what the panel says about them and in
+     * whether a key is expected. Keeping them apart matters because "no key
+     * needed" is true of a model on this machine and false of almost every
+     * service that is not.
+     */
+    private static boolean addressed(String provider) {
+        return provider.equals("local") || provider.equals("custom");
     }
 
     /** A base URL has to be one, and has to be http. Anything else is a typo. */
@@ -644,8 +665,70 @@ public final class AiInsights {
         String provider = provider(cfg);
         return switch (provider) {
             case "anthropic" -> anthropic(cfg, system, prompt);
+            case "google" -> google(cfg, system, prompt);
             default -> openaiShaped(cfg, system, prompt, provider.equals("openai"));
         };
+    }
+
+    /**
+     * Gemini, which is the one widely-used API that is not this shape.
+     *
+     * <p>Its own endpoint, its own body, and the system prompt in a field of
+     * its own rather than as a message. Worth the forty lines because it is
+     * the provider people ask for after the first two, and because everything
+     * else — OpenRouter, Groq, Together, DeepSeek, Mistral, vLLM, a box on
+     * the network — already speaks the OpenAI shape and needs nothing but an
+     * address.
+     */
+    private static String google(AlminConfig cfg, String system, String prompt)
+            throws IOException {
+        JsonObject sys = new JsonObject();
+        JsonArray sysParts = new JsonArray();
+        JsonObject sysText = new JsonObject();
+        sysText.addProperty("text", system);
+        sysParts.add(sysText);
+        sys.add("parts", sysParts);
+
+        JsonObject part = new JsonObject();
+        part.addProperty("text", prompt);
+        JsonArray parts = new JsonArray();
+        parts.add(part);
+        JsonObject turn = new JsonObject();
+        turn.addProperty("role", "user");
+        turn.add("parts", parts);
+        JsonArray contents = new JsonArray();
+        contents.add(turn);
+
+        JsonObject body = new JsonObject();
+        body.add("systemInstruction", sys);
+        body.add("contents", contents);
+
+        String base = cfg.aiBaseUrl == null || cfg.aiBaseUrl.isBlank()
+            ? "https://generativelanguage.googleapis.com/v1beta"
+            : cfg.aiBaseUrl.trim();
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        String url = base + "/models/" + cfg.aiModel.trim() + ":generateContent";
+
+        // The key goes in a header, not the query string: a URL is logged by
+        // every proxy between here and there.
+        JsonObject reply = post(url, body, req -> req.header("x-goog-api-key", key()));
+
+        if (!reply.has("candidates") || !reply.get("candidates").isJsonArray()
+            || reply.getAsJsonArray("candidates").isEmpty()) {
+            throw new IOException("The model sent nothing back.");
+        }
+        JsonObject first = reply.getAsJsonArray("candidates").get(0).getAsJsonObject();
+        StringBuilder text = new StringBuilder();
+        if (first.has("content") && first.get("content").isJsonObject()) {
+            JsonObject content = first.getAsJsonObject("content");
+            if (content.has("parts") && content.get("parts").isJsonArray()) {
+                for (JsonElement el : content.getAsJsonArray("parts")) {
+                    if (el.isJsonObject()) text.append(str(el.getAsJsonObject(), "text"));
+                }
+            }
+        }
+        if (text.length() == 0) throw new IOException("The model sent nothing back.");
+        return text.toString();
     }
 
     /**
@@ -707,6 +790,7 @@ public final class AiInsights {
         messages.add(message("user", prompt));
         body.add("messages", messages);
 
+        // Anything that is not OpenAI itself is wherever the admin says.
         String base = hosted ? "https://api.openai.com/v1" : cfg.aiBaseUrl.trim();
         while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         String url = base + "/chat/completions";
