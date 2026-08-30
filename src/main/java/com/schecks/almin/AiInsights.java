@@ -208,7 +208,11 @@ public final class AiInsights {
         }
     }
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(90);
+    /** How long to wait for the model. Configurable; see ai-timeout-seconds. */
+    private static Duration timeout() {
+        int s = AlminConfig.get().aiTimeoutSeconds;
+        return Duration.ofSeconds(s < 5 ? 5 : Math.min(s, 600));
+    }
     private static final String AGENT = "Almin/" + Almin.MOD_ID;
 
     /** Ceiling on a reply, so a runaway model cannot fill memory. */
@@ -834,7 +838,7 @@ public final class AiInsights {
             .header("User-Agent", AGENT)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
-            .timeout(TIMEOUT)
+            .timeout(timeout())
             .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
         HttpRequest request = headers.apply(builder).build();
 
@@ -876,9 +880,17 @@ public final class AiInsights {
             throw new IOException("Nothing answered at " + hostOf(url)
                 + ". Is the model running, and is the address right?");
         } catch (java.net.http.HttpTimeoutException e) {
-            AlminLog.warn("[almin] {} did not answer within {}s", url, TIMEOUT.toSeconds());
-            throw new IOException("The model took longer than "
-                + TIMEOUT.toSeconds() + " seconds to answer.");
+            AlminLog.warn("[almin] {} accepted the connection and then sent nothing "
+                + "within {}s", url, timeout().toSeconds());
+            // The connection was accepted, so the address and port are right
+            // and something is listening. Silence after that is not a slow
+            // model: a slow model still sends headers. It is almost always a
+            // TLS port being spoken to in plain http, or a port that belongs
+            // to something else entirely.
+            throw new IOException("Connected to " + hostOf(url) + ", then nothing came back "
+                + "in " + timeout().toSeconds() + " seconds. Something is listening there, but "
+                + "it did not answer an HTTP request \u2014 try https:// if that port uses "
+                + "TLS, and check the model server's own log for the request.");
         } catch (java.net.UnknownHostException e) {
             throw new IOException("No such host: " + hostOf(url));
         }

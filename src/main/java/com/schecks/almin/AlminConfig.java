@@ -278,6 +278,18 @@ public final class AlminConfig {
      * thing is walking up to the panel and finding out what happened.
      */
     public int aiAutoMinutes = 30;
+
+    /**
+     * How long to wait for the model, in seconds.
+     *
+     * <p>Deliberately under a minute. A reverse proxy in front of the panel
+     * has its own limit — 60 seconds is the usual default — and whichever
+     * limit is shorter is the one that decides what the browser sees. When
+     * Almin waited longer than the proxy, the proxy answered 504 with no
+     * message and Almin's account of what went wrong never arrived. Raise it
+     * if the model is genuinely slow, and raise the proxy's to match.
+     */
+    public int aiTimeoutSeconds = 45;
     /**
      * Show player faces in the panel's player and activity lists.
      *
@@ -443,7 +455,9 @@ public final class AlminConfig {
         boolKey("ai-send-chat", "Include what players said in what is sent to the model",
             c -> c.aiSendChat, (c, v) -> c.aiSendChat = (Boolean) v),
         intKey("ai-auto-minutes", "Minutes between unattended summaries (0 = only when asked)", 0, 1440,
-            c -> c.aiAutoMinutes, (c, v) -> c.aiAutoMinutes = (Integer) v)
+            c -> c.aiAutoMinutes, (c, v) -> c.aiAutoMinutes = (Integer) v),
+        intKey("ai-timeout-seconds", "How long to wait for the model (keep it under any reverse proxy's own timeout)", 5, 600,
+            c -> c.aiTimeoutSeconds, (c, v) -> c.aiTimeoutSeconds = (Integer) v)
     );
 
     /**
