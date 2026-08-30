@@ -5526,7 +5526,7 @@ final class WebPage {
                       ['ai-auto-minutes',$('s-aiauto').value]];
           if(aiHasUrl(prov)) sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
           for(const [k,v] of sets){
-            const r=await jpost('/api/config',{key:k,value:v});
+            const r=await jpost('/api/config',{name:k,value:v});
             if(r.status!==200){
               if(msg){ msg.className='msg err';
                 msg.textContent=(r.body&&r.body.error)||('could not set '+k); }
@@ -5564,7 +5564,7 @@ final class WebPage {
             }
             if(!await saveAi(true)) return;
           }
-          const r=await jpost('/api/config',{key:'ai-enabled',value:turningOn?'true':'false'});
+          const r=await jpost('/api/config',{name:'ai-enabled',value:turningOn?'true':'false'});
           msg.className='msg '+(r.status===200?'ok':'err');
           msg.textContent=r.status===200
             ? (turningOn?'On. Summaries will be made on their own; Summarise on the '+
@@ -5581,7 +5581,7 @@ final class WebPage {
           msg.className='msg';
           msg.textContent='Asking the model…';
           if(!(aiState&&aiState.enabled)){
-            const on=await jpost('/api/config',{key:'ai-enabled',value:'true'});
+            const on=await jpost('/api/config',{name:'ai-enabled',value:'true'});
             if(on.status!==200){ msg.className='msg err';
               msg.textContent='could not turn it on'; return; }
           }
@@ -6289,7 +6289,7 @@ final class WebPage {
 
         async function setRestricted(ids){
           const msg=$('m-banmsg');
-          const r=await jpost('/api/config',{key:'mods-restricted',value:ids.join(',')});
+          const r=await jpost('/api/config',{name:'mods-restricted',value:ids.join(',')});
           if(msg){
             msg.className='msg '+(r.status===200?'ok':'err');
             msg.textContent=r.status===200?'Saved.':((r.body&&r.body.error)||'failed');
