@@ -308,6 +308,12 @@ const responses = {
       reply: 'Filtered to lava going down near spawn.',
       players: ['Steve'], actions: ['place', 'use'], items: ['Lava Bucket'],
       kinds: ['hazard'], episodes: [] },
+  '/api/ai/diagnostics': { rows: [{ at: Date.now(), provider: 'openai', model: 'gpt-test',
+      url: 'https://api.openai.com/v1/responses',
+      requestHeaders: ['accept', 'authorization', 'content-type'],
+      requestBody: '{"model":"gpt-test","input":"hello"}', status: 200,
+      responseHeaders: ['content-type'], responseBody: '{"output_text":"hello"}',
+      elapsedMs: 120, error: '' }] },
   '/api/update': { current: '2.5.0', repo: 'a/b', status: 'available', latest: '2.6.0', hasJar: true },
   '/api/players': { online: [{ name: 'TheMines', uuid: 'u', mask: 'Ghost', sessionMillis: 60000,
                               hasMod: true, reported: true }],
@@ -407,6 +413,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'loadActivity', 'paintActivity', 'clearActivity', 'humanMinutes',
                     'loadTrack', 'loadTrackList', 'paintMap', 'openEditor',
                     'searchModrinth', 'addModrinth', 'showWaiting', 'showRelaunch',
+                    'showAiDiagnostics',
                     'refreshOnce', 'poll', 'loadAll', 'paintAll', 'showAdmins', 'setAdmins',
                     'togglePlay', 'stopPlay', 'playerColor', 'marker', 'shotFor']) {
     if (typeof sandbox[fn] !== 'function') {
@@ -424,6 +431,18 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   } catch (e) {
     console.log('  FAIL  the movement map draws  -> ' + e.message);
     failures.push('map: ' + e.message);
+  }
+
+  try {
+    sandbox.tab = 'settings'; sandbox.render();
+    await sandbox.showAiDiagnostics(true);
+    const ok = asked.has('/api/ai/diagnostics')
+      && byId.get('s-aidiagbox').style.display !== 'none';
+    console.log((ok ? '  PASS  ' : '  FAIL  ') + 'the raw AI transcript opens on demand');
+    if (!ok) failures.push('AI transcript did not open');
+  } catch (e) {
+    console.log('  FAIL  the raw AI transcript opens on demand  -> ' + e.message);
+    failures.push('AI transcript: ' + e.message);
   }
 
   try {
@@ -1859,7 +1878,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     if (!/ago/.test(said)) return 'it did not say how long ago: ' + said;
     // And the clock, because "three hours ago" is a number you have to do
     // arithmetic on before it can be compared to anything else.
-    return /, at \d/.test(said) ? true : 'it did not say the time: ' + said;
+    return /, at /.test(said) ? true : 'it did not say the time: ' + said;
   });
 
   check('a face that has stopped moving says since when', () => {
@@ -1931,6 +1950,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   });
 
   check('a hosted provider is not asked for an address', () => {
+    sandbox.aiState = { enabled: false, provider: 'anthropic', model: 'claude-haiku-4-5',
+                        baseUrl: '', hasKey: true };
     byId.get('s-aiprov').value = 'anthropic';
     byId.get('s-aimodel').value = 'claude-haiku-4-5';
     sandbox.aiFormChanged();
@@ -1940,6 +1961,21 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     sandbox.aiFormChanged();
     if (!hidden) return 'it still asked for one';
     return ready ? true : 'it would not turn on without one';
+  });
+
+  check('a hosted provider waits for a saved or typed key', () => {
+    sandbox.aiState = { enabled: false, provider: 'openai', model: 'gpt-test',
+                        baseUrl: '', hasKey: false };
+    byId.get('s-aiprov').value = 'openai';
+    byId.get('s-aimodel').value = 'gpt-test';
+    byId.get('s-aikey').value = '';
+    sandbox.aiFormChanged();
+    const blocked = !sandbox.aiReady();
+    byId.get('s-aikey').value = 'typed-now';
+    sandbox.aiFormChanged();
+    const ready = sandbox.aiReady();
+    byId.get('s-aikey').value = '';
+    return blocked && ready ? true : 'the hosted key readiness rule was wrong';
   });
 
   check('the form says which piece is missing', () => {

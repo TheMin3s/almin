@@ -5367,9 +5367,11 @@ final class WebPage {
               '<button class="btn go" id="s-aisave">Save</button>'+
               '<button class="btn" id="s-aion">Turn on</button>'+
               '<button class="btn" id="s-aitest">Test it</button>'+
+              '<button class="btn" id="s-aidiag">Last request</button>'+
               '<button class="btn" id="s-aikeyclr">Forget the key</button>'+
             '</div>'+
-            '<div class="msg" id="s-aimsg"></div></section>'+
+            '<div class="msg" id="s-aimsg"></div>'+
+            '<div id="s-aidiagbox" style="display:none;margin-top:12px"></div></section>'+
             '<section><h2>Settings</h2>'+
             '<p class="muted">Written to <code>config/almin/config.json</code> as you change them, '+
             'and live immediately.</p>'+
@@ -5382,6 +5384,7 @@ final class WebPage {
             $('s-aisave').onclick=()=>saveAi(false);
             $('s-aion').onclick=toggleAi;
             $('s-aitest').onclick=testAi;
+            $('s-aidiag').onclick=()=>showAiDiagnostics(false);
             $('s-aikeyclr').onclick=()=>saveAiKey('');
             $('s-aiprov').onchange=aiFormChanged;
             for(const id of ['s-aiurl','s-aimodel','s-aikey'])
@@ -5450,6 +5453,8 @@ final class WebPage {
           box.innerHTML=(a.enabled
               ? '<span class="state good">On</span>'
               : '<span class="state">Off</span> Fill this in and press <b>Turn on</b>.')+
+            ' <span class="state '+(a.hasKey?'good':'')+'">'+
+              (a.hasKey?'API key saved':'No API key saved')+'</span>'+
             '<div style="margin-top:8px">'+leaves+'</div>'+
             (a.problem&&a.enabled
               ? '<div class="msg err" style="margin-top:8px">'+esc(a.problem)+'</div>':'');
@@ -5526,9 +5531,9 @@ final class WebPage {
         /**
          * Whether there is enough here to talk to anything.
          *
-         * <p>The key is not part of it: a local model does not want one, and
-         * refusing to switch on until somebody typed a key they do not need
-         * would be the wrong half of the check.
+         * <p>A hosted provider needs a key; local and custom endpoints may not.
+         * The status returned by the server proves a previously typed key made
+         * it all the way to the private key file.
          */
         function aiMissing(){
           const prov=$('s-aiprov'); if(!prov) return ['a provider'];
@@ -5539,6 +5544,10 @@ final class WebPage {
           // of this test, because a local model does not want one.
           const needsUrl=prov.value==='local' || prov.value==='custom';
           if(needsUrl && !($('s-aiurl').value||'').trim()) missing.push('an address');
+          const needsKey=prov.value==='openai' || prov.value==='anthropic' ||
+            prov.value==='google';
+          const typed=($('s-aikey').value||'').trim();
+          if(needsKey && !typed && !(aiState&&aiState.hasKey)) missing.push('an API key');
           return missing;
         }
         function aiReady(){ return aiMissing().length===0; }
@@ -5626,7 +5635,64 @@ final class WebPage {
             msg.className='msg ok';
             msg.textContent='It answered, but had nothing to say — usually an empty log.';
           }
+          await showAiDiagnostics(true);
           await showAi();
+        }
+
+        /**
+         * Shows exactly what left Almin and what came back. Header values are
+         * never retained, so this can diagnose authentication without exposing
+         * the credential itself.
+         */
+        async function showAiDiagnostics(force){
+          const box=$('s-aidiagbox'); if(!box) return;
+          if(!force && box.style.display!=='none'){
+            box.style.display='none';
+            $('s-aidiag').textContent='Last request';
+            return;
+          }
+          box.style.display='';
+          $('s-aidiag').textContent='Hide requests';
+          box.innerHTML='<div class="note">loading request transcript…</div>';
+          const r=await jget('/api/ai/diagnostics');
+          if(r.status!==200){
+            box.innerHTML='<div class="msg err">'+esc(why(r))+'</div>';
+            return;
+          }
+          const rows=(r.body&&r.body.rows)||[];
+          if(!rows.length){
+            box.innerHTML='<div class="note">No model request has been made since Almin started.</div>';
+            return;
+          }
+          box.innerHTML='';
+          rows.forEach((d,i)=>{
+            const details=document.createElement('details');
+            details.open=i===0;
+            const summary=document.createElement('summary');
+            summary.textContent=(d.provider||'model')+' · '+
+              (d.status?('HTTP '+d.status):'no HTTP response')+' · '+
+              (d.elapsedMs||0)+' ms · '+new Date(d.at).toLocaleString();
+            details.appendChild(summary);
+            const meta=document.createElement('div');
+            meta.className='note';
+            meta.style.marginTop='8px';
+            meta.textContent=(d.model?('Model: '+d.model+'\\n'):'')+'URL: '+d.url+
+              '\\nRequest headers (names only): '+(d.requestHeaders||[]).join(', ')+
+              '\\nResponse headers (names only): '+(d.responseHeaders||[]).join(', ');
+            details.appendChild(meta);
+            if(d.error){
+              const error=document.createElement('div');
+              error.className='msg err'; error.textContent=d.error;
+              details.appendChild(error);
+            }
+            const rq=document.createElement('h3'); rq.textContent='Request body';
+            const rqp=document.createElement('pre'); rqp.textContent=d.requestBody||'';
+            const rs=document.createElement('h3'); rs.textContent='Raw response body';
+            const rsp=document.createElement('pre'); rsp.textContent=d.responseBody||'(no bytes received)';
+            details.appendChild(rq); details.appendChild(rqp);
+            details.appendChild(rs); details.appendChild(rsp);
+            box.appendChild(details);
+          });
         }
 
         async function saveAiKey(value){
@@ -5639,6 +5705,10 @@ final class WebPage {
             : why(r);
           if(r.status===200){ $('s-aikey').value=''; showAi(); }
         }
+
+        """;
+
+    private static final String PARTSETTINGS = """
 
         // ---- Minecraft's own settings ----
         let props=[], propEdits={};
@@ -6778,5 +6848,6 @@ final class WebPage {
      * constant. The split points follow the page's own sections so that a
      * piece is a readable unit and not an arbitrary cut.
      */
-    static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ, PARTINSIGHT, PART3);
+    static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ,
+        PARTINSIGHT, PART3, PARTSETTINGS);
 }

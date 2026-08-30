@@ -344,6 +344,8 @@ public final class WebUi {
         http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
         http.createContext("/api/insights/find", guard("/api/insights/find", ui::handleFind));
         http.createContext("/api/ai/key", guard("/api/ai/key", ui::handleAiKey));
+        http.createContext("/api/ai/diagnostics",
+            guard("/api/ai/diagnostics", ui::handleAiDiagnostics));
         http.createContext("/api/client/review", guard("/api/client/review", ui::handleModReview));
         http.createContext("/api/servermods", guard("/api/servermods", ui::handleServerMods));
         http.createContext("/api/servermods/upload",
@@ -2730,6 +2732,47 @@ public final class WebUi {
             AlminLog.info("[almin] AI key {} from the panel by {}",
                 key.isBlank() ? "cleared" : "set", clientKey(ex));
             json(ex, 200, "{\"ok\":true,\"hasKey\":" + AiInsights.hasKey() + "}");
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Recent AI wire exchanges, with credential values omitted.
+     *
+     * <p>The request and response bodies can contain player activity and chat,
+     * so this is an authenticated admin route and follows the same transport
+     * gate as the key itself. Header names are useful evidence; values are
+     * deliberately never retained by the diagnostic recorder.
+     */
+    private void handleAiDiagnostics(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            JsonObject root = new JsonObject();
+            JsonArray rows = new JsonArray();
+            for (AiTransport.Diagnostic d : AiTransport.diagnostics()) {
+                JsonObject o = new JsonObject();
+                o.addProperty("at", d.at());
+                o.addProperty("provider", d.provider());
+                o.addProperty("model", d.model());
+                o.addProperty("url", d.url());
+                o.add("requestHeaders", strings(d.requestHeaders()));
+                o.addProperty("requestBody", d.requestBody());
+                o.addProperty("status", d.status());
+                o.add("responseHeaders", strings(d.responseHeaders()));
+                o.addProperty("responseBody", d.responseBody());
+                o.addProperty("elapsedMs", d.elapsedMs());
+                o.addProperty("error", d.error());
+                rows.add(o);
+            }
+            root.add("rows", rows);
+            json(ex, 200, root.toString());
         } catch (Throwable t) {
             fault(ex, t);
         } finally {

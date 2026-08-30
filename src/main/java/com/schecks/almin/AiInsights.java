@@ -7,9 +7,6 @@ import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -209,15 +206,10 @@ public final class AiInsights {
     }
 
     /** How long to wait for the model. Configurable; see ai-timeout-seconds. */
-    private static Duration timeout() {
+    static Duration timeout() {
         int s = AlminConfig.get().aiTimeoutSeconds;
         return Duration.ofSeconds(s < 5 ? 5 : Math.min(s, 600));
     }
-    private static final String AGENT = "Almin/" + Almin.MOD_ID;
-
-    /** Ceiling on a reply, so a runaway model cannot fill memory. */
-    private static final int MAX_RESPONSE = 512 * 1024;
-
     /** Episodes handed to the model. Past this the prompt stops being small. */
     private static final int MAX_EPISODES = 60;
 
@@ -320,7 +312,7 @@ public final class AiInsights {
         return !key().isEmpty();
     }
 
-    private static synchronized String key() {
+    static synchronized String key() {
         Path f = keyFile;
         if (f == null || !Files.isRegularFile(f)) return "";
         try {
@@ -396,7 +388,7 @@ public final class AiInsights {
         return "";
     }
 
-    private static String provider(AlminConfig cfg) {
+    static String provider(AlminConfig cfg) {
         String p = cfg.aiProvider == null ? "" : cfg.aiProvider.trim().toLowerCase(Locale.ROOT);
         return switch (p) {
             case "anthropic", "openai", "local", "custom", "google" -> p;
@@ -666,291 +658,8 @@ public final class AiInsights {
     }
 
     private static String ask(AlminConfig cfg, String system, String prompt) throws IOException {
-        String provider = provider(cfg);
-        return switch (provider) {
-            case "anthropic" -> anthropic(cfg, system, prompt);
-            case "google" -> google(cfg, system, prompt);
-            default -> openaiShaped(cfg, system, prompt, provider.equals("openai"));
-        };
+        return AiTransport.ask(cfg, provider(cfg), system, prompt);
     }
-
-    /**
-     * Gemini, which is the one widely-used API that is not this shape.
-     *
-     * <p>Its own endpoint, its own body, and the system prompt in a field of
-     * its own rather than as a message. Worth the forty lines because it is
-     * the provider people ask for after the first two, and because everything
-     * else — OpenRouter, Groq, Together, DeepSeek, Mistral, vLLM, a box on
-     * the network — already speaks the OpenAI shape and needs nothing but an
-     * address.
-     */
-    private static String google(AlminConfig cfg, String system, String prompt)
-            throws IOException {
-        JsonObject sys = new JsonObject();
-        JsonArray sysParts = new JsonArray();
-        JsonObject sysText = new JsonObject();
-        sysText.addProperty("text", system);
-        sysParts.add(sysText);
-        sys.add("parts", sysParts);
-
-        JsonObject part = new JsonObject();
-        part.addProperty("text", prompt);
-        JsonArray parts = new JsonArray();
-        parts.add(part);
-        JsonObject turn = new JsonObject();
-        turn.addProperty("role", "user");
-        turn.add("parts", parts);
-        JsonArray contents = new JsonArray();
-        contents.add(turn);
-
-        JsonObject body = new JsonObject();
-        body.add("systemInstruction", sys);
-        body.add("contents", contents);
-
-        String base = cfg.aiBaseUrl == null || cfg.aiBaseUrl.isBlank()
-            ? "https://generativelanguage.googleapis.com/v1beta"
-            : cfg.aiBaseUrl.trim();
-        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        String url = base + "/models/" + cfg.aiModel.trim() + ":generateContent";
-
-        // The key goes in a header, not the query string: a URL is logged by
-        // every proxy between here and there.
-        JsonObject reply = post(url, body, req -> req.header("x-goog-api-key", key()));
-
-        if (!reply.has("candidates") || !reply.get("candidates").isJsonArray()
-            || reply.getAsJsonArray("candidates").isEmpty()) {
-            throw new IOException("The model sent nothing back.");
-        }
-        JsonObject first = reply.getAsJsonArray("candidates").get(0).getAsJsonObject();
-        StringBuilder text = new StringBuilder();
-        if (first.has("content") && first.get("content").isJsonObject()) {
-            JsonObject content = first.getAsJsonObject("content");
-            if (content.has("parts") && content.get("parts").isJsonArray()) {
-                for (JsonElement el : content.getAsJsonArray("parts")) {
-                    if (el.isJsonObject()) text.append(str(el.getAsJsonObject(), "text"));
-                }
-            }
-        }
-        if (text.length() == 0) throw new IOException("The model sent nothing back.");
-        return text.toString();
-    }
-
-    /**
-     * The Messages API.
-     *
-     * <p>{@code x-api-key} rather than a bearer token, and
-     * {@code anthropic-version} is required — a request without it is
-     * rejected, which is the first thing that goes wrong when this is written
-     * from memory.
-     */
-    private static String anthropic(AlminConfig cfg, String system, String prompt)
-            throws IOException {
-        JsonObject body = new JsonObject();
-        body.addProperty("model", cfg.aiModel.trim());
-        body.addProperty("max_tokens", 2000);
-        body.addProperty("system", system);
-        JsonArray messages = new JsonArray();
-        JsonObject user = new JsonObject();
-        user.addProperty("role", "user");
-        user.addProperty("content", prompt);
-        messages.add(user);
-        body.add("messages", messages);
-
-        JsonObject reply = post("https://api.anthropic.com/v1/messages", body, req -> req
-            .header("x-api-key", key())
-            .header("anthropic-version", "2023-06-01"));
-
-        // A safety classifier can decline, which arrives as a 200 with no text.
-        String stop = str(reply, "stop_reason");
-        if (stop.equals("refusal")) {
-            throw new IOException("The model declined to answer this one.");
-        }
-        StringBuilder text = new StringBuilder();
-        if (reply.has("content") && reply.get("content").isJsonArray()) {
-            for (JsonElement el : reply.getAsJsonArray("content")) {
-                if (!el.isJsonObject()) continue;
-                JsonObject block = el.getAsJsonObject();
-                if ("text".equals(str(block, "type"))) text.append(str(block, "text"));
-            }
-        }
-        if (text.length() == 0) throw new IOException("The model sent nothing back.");
-        return text.toString();
-    }
-
-    /**
-     * The OpenAI chat shape, which is also what every local runner speaks.
-     *
-     * <p>{@code max_tokens} rather than the newer name, because the local
-     * servers this has to work with have not all followed.
-     */
-    private static String openaiShaped(AlminConfig cfg, String system, String prompt,
-                                       boolean hosted) throws IOException {
-        JsonObject body = new JsonObject();
-        body.addProperty("model", cfg.aiModel.trim());
-        body.addProperty("max_tokens", 2000);
-        body.addProperty("stream", false);
-        JsonArray messages = new JsonArray();
-        messages.add(message("system", system));
-        messages.add(message("user", prompt));
-        body.add("messages", messages);
-
-        // Anything that is not OpenAI itself is wherever the admin says.
-        String base = hosted ? "https://api.openai.com/v1" : cfg.aiBaseUrl.trim();
-        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        String url = base + "/chat/completions";
-        String apiKey = key();
-
-        Headers auth = req -> {
-            // A local runner usually wants no key at all, and sending an empty
-            // bearer header upsets some of them.
-            if (!apiKey.isEmpty()) req.header("Authorization", "Bearer " + apiKey);
-            return req;
-        };
-        JsonObject reply;
-        try {
-            reply = post(url, body, auth);
-        } catch (IOException e) {
-            // Newer OpenAI-shaped models renamed max_tokens to
-            // max_completion_tokens and reject the old name outright, while
-            // everything already deployed only understands the old one. There
-            // is no way to know which is in front of you but to be told, so
-            // the rename is done on being told, once.
-            String said = e.getMessage() == null ? "" : e.getMessage();
-            if (!said.contains("max_completion_tokens")) throw e;
-            body.remove("max_tokens");
-            body.addProperty("max_completion_tokens", 2000);
-            AlminLog.info("[almin] this model wants max_completion_tokens; asking again");
-            reply = post(url, body, auth);
-        }
-
-        if (!reply.has("choices") || !reply.get("choices").isJsonArray()
-            || reply.getAsJsonArray("choices").isEmpty()) {
-            throw new IOException("The model sent nothing back.");
-        }
-        JsonObject first = reply.getAsJsonArray("choices").get(0).getAsJsonObject();
-        JsonObject msg = first.has("message") && first.get("message").isJsonObject()
-            ? first.getAsJsonObject("message") : new JsonObject();
-        String text = str(msg, "content");
-        if (text.isEmpty()) throw new IOException("The model sent nothing back.");
-        return text;
-    }
-
-    private static JsonObject message(String role, String content) {
-        JsonObject o = new JsonObject();
-        o.addProperty("role", role);
-        o.addProperty("content", content);
-        return o;
-    }
-
-    /** Adds whichever headers a provider needs. */
-    private interface Headers {
-        HttpRequest.Builder apply(HttpRequest.Builder b);
-    }
-
-    private static JsonObject post(String url, JsonObject body, Headers headers)
-            throws IOException {
-        byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
-            .header("User-Agent", AGENT)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .timeout(timeout())
-            .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
-        HttpRequest request = headers.apply(builder).build();
-
-        // Said out loud on the console, because "is it even asking?" is a
-        // question the panel cannot answer: a request that leaves this machine
-        // and dies in the network looks exactly like one that was never made.
-        // One line before and one after turns that into something an admin can
-        // read, and tell apart from a proxy in front of the panel giving up.
-        AlminLog.info("[almin] asking the model at {} ({} bytes)", url, payload.length);
-        long began = System.currentTimeMillis();
-        try (HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build()) {
-            HttpResponse<byte[]> response =
-                client.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            AlminLog.info("[almin] the model answered {} after {} ms",
-                response.statusCode(), System.currentTimeMillis() - began);
-            byte[] bytes = response.body();
-            if (bytes != null && bytes.length > MAX_RESPONSE) {
-                throw new IOException("The model's answer was too large.");
-            }
-            String text = bytes == null ? "" : new String(bytes, StandardCharsets.UTF_8);
-            if (response.statusCode() / 100 != 2) {
-                throw new IOException(explain(response.statusCode(), text));
-            }
-            JsonElement parsed = JsonParser.parseString(text);
-            if (!parsed.isJsonObject()) throw new IOException("The service sent back something odd.");
-            return parsed.getAsJsonObject();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted");
-        } catch (com.google.gson.JsonParseException e) {
-            throw new IOException("The service sent back something that was not JSON.");
-        } catch (java.net.ConnectException e) {
-            AlminLog.warn("[almin] could not reach {}: {}", url, e.getMessage());
-            // The most common failure by far, and "java.net.ConnectException"
-            // tells an admin nothing about what to do next.
-            throw new IOException("Nothing answered at " + hostOf(url)
-                + ". Is the model running, and is the address right?");
-        } catch (java.net.http.HttpTimeoutException e) {
-            AlminLog.warn("[almin] {} accepted the connection and then sent nothing "
-                + "within {}s", url, timeout().toSeconds());
-            // The connection was accepted, so the address and port are right
-            // and something is listening. Silence after that is not a slow
-            // model: a slow model still sends headers. It is almost always a
-            // TLS port being spoken to in plain http, or a port that belongs
-            // to something else entirely.
-            throw new IOException("Connected to " + hostOf(url) + ", then nothing came back "
-                + "in " + timeout().toSeconds() + " seconds. Something is listening there, but "
-                + "it did not answer an HTTP request \u2014 try https:// if that port uses "
-                + "TLS, and check the model server's own log for the request.");
-        } catch (java.net.UnknownHostException e) {
-            throw new IOException("No such host: " + hostOf(url));
-        }
-    }
-
-    /**
-     * Turns a status code into something an admin can act on.
-     *
-     * <p>The provider's own message is worth showing — it is usually the
-     * actual reason — but it is not worth showing three kilobytes of it.
-     */
-    /** Just the host and port, for a message somebody has to act on. */
-    private static String hostOf(String url) {
-        try {
-            URI u = URI.create(url);
-            return u.getPort() > 0 ? u.getHost() + ":" + u.getPort() : u.getHost();
-        } catch (RuntimeException e) {
-            return url;
-        }
-    }
-
-    private static String explain(int status, String body) {
-        String detail = "";
-        try {
-            JsonElement el = JsonParser.parseString(body);
-            if (el.isJsonObject() && el.getAsJsonObject().has("error")) {
-                JsonElement err = el.getAsJsonObject().get("error");
-                detail = err.isJsonObject() ? str(err.getAsJsonObject(), "message")
-                                            : err.getAsString();
-            }
-        } catch (Exception ignored) {
-            // Not JSON. The status code alone will have to do.
-        }
-        if (detail.length() > 200) detail = detail.substring(0, 199) + "…";
-        String head = switch (status) {
-            case 401, 403 -> "The service rejected the API key";
-            case 404 -> "No such model, or the wrong address";
-            case 429 -> "Rate limited — too many requests";
-            case 500, 502, 503, 504 -> "The service is having trouble";
-            default -> "The service said " + status;
-        };
-        return detail.isEmpty() ? head : head + " — " + detail;
-    }
-
     // ---------- reading the answer ----------
 
     /**

@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -31,6 +32,8 @@ public class AiWireTests {
         AtomicReference<String> body = new AtomicReference<>("");
         AtomicReference<String> path = new AtomicReference<>("");
         AtomicReference<String> auth = new AtomicReference<>("");
+        AtomicReference<String> anthropicKey = new AtomicReference<>("");
+        AtomicReference<String> googleKey = new AtomicReference<>("");
         List<String> hits = new ArrayList<>();
 
         HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -38,10 +41,28 @@ public class AiWireTests {
             hits.add(ex.getRequestMethod() + " " + ex.getRequestURI().getPath());
             path.set(ex.getRequestURI().getPath());
             auth.set(String.valueOf(ex.getRequestHeaders().getFirst("Authorization")));
+            anthropicKey.set(String.valueOf(ex.getRequestHeaders().getFirst("x-api-key")));
+            googleKey.set(String.valueOf(ex.getRequestHeaders().getFirst("x-goog-api-key")));
             body.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] reply = ("{\"choices\":[{\"message\":{\"content\":"
-                + "\"{\\\"summary\\\":\\\"A quiet night.\\\",\\\"moments\\\":[]}\"}}]}")
-                .getBytes(StandardCharsets.UTF_8);
+            String answer = "{\"summary\":\"A quiet night.\",\"moments\":[]}";
+            String p = ex.getRequestURI().getPath();
+            String json = p.equals("/openai/responses")
+                ? "{\"status\":\"completed\",\"output\":[{\"type\":\"message\","
+                    + "\"content\":[{\"type\":\"output_text\",\"text\":"
+                    + com.google.gson.JsonParser.parseString('"' + answer.replace("\"", "\\\"") + '"')
+                    + "}]}]}"
+                : p.equals("/anthropic/messages")
+                    ? "{\"content\":[{\"type\":\"text\",\"text\":"
+                        + com.google.gson.JsonParser.parseString('"' + answer.replace("\"", "\\\"") + '"')
+                        + "}]}"
+                    : p.equals("/google/generate")
+                        ? "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":"
+                            + com.google.gson.JsonParser.parseString('"' + answer.replace("\"", "\\\"") + '"')
+                            + "}]}}]}"
+                        : "{\"choices\":[{\"message\":{\"content\":"
+                            + com.google.gson.JsonParser.parseString('"' + answer.replace("\"", "\\\"") + '"')
+                            + "}}]}";
+            byte[] reply = json.getBytes(StandardCharsets.UTF_8);
             ex.getResponseHeaders().set("Content-Type", "application/json");
             ex.sendResponseHeaders(200, reply.length);
             try (OutputStream out = ex.getResponseBody()) { out.write(reply); }
@@ -50,6 +71,10 @@ public class AiWireTests {
         http.start();
         int port = http.getAddress().getPort();
         String base = "http://127.0.0.1:" + port + "/v1";
+        setEndpointOverrides(Map.of(
+            "openai", "http://127.0.0.1:" + port + "/openai/responses",
+            "anthropic", "http://127.0.0.1:" + port + "/anthropic/messages",
+            "google", "http://127.0.0.1:" + port + "/google/generate"));
 
         Path dir = Files.createTempDirectory("almin-aiwire");
         AiInsights.init(dir);
@@ -87,6 +112,41 @@ public class AiWireTests {
         check("it carried the model name as typed",
             body.get().contains("nemotron-3.5-lightning-30b-a3b"));
         hits.clear();
+
+        // Hosted providers each have their own request and response contract.
+        AiInsights.setKey("wire-secret");
+        configure(true, "openai", "gpt-test", "");
+        AiInsights.Report oa = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
+            List.of(), 0, 1, 0, true);
+        check("OpenAI uses the Responses endpoint", path.get().equals("/openai/responses"));
+        check("OpenAI sends instructions, input and the Responses token limit",
+            body.get().contains("\"instructions\"") && body.get().contains("\"input\"")
+            && body.get().contains("\"max_output_tokens\":2000")
+            && body.get().contains("\"store\":false"));
+        check("OpenAI sends its bearer key", auth.get().equals("Bearer wire-secret"));
+        check("OpenAI's response comes back", oa.ok() && oa.summary().equals("A quiet night."));
+
+        configure(true, "anthropic", "claude-test", "");
+        AiInsights.Report an = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
+            List.of(), 0, 1, 0, true);
+        check("Anthropic uses Messages", path.get().equals("/anthropic/messages")
+            && body.get().contains("\"system\"") && body.get().contains("\"messages\""));
+        check("Anthropic sends x-api-key", anthropicKey.get().equals("wire-secret"));
+        check("Anthropic's response comes back", an.ok() && an.summary().equals("A quiet night."));
+
+        configure(true, "google", "gemini-test", "");
+        AiInsights.Report go = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
+            List.of(), 0, 1, 0, true);
+        check("Gemini uses generateContent", path.get().equals("/google/generate")
+            && body.get().contains("\"systemInstruction\"")
+            && body.get().contains("\"generationConfig\""));
+        check("Gemini sends x-goog-api-key", googleKey.get().equals("wire-secret"));
+        check("Gemini's response comes back", go.ok() && go.summary().equals("A quiet night."));
+        String diagnostic = diagnosticsText();
+        check("diagnostics retain the raw request and response",
+            diagnostic.contains("systemInstruction") && diagnostic.contains("A quiet night"));
+        check("diagnostics never retain credential values", !diagnostic.contains("wire-secret"));
+        AiInsights.setKey("");
 
         // A base url with a trailing slash must not become //chat/completions.
         hits.clear();
@@ -294,6 +354,7 @@ public class AiWireTests {
             prompt.contains("a made-up pattern is worse than none"));
 
         http.stop(0);
+        setEndpointOverrides(Map.of());
         System.out.println(failures == 0 ? "AI WIRE OK" : "AI WIRE FAILURES: " + failures);
         if (failures > 0) System.exit(1);
     }
@@ -324,5 +385,19 @@ public class AiWireTests {
         Field inst = cfg.getDeclaredField("instance");
         inst.setAccessible(true);
         inst.set(null, c);
+    }
+
+    static void setEndpointOverrides(Map<String, String> endpoints) throws Exception {
+        Class<?> transport = Class.forName("com.schecks.almin.AiTransport");
+        var method = transport.getDeclaredMethod("setEndpointOverridesForTests", Map.class);
+        method.setAccessible(true);
+        method.invoke(null, endpoints);
+    }
+
+    static String diagnosticsText() throws Exception {
+        Class<?> transport = Class.forName("com.schecks.almin.AiTransport");
+        var method = transport.getDeclaredMethod("diagnostics");
+        method.setAccessible(true);
+        return String.valueOf(method.invoke(null));
     }
 }
