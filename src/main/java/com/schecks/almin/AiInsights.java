@@ -838,12 +838,21 @@ public final class AiInsights {
             .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
         HttpRequest request = headers.apply(builder).build();
 
+        // Said out loud on the console, because "is it even asking?" is a
+        // question the panel cannot answer: a request that leaves this machine
+        // and dies in the network looks exactly like one that was never made.
+        // One line before and one after turns that into something an admin can
+        // read, and tell apart from a proxy in front of the panel giving up.
+        AlminLog.info("[almin] asking the model at {} ({} bytes)", url, payload.length);
+        long began = System.currentTimeMillis();
         try (HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build()) {
             HttpResponse<byte[]> response =
                 client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            AlminLog.info("[almin] the model answered {} after {} ms",
+                response.statusCode(), System.currentTimeMillis() - began);
             byte[] bytes = response.body();
             if (bytes != null && bytes.length > MAX_RESPONSE) {
                 throw new IOException("The model's answer was too large.");
@@ -861,11 +870,13 @@ public final class AiInsights {
         } catch (com.google.gson.JsonParseException e) {
             throw new IOException("The service sent back something that was not JSON.");
         } catch (java.net.ConnectException e) {
+            AlminLog.warn("[almin] could not reach {}: {}", url, e.getMessage());
             // The most common failure by far, and "java.net.ConnectException"
             // tells an admin nothing about what to do next.
             throw new IOException("Nothing answered at " + hostOf(url)
                 + ". Is the model running, and is the address right?");
         } catch (java.net.http.HttpTimeoutException e) {
+            AlminLog.warn("[almin] {} did not answer within {}s", url, TIMEOUT.toSeconds());
             throw new IOException("The model took longer than "
                 + TIMEOUT.toSeconds() + " seconds to answer.");
         } catch (java.net.UnknownHostException e) {

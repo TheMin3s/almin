@@ -575,9 +575,35 @@ final class WebPage {
         const esc = s => (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
         async function jget(u){ const r=await fetch(u,{credentials:'same-origin'});
           return {status:r.status, body:await r.json().catch(()=>({}))}; }
-        async function jpost(u,d){ const r=await fetch(u,{method:'POST',credentials:'same-origin',
-            headers:{'Content-Type':'application/json'},body:JSON.stringify(d||{})});
+        async function jpost(u,d){
+          let r;
+          try {
+            r=await fetch(u,{method:'POST',credentials:'same-origin',
+              headers:{'Content-Type':'application/json'},body:JSON.stringify(d||{})});
+          } catch(e){
+            // The request never completed. Without this the promise rejects,
+            // nothing catches it, and the button sits on whatever it last
+            // said \u2014 which reads as "it hung and then failed".
+            return {status:0, body:{error:'No answer from the panel itself ('+
+              (e&&e.message?e.message:'connection lost')+'). Something between '+
+              'your browser and Almin dropped it \u2014 a reverse proxy in front '+
+              'of the panel will do this at its own timeout.'}};
+          }
           return {status:r.status, body:await r.json().catch(()=>({}))}; }
+
+        /**
+         * Why a call failed, in words, when the server did not supply any.
+         *
+         * <p>A bare "failed" is the least useful thing a panel can say. A
+         * status with no message in it did not come from Almin \u2014 Almin
+         * always sends one \u2014 so it came from whatever is in front of it.
+         */
+        function why(r,fallback){
+          if(r&&r.body&&r.body.error) return r.body.error;
+          if(r&&r.status) return 'The server answered '+r.status+' with no message. '+
+            'Almin always sends one, so that came from something in front of it.';
+          return fallback||'failed';
+        }
 
         // ---- shared pieces: faces, menus, overlays, formatting ----
 
@@ -5570,7 +5596,7 @@ final class WebPage {
             ? (turningOn?'On. Summaries will be made on their own; Summarise on the '+
                          'Activity tab does one now.'
                        :'Off. Nothing more is sent.')
-            : ((r.body&&r.body.error)||'failed');
+            : why(r);
           await showAi();
         }
 
@@ -5589,7 +5615,7 @@ final class WebPage {
           const report=r.body&&r.body.report;
           if(r.status!==200){
             msg.className='msg err';
-            msg.textContent=(r.body&&r.body.error)||'failed';
+            msg.textContent=why(r);
           } else if(report && report.error){
             msg.className='msg err';
             msg.textContent=report.error;
@@ -5610,7 +5636,7 @@ final class WebPage {
           msg.textContent=r.status===200
             ? (value?'Key saved. It is kept outside config.json and the file browser will '+
                      'not open it.':'Key forgotten.')
-            : ((r.body&&r.body.error)||'failed');
+            : why(r);
           if(r.status===200){ $('s-aikey').value=''; showAi(); }
         }
 
@@ -5699,7 +5725,7 @@ final class WebPage {
           msg.textContent=r.status===200
             ? ((r.body.changed||0)+' written to server.properties. '+
                'The server reads it when it boots, so restart for it to take effect.')
-            : ((r.body&&r.body.error)||'failed');
+            : why(r);
           if(r.status===200) loadProperties();
         }
 
