@@ -5781,9 +5781,12 @@ final class WebPage {
             return;
           }
           const tag=document.createElement('span'); tag.className='state warn';
-          tag.textContent=s.loaded?'BlueMap starting':'BlueMap installed'; host.appendChild(tag);
+          tag.textContent=s.downloadAccepted===false?'BlueMap needs approval':
+            (s.loaded?'BlueMap starting':'BlueMap installed'); host.appendChild(tag);
           const note=document.createElement('span'); note.className='muted';
           note.textContent=s.message||'Restart the server to load it.'; host.appendChild(note);
+          if(s.downloadAccepted===false) add('Allow resource download','go',acceptBlueMapDownload,
+            'Let BlueMap download the Minecraft client resources required to render the map');
           if(s.restartRequired) add('Restart to finish','go',()=>$('srvrestart').click());
           add('Legacy 2D','on',()=>setBlueMapMode('legacy'));
         }
@@ -5825,6 +5828,15 @@ final class WebPage {
           if(r.body.restartRequired && confirm(r.body.message+'\\n\\nRestart now?')){
             $('srvrestart').click();
           }
+        }
+
+        async function acceptBlueMapDownload(){
+          if(!confirm('BlueMap needs to download Minecraft client resources from Mojang to render the world. Allow that download for this server?')) return;
+          const r=await jpost('/api/bluemap',{action:'accept-download'});
+          if(r.status!==200){ alert(r.body.error||'Could not update BlueMap.'); return; }
+          await loadBlueMapStatus(true);
+          if(confirm((r.body.message||'BlueMap is ready to start.')+'\\n\\nRestart now?'))
+            $('srvrestart').click();
         }
 
         function focusBlueMap(x,y,z,distance){

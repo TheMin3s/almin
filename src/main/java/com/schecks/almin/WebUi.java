@@ -3081,11 +3081,13 @@ public final class WebUi {
             }
             JsonObject body = readBody(ex);
             String action = body.has("action") ? body.get("action").getAsString() : "";
-            if (!"configure".equals(action)) {
+            if (!"configure".equals(action) && !"accept-download".equals(action)) {
                 json(ex, 400, err("Unknown BlueMap action."));
                 return;
             }
-            BlueMapIntegration.Result result = BlueMapIntegration.configure(server, port);
+            BlueMapIntegration.Result result = "accept-download".equals(action)
+                ? BlueMapIntegration.acceptDownload(server)
+                : BlueMapIntegration.configure(server, port);
             JsonObject out = new JsonObject();
             out.addProperty("ok", result.ok());
             out.addProperty("message", result.message());

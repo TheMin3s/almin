@@ -45,6 +45,8 @@ final class BlueMapIntegration {
     private static final Pattern IP = Pattern.compile("(?m)^\\s*ip\\s*:\\s*[\"']?([^\"'#\\s]+)");
     private static final Pattern WEBROOT = Pattern.compile(
         "(?m)^\\s*webroot\\s*:\\s*(?:\"([^\"]+)\"|'([^']+)'|([^#\\s]+))\\s*(?:#.*)?$");
+    private static final Pattern ACCEPT_DOWNLOAD = Pattern.compile(
+        "(?mi)^\\s*accept-download\\s*:\\s*(true|false)\\s*(?:#.*)?$");
     private static final Pattern SCRIPTS = Pattern.compile("(?s)(scripts\\s*:\\s*\\[)(.*?)(\\])");
     private static final HttpClient PROBE = HttpClient.newBuilder()
         .connectTimeout(PROBE_TIMEOUT)
@@ -56,7 +58,7 @@ final class BlueMapIntegration {
 
     record Status(boolean installed, boolean enabled, boolean loaded,
                   boolean configured, boolean ready, boolean restartRequired,
-                  int port, String version, String message) {
+                  boolean downloadAccepted, int port, String version, String message) {
         JsonObject json() {
             JsonObject o = new JsonObject();
             o.addProperty("installed", installed);
@@ -65,6 +67,7 @@ final class BlueMapIntegration {
             o.addProperty("configured", configured);
             o.addProperty("ready", ready);
             o.addProperty("restartRequired", restartRequired);
+            o.addProperty("downloadAccepted", downloadAccepted);
             o.addProperty("port", port);
             o.addProperty("version", version == null ? "" : version);
             o.addProperty("message", message == null ? "" : message);
@@ -78,6 +81,7 @@ final class BlueMapIntegration {
     }
 
     private record Config(int port, boolean loopback, boolean script, boolean bridge,
+                          boolean downloadAccepted,
                           boolean changedThisRun, Path webroot) {}
 
     private BlueMapIntegration() {}
@@ -100,12 +104,18 @@ final class BlueMapIntegration {
         Config cfg = readConfig(root);
         boolean configured = cfg.loopback && cfg.script && cfg.bridge
             && cfg.port > 0 && cfg.port != panelPort;
-        boolean ready = enabled && loaded && configured && !cfg.changedThisRun
+        boolean ready = enabled && loaded && configured && cfg.downloadAccepted
+            && !cfg.changedThisRun
             && (!doProbe || probeCached(cfg.port));
-        boolean restart = installed && enabled && (!loaded || !configured || cfg.changedThisRun);
+        boolean restart = installed && enabled && cfg.downloadAccepted
+            && (!loaded || !configured || cfg.changedThisRun);
         String message;
         if (!installed) message = "Install BlueMap to use the 3D world map.";
         else if (!enabled) message = "BlueMap is turned off in mods/.";
+        else if (!cfg.downloadAccepted) message =
+            "BlueMap cannot start until you set accept-download: true in "
+                + "config/bluemap/core.conf, then restart. BlueMap requires this for its "
+                + "Minecraft client-resource download.";
         else if (!loaded) message = "BlueMap is installed and will load at the next server start.";
         else if (!configured) message = cfg.port == panelPort
             ? "BlueMap and the Almin panel are configured for the same port."
@@ -116,6 +126,7 @@ final class BlueMapIntegration {
         else message = "BlueMap " + (found.version().isBlank() ? "" : found.version() + " ")
             + "is connected through Almin.";
         return new Status(installed, enabled, loaded, configured, ready, restart,
+            cfg.downloadAccepted,
             cfg.port, found == null ? "" : found.version(), message);
     }
 
@@ -178,6 +189,28 @@ final class BlueMapIntegration {
         }
     }
 
+    /** Records BlueMap's required client-resource-download acceptance. */
+    static Result acceptDownload(MinecraftServer server) {
+        if (server == null) return Result.fail("The Minecraft server is not running.");
+        return acceptDownload(server.getServerDirectory());
+    }
+
+    static Result acceptDownload(Path root) {
+        if (root == null) return Result.fail("The server folder is not available.");
+        try {
+            Path core = root.resolve("config").resolve("bluemap").resolve("core.conf");
+            String text = Files.exists(core)
+                ? Files.readString(core, StandardCharsets.UTF_8)
+                : "# BlueMap client-resource download accepted from the Almin panel.\n";
+            writeAtomic(core, setScalar(text, "accept-download", "true"));
+            lastProbeAt = 0;
+            return new Result(true, true, 0,
+                "BlueMap may download the Minecraft client resources it needs. Restart once to start the renderer.");
+        } catch (IOException | RuntimeException e) {
+            return Result.fail("Could not update BlueMap's download setting: " + e.getMessage());
+        }
+    }
+
     private static boolean loaded() {
         try {
             return FabricLoader.getInstance().getModContainer(MOD_ID).isPresent();
@@ -187,13 +220,15 @@ final class BlueMapIntegration {
     }
 
     private static Config readConfig(Path root) {
-        if (root == null) return new Config(DEFAULT_PORT, false, false, false, false, null);
+        if (root == null) return new Config(DEFAULT_PORT, false, false, false, false, false, null);
         Path configDir = root.resolve("config").resolve("bluemap");
         Path serverFile = configDir.resolve("webserver.conf");
         Path appFile = configDir.resolve("webapp.conf");
+        Path coreFile = configDir.resolve("core.conf");
         try {
             String serverText = Files.exists(serverFile) ? Files.readString(serverFile) : "";
             String appText = Files.exists(appFile) ? Files.readString(appFile) : "";
+            String coreText = Files.exists(coreFile) ? Files.readString(coreFile) : "";
             int port = scalarInt(serverText, PORT, DEFAULT_PORT);
             Matcher ip = IP.matcher(serverText);
             String bind = ip.find() ? ip.group(1).trim().toLowerCase(Locale.ROOT) : "0.0.0.0";
@@ -201,11 +236,16 @@ final class BlueMapIntegration {
                 || bind.equals("localhost");
             Path webroot = webroot(root, appText);
             Path bridge = safeBridge(root, webroot);
-            long changed = Math.max(modified(serverFile), Math.max(modified(appFile), modified(bridge)));
+            Matcher accepted = ACCEPT_DOWNLOAD.matcher(coreText);
+            boolean downloadAccepted = accepted.find()
+                && Boolean.parseBoolean(accepted.group(1).toLowerCase(Locale.ROOT));
+            long changed = Math.max(modified(coreFile),
+                Math.max(modified(serverFile), Math.max(modified(appFile), modified(bridge))));
             return new Config(port, loopback, appText.contains(BRIDGE_URL),
-                bridge != null && Files.isRegularFile(bridge), changed > PROCESS_STARTED, webroot);
+                bridge != null && Files.isRegularFile(bridge), downloadAccepted,
+                changed > PROCESS_STARTED, webroot);
         } catch (IOException | RuntimeException e) {
-            return new Config(DEFAULT_PORT, false, false, false, false, null);
+            return new Config(DEFAULT_PORT, false, false, false, false, false, null);
         }
     }
 

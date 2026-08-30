@@ -60,18 +60,32 @@ public class BlueMapTests {
             Object stopped = status.invoke(null, root, 8123, false, false);
             check("an installed jar is distinguished from a loaded renderer",
                 bool(stopped, "installed") && bool(stopped, "configured")
-                    && !bool(stopped, "loaded") && bool(stopped, "restartRequired"),
+                    && !bool(stopped, "loaded") && !bool(stopped, "restartRequired")
+                    && stopped.toString().contains("accept-download"),
                 stopped.toString());
+
+            Object gated = status.invoke(null, root, 8123, true, false);
+            check("BlueMap's required client-resource acceptance is diagnosed",
+                !bool(gated, "ready") && !bool(gated, "downloadAccepted")
+                    && gated.toString().contains("accept-download"), gated.toString());
+            Method accept = type.getDeclaredMethod("acceptDownload", Path.class);
+            accept.setAccessible(true);
+            Object accepted = accept.invoke(null, root);
+            String core = Files.readString(cfg.resolve("core.conf"));
+            check("the panel can record explicit BlueMap download acceptance",
+                (boolean) ok.invoke(accepted) && core.contains("accept-download: true"), core);
 
             // Make the already-written configuration look as it will after a
             // process restart. A loaded-but-unprobed BlueMap is then eligible.
             FileTime old = FileTime.fromMillis(1);
             Files.setLastModifiedTime(cfg.resolve("webserver.conf"), old);
             Files.setLastModifiedTime(cfg.resolve("webapp.conf"), old);
+            Files.setLastModifiedTime(cfg.resolve("core.conf"), old);
             Files.setLastModifiedTime(bridge, old);
             Object loaded = status.invoke(null, root, 8123, true, false);
             check("a loaded, previously secured install is ready for the proxy",
-                bool(loaded, "ready") && !bool(loaded, "restartRequired"), loaded.toString());
+                bool(loaded, "ready") && bool(loaded, "downloadAccepted")
+                    && !bool(loaded, "restartRequired"), loaded.toString());
 
             String integration = Files.readString(Path.of(
                 "src/main/java/com/schecks/almin/BlueMapIntegration.java"));
@@ -89,6 +103,12 @@ public class BlueMapTests {
                 web.contains("/bluemap\", guard(\"/bluemap\", ui::handleBlueMapProxy)")
                     && section(web, "private void handleBlueMapProxy", 500)
                         .contains("requireAuth(ex)"), "proxy route is public");
+            check("download acceptance requires an explicit panel action",
+                page.contains("Allow resource download")
+                    && page.contains("action:'accept-download'")
+                    && section(web, "private void handleBlueMap", 1600)
+                        .contains("acceptDownload(server)"),
+                "the acceptance action is missing from the authenticated BlueMap route");
             check("BlueMap streams cannot starve the four panel workers",
                 web.contains("newFixedThreadPool(16") && web.contains("Almin-BlueMap")
                     && web.contains("blueMapPool().execute"), "no separate streaming pool");
