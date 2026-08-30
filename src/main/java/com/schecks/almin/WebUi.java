@@ -340,6 +340,8 @@ public final class WebUi {
         http.createContext("/api/activity", guard("/api/activity", ui::handleActivity));
         http.createContext("/api/track", guard("/api/track", ui::handleTrack));
         http.createContext("/api/map", guard("/api/map", ui::handleMap));
+        http.createContext("/api/scene/context",
+            guard("/api/scene/context", ui::handleSceneContext));
         http.createContext("/api/head", guard("/api/head", ui::handleHead));
         http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
         http.createContext("/api/insights/find", guard("/api/insights/find", ui::handleFind));
@@ -3011,6 +3013,53 @@ public final class WebUi {
             try (OutputStream out = ex.getResponseBody()) {
                 out.write(png);
             }
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Exposed blocks in the already-loaded world around one activity scene.
+     *
+     * <p>This is a live context layer, not a historical reconstruction. The
+     * activity blocks remain the historical evidence; this answers the useful
+     * second question, "what is around that work now?". The capture itself is
+     * handed to the server thread, and {@link SceneContext} refuses to load
+     * chunks while doing it.
+     */
+    private void handleSceneContext(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            if (!serverRunning) {
+                json(ex, 503, err("The Minecraft server is not running."));
+                return;
+            }
+            String dim = queryParam(ex, "dim").trim();
+            String rawX = queryParam(ex, "x").trim();
+            String rawZ = queryParam(ex, "z").trim();
+            if (dim.isEmpty() || rawX.isEmpty() || rawZ.isEmpty()) {
+                json(ex, 400, err("Dimension, x, and z are required."));
+                return;
+            }
+            int x = number(rawX, 0);
+            int z = number(rawZ, 0);
+            int minY = number(queryParam(ex, "minY"), -64);
+            int maxY = number(queryParam(ex, "maxY"), 320);
+            int radius = number(queryParam(ex, "radius"), 16);
+            JsonObject out = onServer(
+                () -> SceneContext.capture(server, dim, x, z, minY, maxY, radius), null);
+            if (out == null) {
+                json(ex, 404, err("That dimension is not loaded."));
+                return;
+            }
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            json(ex, 200, out.toString());
         } catch (Throwable t) {
             fault(ex, t);
         } finally {

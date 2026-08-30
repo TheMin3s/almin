@@ -139,6 +139,10 @@ final class WebPage {
           .mapwrap > svg.grabbing{cursor:grabbing}
           .onlinebar{position:absolute;left:12px;top:12px;right:64px;display:flex;gap:6px;
                      flex-wrap:wrap;max-height:74px;overflow:hidden}
+          .sceneexpand{position:absolute;left:12px;bottom:12px;background:rgba(11,13,17,.9);
+                       border:1px solid var(--brand);color:var(--ink);border-radius:8px;
+                       padding:6px 10px;font:600 12px/1.2 inherit;cursor:pointer}
+          .sceneexpand:hover{background:var(--card2)}
           .who{display:inline-flex;align-items:center;gap:6px;background:rgba(11,13,17,.84);
                border:1px solid var(--line);border-radius:999px;padding:2px 10px 2px 2px;
                font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -343,6 +347,9 @@ final class WebPage {
           .scenebar{display:flex;gap:9px;align-items:center;margin-top:10px;flex-wrap:wrap}
           .scenebar .btn{padding:5px 11px;font-size:12.5px}
           .scenebar input[type=range]{flex:1;min-width:140px;accent-color:var(--brand);padding:0}
+          .scenepick{margin-top:9px;padding:7px 10px;border:1px solid var(--line);
+                     border-radius:8px;background:#0b0d11;color:var(--dim);font-size:12px}
+          .scenepick strong{color:var(--ink)}
           .scenekey{display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:12px;
                     color:var(--dim);align-items:center}
           .scenekey i{display:inline-block;width:10px;height:10px;border-radius:2px;
@@ -2147,7 +2154,8 @@ final class WebPage {
          */
         const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.0, colour:'action',
                             faces:true, paths:true, cluster:true, overlays:true,
-                            sequences:true, refresh:10, v:2, sceneGround:true, grid:true,
+                            sequences:true, refresh:10, v:3, sceneGround:true,
+                            sceneGrid:true, sceneEvents:false, grid:true,
                             // Off by default: the map's job is to show what
                             // happened, and something that quietly removes
                             // things should be asked for rather than assumed.
@@ -2172,6 +2180,11 @@ final class WebPage {
             // that was simply wrong is not a preference — anyone who never
             // touched the slider is holding a number nobody chose.
             if(!(was.v>=2)){ mapOpts.head=MAP_DEFAULTS.head; mapOpts.v=2; }
+            if(!(was.v>=3)){
+              mapOpts.sceneGrid=MAP_DEFAULTS.sceneGrid;
+              mapOpts.sceneEvents=MAP_DEFAULTS.sceneEvents;
+              mapOpts.v=3;
+            }
           }
         } catch(e){ /* private mode, or someone edited it by hand */ }
         function saveMapOpts(){
@@ -3182,6 +3195,38 @@ final class WebPage {
             return out;
           }).join('');
 
+          // Work represented by an isometric badge is one thing on the map by
+          // default, instead of the badge sitting on top of every block-place
+          // row that made it. The button on the map can put those rows back.
+          // A hidden, filtered, faded, or off-screen badge never swallows its
+          // events: the replacement has to be visibly present first.
+          const seqCandidates=[];
+          if(mapOpts.sequences){
+            for(const e of episodes){
+              if(e.dim!==allDim) continue;
+              if(focusPlayer && e.player!==focusPlayer) continue;
+              if(filt.kinds.size && !filt.kinds.has(e.kind)) continue;
+              if(e.from>cursor) continue;
+              const ex=sx(e.x), ey=sz(e.z);
+              if(ex<-40||ex>W+40||ey<-40||ey>H+40) continue;
+              const fade=ageOpacity('seq',cursor-e.to,windowMs);
+              if(fade<=0) continue;
+              seqCandidates.push({e:e,x:ex,y:ey,fade:fade});
+            }
+          }
+          const buildScenes=seqCandidates.map(q=>q.e).filter(e=>sceneKind(e)==='build');
+          const scenePlaceKeys=new Set();
+          for(const e of buildScenes){
+            for(const key of scenePlaceKeysFor(e)) scenePlaceKeys.add(key);
+          }
+          const scenePlaces=scenePlaceKeys.size
+            ? shownActs.filter(a=>a.action==='place' && scenePlaceKeys.has(sceneActionKey(a)))
+            : [];
+          const collapsedPlaces=mapOpts.sceneEvents?[]:scenePlaces;
+          const hiddenPlaces=new Set(collapsedPlaces);
+          const markActs=hiddenPlaces.size
+            ? shownActs.filter(a=>!hiddenPlaces.has(a)) : shownActs;
+
           // Marks that land on the same patch of screen become one box with a
           // number on it. Binning is in screen pixels rather than in blocks,
           // which is what makes it a zoom control: the same evening is forty
@@ -3189,7 +3234,7 @@ final class WebPage {
           // anything being hidden.
           const CELL=26;
           const bins=new Map();
-          for(const a of shownActs){
+          for(const a of markActs){
             const px=sx(a.x), py=sz(a.z);
             // Nothing off the edge of the map is drawn at all. With a couple
             // of thousand rows in hand that is most of the work skipped on a
@@ -3237,15 +3282,8 @@ final class WebPage {
           // would bury the map under its own commentary.
           const seqs=[], seqShown=[];
           if(mapOpts.sequences){
-            for(const e of episodes){
-              if(e.dim!==allDim) continue;
-              if(focusPlayer && e.player!==focusPlayer) continue;
-              if(filt.kinds.size && !filt.kinds.has(e.kind)) continue;
-              if(e.from>cursor) continue;
-              const ex=sx(e.x), ey=sz(e.z);
-              if(ex<-40||ex>W+40||ey<-40||ey>H+40) continue;
-              const fade=ageOpacity('seq',cursor-e.to,windowMs);
-              if(fade<=0) continue;
+            for(const q of seqCandidates){
+              const e=q.e, ex=q.x, ey=q.y, fade=q.fade;
               const c=SEQUENCE_COLOR[e.kind]||'#ffab33';
               // The sentence waits for the pointer. Drawn always, a dozen of
               // them cover the map they are describing — and the badge already
@@ -3265,6 +3303,9 @@ final class WebPage {
             groundImage+grid.join('')+lines+dots+seqs.join('')+heads.join('')+'</g></svg>'+
             '<div class="maptip" id="t-tip"></div>'+
             (mapOpts.overlays?'<div class="onlinebar" id="t-online"></div>':'')+
+            (scenePlaces.length?'<button class="sceneexpand" id="t-scene-events">'+
+              (mapOpts.sceneEvents?'Collapse ':'Expand ')+scenePlaces.length+
+              ' build event'+(scenePlaces.length===1?'':'s')+'</button>':'')+
             '<div class="mapbtns">'+
               '<button id="t-in" title="Zoom in">+</button>'+
               '<button id="t-out" title="Zoom out">−</button>'+
@@ -3282,6 +3323,11 @@ final class WebPage {
           paintSide(acts.filter(a=>mine(a) && passes(a)));
           wireMapGestures();
           wireMapButtons();
+          const sceneEvents=$('t-scene-events');
+          if(sceneEvents) sceneEvents.onclick=()=>{
+            mapOpts.sceneEvents=!mapOpts.sceneEvents;
+            saveMapOpts(); paintAll();
+          };
           wireMarkers(box,drawn,W,H);
           wireClusters(box,groups);
           wireSequences(box,seqShown);
@@ -4514,6 +4560,10 @@ final class WebPage {
           }
         }
 
+        """;
+
+    /** The isometric activity scene, separate so neither script constant hits 64KB. */
+    private static final String PARTSCENE = """
         // ---- what a stretch of work actually built ----
         // The map answers "where"; a top-down mark cannot answer "what shape".
         // The log knows every block that went down and every one that came up,
@@ -4550,6 +4600,30 @@ final class WebPage {
         }
 
         function hasShape(e){ return sceneKind(e)!==''; }
+
+        /** Stable identity shared by a raw activity row and its scene cube. */
+        function sceneActionKey(a,player,dim){
+          return [player||a.player||'',dim||a.dim||'',a.at,a.wx===undefined?a.x:a.wx,
+                  a.y,a.wz===undefined?a.z:a.wz,
+                  a.action||(a.put?'place':'break')].join(String.fromCharCode(31));
+        }
+
+        // Playback can repaint twenty times a second. Work out the exact set
+        // represented by each badge once per fetched period/episode list, not
+        // once per frame.
+        let sceneKeyData=null, sceneKeyEpisodes=null, sceneKeyCache=new Map();
+        function scenePlaceKeysFor(e){
+          if(sceneKeyData!==allData || sceneKeyEpisodes!==episodes){
+            sceneKeyData=allData; sceneKeyEpisodes=episodes; sceneKeyCache=new Map();
+          }
+          if(sceneKeyCache.has(e)) return sceneKeyCache.get(e);
+          const keys=new Set(), built=sceneOf(e);
+          if(built) for(const c of built.cubes){
+            if(c.put) keys.add(sceneActionKey(c,e.player,e.dim));
+          }
+          sceneKeyCache.set(e,keys);
+          return keys;
+        }
 
         /**
          * Everything one stretch of work touched, as blocks.
@@ -4589,15 +4663,42 @@ final class WebPage {
           const kept=near.length?near:cubes;
           const dropped=all-kept.length;
 
-          const ys=kept.concat(marks).map(c=>c.y);
+          const extent=kept.concat(marks).reduce((n,c)=>
+            Math.max(n,Math.abs(c.x),Math.abs(c.z)),0);
+          // A little setting around a small build, while a wide one can use
+          // the full 64-block scene. Fixed 64-wide framing made a doorway a
+          // speck even though there was nothing else to show.
+          const radius=Math.max(12,Math.min(SCENE_MAX/2,Math.ceil(extent+8)));
+
+          // Tracks are actual player positions (including altitude), unlike a
+          // block action whose coordinates name the block. Kept solely on the
+          // 3D scene: the established top-down map remains unchanged.
+          const players=[];
+          const tracks=(allData&&allData.tracks)||{};
+          const samplePad=Math.max(5000,((allData&&allData.trackSeconds)||5)*3000);
+          for(const who of Object.keys(tracks)){
+            for(const p of tracks[who]||[]){
+              if(p.dim!==e.dim || p.at<e.from-samplePad || p.at>e.to+samplePad) continue;
+              players.push({player:who,x:p.x-e.x,y:p.y,z:p.z-e.z,wx:p.x,wz:p.z,at:p.at});
+              if(players.length>=2000) break;
+            }
+            if(players.length>=2000) break;
+          }
+          players.sort((a,b)=>a.at-b.at);
+
+          const shapeYs=kept.concat(marks).map(c=>c.y);
+          const contextMinY=Math.min(...shapeYs), contextMaxY=Math.max(...shapeYs);
+          const nearbyPlayers=players.filter(p=>Math.abs(p.x)<=radius&&Math.abs(p.z)<=radius);
+          const ys=shapeYs.concat(nearbyPlayers.map(c=>c.y));
           const minY=Math.min(...ys), maxY=Math.max(...ys);
           kept.sort((a,b)=>a.at-b.at);
           marks.sort((a,b)=>a.at-b.at);
           const use=kept.slice(0,SCENE_CUBES);
-          return {ep:e, look:want, cubes:use, marks:marks,
-                  minY:minY, maxY:maxY, turn:0,
+          return {ep:e, look:want, cubes:use, marks:marks, players:players,
+                  minY:minY, maxY:maxY, radius:radius, samplePad:samplePad, turn:0,
+                  contextMinY:contextMinY, contextMaxY:contextMaxY,
                   upto:Math.max(1,want==='fight'?marks.length:use.length),
-                  dropped:dropped, timer:null};
+                  dropped:dropped, timer:null, world:null, worldTruncated:false};
         }
 
         /**
@@ -4667,6 +4768,7 @@ final class WebPage {
           // Fetched once per scene and kept on it: turning the view or
           // dragging the slider must not go back to the network.
           loadTerrain(e,t=>{ if(scene===built){ scene.terrain=t; paintScene(); } });
+          loadSceneContext(e,built);
           modal('What was built here', body=>{
             body.innerHTML='<p class="muted" style="margin:0 0 10px">'+
               esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+' '+e.x+','+e.y+','+e.z+
@@ -4676,27 +4778,30 @@ final class WebPage {
                 '<button class="btn" id="sc-left">⟲</button>'+
                 '<button class="btn" id="sc-right">⟳</button>'+
                 '<button class="btn go" id="sc-play">Replay</button>'+
-                '<button class="btn" id="sc-ground">Ground</button>'+
+                '<button class="btn" id="sc-ground">World</button>'+
+                '<button class="btn" id="sc-grid">Grid</button>'+
                 '<input type="range" id="sc-at" min="1" max="'+
                   Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length)+
                   '" value="'+
                   Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length)+'">'+
                 '<span class="muted num" id="sc-count"></span>'+
               '</div>'+
+              '<div class="scenepick" id="sc-picked">Click a block to identify it and read '+
+                'its exact world coordinates.</div>'+
               '<div class="scenekey">'+
                 (built.look==='fight'
                   ? '<span><i style="background:#ff3b3b"></i>something was hit</span>'+
                     '<span class="muted">A fight on its own. Blocks anyone happened to '+
                     'place or break nearby belong to a different picture, so they are not '+
-                    'in this one \u2014 the ground is the world as the last snapshot found '+
-                    'it.</span>'
+                    'in this one. The muted blocks are the loaded world around it now; '+
+                    'the red marks remain the historical event.</span>'
                   : '<span><i style="border:2px solid #ffd34d;background:#6b5a2a"></i>placed'+
                     '</span>'+
                     '<span><i style="border:2px solid #ff5a5a;background:transparent"></i>'+
                     'broken</span>'+
-                    '<span class="muted">Blocks are drawn in their own colours, and the '+
-                    'ground around them is the world as the last snapshot found it '+
-                    '\u2014 its own colours, at its own heights.</span>')+
+                    '<span class="muted">Yellow and red are historical changes. Muted '+
+                    'blocks are the loaded world around them now; player labels use '+
+                    'recorded X/Y/Z positions from the time of the build.</span>')+
               '</div>';
             setTimeout(()=>{
               $('sc-left').onclick=()=>{ scene.turn=(scene.turn+3)%4; paintScene(); };
@@ -4707,9 +4812,35 @@ final class WebPage {
               g.className='btn'+(mapOpts.sceneGround?' on':'');
               g.onclick=()=>{ mapOpts.sceneGround=!mapOpts.sceneGround; saveMapOpts();
                 g.className='btn'+(mapOpts.sceneGround?' on':''); paintScene(); };
+              const grid=$('sc-grid');
+              grid.className='btn'+(mapOpts.sceneGrid?' on':'');
+              grid.onclick=()=>{ mapOpts.sceneGrid=!mapOpts.sceneGrid; saveMapOpts();
+                grid.className='btn'+(mapOpts.sceneGrid?' on':''); paintScene(); };
               paintScene();
             },0);
           },{onClose:()=>{ stopScene(); scene=null; }});
+        }
+
+        /** Live, already-loaded blocks around a historical activity scene. */
+        async function loadSceneContext(e,built){
+          const q='/api/scene/context?dim='+encodeURIComponent(e.dim)+
+            '&x='+e.x+'&z='+e.z+'&radius='+built.radius+
+            '&minY='+(built.contextMinY-8)+'&maxY='+(built.contextMaxY+8);
+          try {
+            const r=await jget(q);
+            if(scene!==built) return;
+            if(r.status!==200 || !r.body || !Array.isArray(r.body.blocks)){
+              built.world=[]; paintScene(); return;
+            }
+            built.world=r.body.blocks.map(b=>({
+              x:(+b.x)-e.x,y:+b.y,z:(+b.z)-e.z,wx:+b.x,wz:+b.z,
+              what:b.what||'a block',state:'world'
+            })).filter(b=>Number.isFinite(b.x)&&Number.isFinite(b.y)&&Number.isFinite(b.z));
+            built.worldTruncated=!!r.body.truncated;
+            paintScene();
+          } catch(err){
+            if(scene===built){ built.world=[]; paintScene(); }
+          }
         }
 
         function stopScene(){
@@ -4752,6 +4883,29 @@ final class WebPage {
           return Math.max(1, scene.look==='fight' ? scene.marks.length : scene.cubes.length);
         }
 
+        /** The last recorded position of each player at this replay frame. */
+        function scenePeopleAt(at){
+          if(!scene) return [];
+          const grouped=new Map();
+          for(const p of scene.players||[]){
+            if(!grouped.has(p.player)) grouped.set(p.player,[]);
+            grouped.get(p.player).push(p);
+          }
+          const out=[];
+          for(const points of grouped.values()){
+            let found=null;
+            for(const p of points){
+              if(p.at<=at) found=p; else break;
+            }
+            // A sampling tick can fall just after the first build event. Use
+            // that nearest sample until an earlier one exists.
+            if(!found) found=points[0];
+            if(found && Math.abs(found.x)<=scene.radius && Math.abs(found.z)<=scene.radius)
+              out.push(found);
+          }
+          return out;
+        }
+
         function paintScene(){
           const box=$('sc-box'); if(!box || !scene) return;
           const W=760, H=420;
@@ -4763,49 +4917,137 @@ final class WebPage {
           const marks=fight
             ? scene.marks.slice(0,scene.upto)
             : scene.marks.filter(m=>m.at<=(shown.length?shown[shown.length-1].at:scene.ep.to));
-          const all=shown.concat(marks);
+          const frameAt=fight
+            ? (marks.length?marks[marks.length-1].at:scene.ep.from)
+            : (shown.length?shown[shown.length-1].at:scene.ep.from);
+          const people=scenePeopleAt(frameAt);
+
+          // Never let the live context reveal a changed block before replay
+          // reaches it. All changed coordinates are cut from the context, and
+          // the historical cube is solely responsible for that position.
+          const changed=new Set(scene.cubes.map(c=>c.x+','+c.y+','+c.z));
+          const world=mapOpts.sceneGround && Array.isArray(scene.world)
+            ? scene.world.filter(c=>!changed.has(c.x+','+c.y+','+c.z)) : [];
+          const all=shown.concat(marks,world,people);
           if(!all.length){ box.innerHTML=''; return; }
 
+          const base=Math.min(scene.minY,...all.map(c=>c.y));
+          const top=Math.max(scene.maxY,...all.map(c=>c.y+(c.player?2:1)));
+
           // Where everything lands at one unit per block, so the scale can be
-          // chosen to fit rather than hoped at.
-          const lo=[1e9,1e9], hi=[-1e9,-1e9];
-          for(const c of all){
-            const r=turned(c,scene.turn);
-            const ix=(r.x-r.z)/2, iy=(r.x+r.z)/4-(c.y-scene.minY)/2;
-            lo[0]=Math.min(lo[0],ix-0.5); hi[0]=Math.max(hi[0],ix+0.5);
-            lo[1]=Math.min(lo[1],iy);     hi[1]=Math.max(hi[1],iy+1);
+          // chosen to fit rather than hoped at. The grid's four real-world
+          // corners are part of the frame even before live context arrives.
+          const framed=all.slice();
+          if(mapOpts.sceneGrid){
+            const r=scene.radius, y=base-1;
+            framed.push({x:-r,z:-r,y:y},{x:r,z:-r,y:y},{x:r,z:r,y:y},{x:-r,z:r,y:y},
+                        {x:-r,z:-r,y:top});
           }
-          const pad=1.6;
+          const lo=[1e9,1e9], hi=[-1e9,-1e9];
+          for(const c of framed){
+            const r=turned(c,scene.turn);
+            const ix=(r.x-r.z)/2, iy=(r.x+r.z)/4-(c.y-base)/2;
+            const up=c.player?1:0;
+            lo[0]=Math.min(lo[0],ix-0.5); hi[0]=Math.max(hi[0],ix+0.5);
+            lo[1]=Math.min(lo[1],iy-up);  hi[1]=Math.max(hi[1],iy+1);
+          }
+          const pad=2.2;
           const S=Math.max(3,Math.min(26,
             Math.min(W/((hi[0]-lo[0])+pad), H/((hi[1]-lo[1])+pad))));
           // Centre what there is inside the window.
           const tx=-((lo[0]+hi[0])/2)*S, ty=-((lo[1]+hi[1])/2)*S;
 
           const items=[];
+          for(const c of world){
+            const r=turned(c,scene.turn);
+            items.push({key:r.x+r.z+c.y*0.5,layer:0,
+                        svg:worldCube(r.x,c.y-base,r.z,S,c)});
+          }
           for(const c of shown){
             const r=turned(c,scene.turn);
-            items.push({key:r.x+r.z+c.y*0.5, svg:cube(r.x,c.y-scene.minY,r.z,S,c)});
+            items.push({key:r.x+r.z+c.y*0.5,layer:1,
+                        svg:cube(r.x,c.y-base,r.z,S,c)});
           }
           for(const m of marks){
             const r=turned(m,scene.turn);
-            items.push({key:r.x+r.z+m.y*0.5+0.4, svg:hitMark(r.x,m.y-scene.minY,r.z,S,m)});
+            items.push({key:r.x+r.z+m.y*0.5+0.4,layer:2,
+                        svg:hitMark(r.x,m.y-base,r.z,S,m)});
           }
-          items.sort((a,b)=>a.key-b.key);
+          for(const p of people){
+            const r=turned(p,scene.turn);
+            items.push({key:r.x+r.z+p.y*0.5+1,layer:3,
+                        svg:scenePlayer(r.x,p.y-base,r.z,S,p)});
+          }
+          items.sort((a,b)=>a.key-b.key||a.layer-b.layer);
 
           box.innerHTML='<svg viewBox="'+(-W/2)+' '+(-H/2)+' '+W+' '+H+
             '" width="100%" height="'+H+'" role="img" '+
-            'aria-label="The blocks this stretch of work changed">'+
+            'aria-label="The changed blocks, nearby world, and recorded players">'+
             '<g transform="translate('+tx.toFixed(1)+' '+ty.toFixed(1)+')">'+
-            groundPlane(S)+items.map(i=>i.svg).join('')+'</g></svg>';
+            groundPlane(S,base)+sceneGridSvg(S,base,top)+
+            items.map(i=>i.svg).join('')+'</g></svg>';
+          wireSceneInspect(box);
 
           const count=$('sc-count');
           if(count){
-            let put=0, took=0;
-            for(const c of shown){ if(c.put) put+=c.n; else took+=c.n; }
-            count.textContent=put+' placed \u00b7 '+took+' broken'+
-              (scene.dropped>0?' \u00b7 '+scene.dropped+' elsewhere left out':'')+
-              (scene.cubes.length>=SCENE_CUBES?' \u00b7 first '+SCENE_CUBES+' only':'');
+            if(fight){
+              count.textContent=marks.length+' event'+(marks.length===1?'':'s')+
+                (people.length?' \u00b7 '+people.length+' nearby player'+
+                  (people.length===1?'':'s'):'');
+            } else {
+              let put=0, took=0;
+              for(const c of shown){ if(c.put) put+=c.n; else took+=c.n; }
+              count.textContent=put+' placed \u00b7 '+took+' broken'+
+                (people.length?' \u00b7 '+people.length+' nearby player'+
+                  (people.length===1?'':'s'):'')+
+                (scene.dropped>0?' \u00b7 '+scene.dropped+' elsewhere left out':'')+
+                (scene.cubes.length>=SCENE_CUBES?' \u00b7 first '+SCENE_CUBES+' only':'')+
+                (scene.worldTruncated?' \u00b7 world context trimmed':'');
+            }
           }
+        }
+
+        /** A world-aligned X/Z floor and Y ruler for the isometric view. */
+        function sceneGridSvg(S,base,top){
+          if(!scene || !mapOpts.sceneGrid) return '';
+          const radius=scene.radius;
+          const step=radius<=16?4:8;
+          const floor=base-0.35;
+          const point=(c,y)=>{
+            const r=turned(c,scene.turn);
+            return [isoX(r.x,r.z,S),isoY(r.x,y-base,r.z,S)];
+          };
+          const line=(a,b,kind)=>'<line x1="'+a[0].toFixed(1)+'" y1="'+a[1].toFixed(1)+
+            '" x2="'+b[0].toFixed(1)+'" y2="'+b[1].toFixed(1)+
+            '" stroke="'+(kind==='y'?'#f4b860':'#7f91aa')+'" stroke-opacity="'+
+            (kind==='major'?'.54':'.32')+'" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+          const label=(p,text,anchor)=>'<text x="'+p[0].toFixed(1)+'" y="'+
+            (p[1]-3).toFixed(1)+'" fill="#aeb9c8" font-size="9" text-anchor="'+anchor+
+            '" paint-order="stroke" stroke="#0b0d11" stroke-width="3">'+esc(text)+'</text>';
+          const out=[];
+          const minX=scene.ep.x-radius, maxX=scene.ep.x+radius;
+          const minZ=scene.ep.z-radius, maxZ=scene.ep.z+radius;
+          for(let wx=Math.ceil(minX/step)*step;wx<=maxX;wx+=step){
+            const dx=wx-scene.ep.x;
+            const a=point({x:dx,z:-radius},floor), b=point({x:dx,z:radius},floor);
+            out.push(line(a,b,wx%16===0?'major':'minor'),label(b,'x '+wx,'middle'));
+          }
+          for(let wz=Math.ceil(minZ/step)*step;wz<=maxZ;wz+=step){
+            const dz=wz-scene.ep.z;
+            const a=point({x:-radius,z:dz},floor), b=point({x:radius,z:dz},floor);
+            out.push(line(a,b,wz%16===0?'major':'minor'),label(b,'z '+wz,'middle'));
+          }
+          const corner={x:-radius,z:-radius};
+          const low=point(corner,base), high=point(corner,top);
+          out.push(line(low,high,'y'));
+          const yStep=(top-base)>48?16:8;
+          for(let y=Math.ceil(base/yStep)*yStep;y<=top;y+=yStep){
+            const p=point(corner,y);
+            out.push('<line x1="'+(p[0]-4).toFixed(1)+'" y1="'+p[1].toFixed(1)+
+              '" x2="'+(p[0]+4).toFixed(1)+'" y2="'+p[1].toFixed(1)+
+              '" stroke="#f4b860" stroke-width="1"/>',label([p[0]-7,p[1]],'Y '+y,'end'));
+          }
+          return '<g class="scenegrid" pointer-events="none">'+out.join('')+'</g>';
         }
 
         /**
@@ -4821,12 +5063,15 @@ final class WebPage {
          * down as the neighbour they are hiding — a full column down to
          * bedrock would be thousands of faces nobody can see.
          */
-        function groundPlane(S){
+        function groundPlane(S,base){
           if(!scene || !mapOpts.sceneGround) return '';
+          // The block slice is both more current and genuinely three
+          // dimensional. A snapshot is the graceful fallback for an offline
+          // server, an unloaded dimension, or an older panel endpoint.
+          if(Array.isArray(scene.world) && scene.world.length) return '';
           const t=scene.terrain;
           if(!t || !t.ready) return '';
-          const half=SCENE_MAX/2;
-          const base=scene.minY;
+          const half=scene.radius;
 
           // A step, when the region is large enough that a face per block is
           // more faces than the picture can use.
@@ -4959,12 +5204,13 @@ final class WebPage {
           const right=[[ox,oy+half],[ox+half,oy+quarter],[ox+half,oy+quarter+half],[ox,oy+half+half]];
           const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
           const title='<title>'+esc((c.put?'placed ':'broke ')+(c.what||'a block')+
-            (c.n>1?' \u00d7'+c.n:'')+' at y '+c.y)+'</title>';
+            (c.n>1?' \u00d7'+c.n:'')+' at '+c.wx+','+c.y+','+c.wz)+'</title>';
           const base=blockRgb(c.what);
           const edge=c.put?'#ffd34d':'#ff5a5a';
           const line=Math.max(0.35,S*0.045);
+          const attrs=sceneAttrs(c,c.put?'placed':'broken','sc-block');
           if(c.put){
-            return '<g>'+
+            return '<g '+attrs+'>'+
               '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.12)+'" stroke="'+edge+
               '" stroke-opacity=".85" stroke-width="'+line.toFixed(2)+'"/>'+
               '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.78)+'" stroke="'+edge+
@@ -4975,14 +5221,72 @@ final class WebPage {
           }
           // Broken: the block it was, ghosted, inside a red outline. A solid
           // cube would say a block is there, and the point is that one is not.
-          return '<g>'+
+          return '<g '+attrs+'>'+
             '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.05)+'" fill-opacity=".26" '+
             'stroke="'+edge+'" stroke-width="'+(line*1.1).toFixed(2)+'"/>'+
             '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.7)+'" fill-opacity=".16" '+
             'stroke="'+edge+'" stroke-opacity=".6" stroke-width="'+(line*0.8).toFixed(2)+'"/>'+
             '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.55)+'" fill-opacity=".12" '+
             'stroke="'+edge+'" stroke-opacity=".6" stroke-width="'+(line*0.8).toFixed(2)+'"/>'+
-            title+'</g>';
+              title+'</g>';
+        }
+
+        /** One muted cube from the live, already-loaded surrounding world. */
+        function worldCube(x,y,z,S,c){
+          const ox=isoX(x,z,S), oy=isoY(x,y,z,S);
+          const half=S/2, quarter=S/4;
+          const top=[[ox,oy],[ox+half,oy+quarter],[ox,oy+half],[ox-half,oy+quarter]];
+          const left=[[ox-half,oy+quarter],[ox,oy+half],[ox,oy+S],[ox-half,oy+quarter+half]];
+          const right=[[ox,oy+half],[ox+half,oy+quarter],[ox+half,oy+quarter+half],[ox,oy+S]];
+          const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+          const base=blockRgb(c.what);
+          return '<g '+sceneAttrs(c,'world now','sc-block')+' opacity=".48">'+
+            '<polygon points="'+pts(top)+'" fill="'+shadeHex(base,1.04)+'"/>'+
+            '<polygon points="'+pts(left)+'" fill="'+shadeHex(base,0.72)+'"/>'+
+            '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.54)+'"/>'+
+            '<title>'+esc((c.what||'a block')+' in the world now at '+
+              c.wx+','+c.y+','+c.wz)+'</title></g>';
+        }
+
+        /** A recorded player position, with altitude visible in the label. */
+        function scenePlayer(x,y,z,S,p){
+          const fx=isoX(x,z,S), fy=isoY(x,y,z,S)+S/2;
+          const hy=fy-S*0.92, colour=playerColor(p.player);
+          const label=p.player+' \u00b7 '+p.wx+','+p.y+','+p.wz;
+          return '<g '+sceneAttrs(p,'recorded player','sc-player')+'>'+
+            '<line x1="'+fx.toFixed(1)+'" y1="'+fy.toFixed(1)+'" x2="'+fx.toFixed(1)+
+              '" y2="'+hy.toFixed(1)+'" stroke="#0b0d11" stroke-width="5"/>'+
+            '<line x1="'+fx.toFixed(1)+'" y1="'+fy.toFixed(1)+'" x2="'+fx.toFixed(1)+
+              '" y2="'+hy.toFixed(1)+'" stroke="'+colour+'" stroke-width="3"/>'+
+            '<circle cx="'+fx.toFixed(1)+'" cy="'+hy.toFixed(1)+'" r="'+
+              Math.max(2.5,S*0.2).toFixed(1)+'" fill="'+colour+'" stroke="#0b0d11" '+
+              'stroke-width="1.5"/>'+
+            '<text x="'+(fx+5).toFixed(1)+'" y="'+(hy-4).toFixed(1)+
+              '" fill="#f3f5f7" font-size="10" paint-order="stroke" stroke="#0b0d11" '+
+              'stroke-width="3">'+esc(label)+'</text><title>'+esc(label+' · '+fmtAgo(p.at))+
+              '</title></g>';
+        }
+
+        /** Data attributes shared by inspectable scene blocks and players. */
+        function sceneAttrs(c,state,kind){
+          return 'class="'+kind+'" data-sc-what="'+esc(c.what||c.player||'a block')+
+            '" data-sc-state="'+esc(state)+'" data-sc-x="'+c.wx+'" data-sc-y="'+c.y+
+            '" data-sc-z="'+c.wz+'" style="cursor:pointer"';
+        }
+
+        function wireSceneInspect(box){
+          box.querySelectorAll('.sc-block,.sc-player').forEach(el=>{
+            el.onclick=ev=>{
+              ev.stopPropagation();
+              const info={what:el.getAttribute('data-sc-what'),
+                state:el.getAttribute('data-sc-state'),x:el.getAttribute('data-sc-x'),
+                y:el.getAttribute('data-sc-y'),z:el.getAttribute('data-sc-z')};
+              scene.picked=info;
+              const picked=$('sc-picked');
+              if(picked) picked.innerHTML='<strong>'+esc(info.what)+'</strong> \u00b7 '+
+                esc(info.state)+' \u00b7 X '+esc(info.x)+' / Y '+esc(info.y)+' / Z '+esc(info.z);
+            };
+          });
         }
 
         /** The colour of a block by the name the log wrote down. */
@@ -6849,5 +7153,5 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTINSIGHT, PART3, PARTSETTINGS);
+        PARTINSIGHT, PARTSCENE, PART3, PARTSETTINGS);
 }

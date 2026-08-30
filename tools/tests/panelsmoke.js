@@ -248,6 +248,10 @@ const responses = {
   '/api/map': { every: 30, shots: [
       { at: Date.now() - 55000, dim: 'overworld', minX: -200, minZ: -200, span: 384 },
       { at: Date.now() - 15000, dim: 'overworld', minX: -180, minZ: -190, span: 384 }] },
+  '/api/scene/context': { dim: 'overworld', x: 23, z: 33, radius: 12,
+      minY: 55, maxY: 75, truncated: false,
+      blocks: [{ x: 20, y: 63, z: 31, what: 'Stone' },
+               { x: 21, y: 64, z: 31, what: 'Grass Block' }] },
   '/api/insights': {
       episodes: [{ kind: 'shaft', headline: 'Dug a shaft from y 64 down to y 11',
                    player: 'Steve', mask: '', uuid: '00000000-0000-0000-0000-0000000000aa',
@@ -1261,6 +1265,49 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     return off ? true : 'they stayed';
   });
 
+  check('a 3D build badge collapses only the placement rows it contains', () => {
+    sandbox.clearFilter();
+    sandbox.live = false;
+    sandbox.cursorAt = sandbox.allData.to; sandbox.cursorSet = true;
+    sandbox.view = { cx: 23, cz: 33, span: 100, set: true };
+    sandbox.mapOpts.cluster = false;
+    sandbox.mapOpts.sequences = true;
+    sandbox.mapOpts.sceneEvents = false;
+    sandbox.paintAll();
+    const folded = byId.get('t-map')._html || '';
+    const foldedMarks = (folded.match(/class="tmk"/g) || []).length;
+    if (!/id="t-scene-events">Expand \d+ build event/.test(folded)) {
+      return 'there is no way to expand the build';
+    }
+    sandbox.mapOpts.sceneEvents = true;
+    sandbox.paintAll();
+    const open = byId.get('t-map')._html || '';
+    const openMarks = (open.match(/class="tmk"/g) || []).length;
+    sandbox.mapOpts.sceneEvents = false;
+    sandbox.mapOpts.cluster = true;
+    sandbox.paintAll();
+    return openMarks > foldedMarks && /Collapse \d+ build event/.test(open)
+      ? true : foldedMarks+' folded became '+openMarks+' open';
+  });
+
+  check('turning badges off puts every collapsed build event back', () => {
+    sandbox.mapOpts.cluster = false;
+    sandbox.mapOpts.sequences = true;
+    sandbox.mapOpts.sceneEvents = true;
+    sandbox.paintAll();
+    const expanded = ((byId.get('t-map')._html || '').match(/class="tmk"/g) || []).length;
+    sandbox.mapOpts.sceneEvents = false;
+    sandbox.mapOpts.sequences = false;
+    sandbox.paintAll();
+    const withoutBadge = byId.get('t-map')._html || '';
+    const marks = (withoutBadge.match(/class="tmk"/g) || []).length;
+    sandbox.mapOpts.sequences = true;
+    sandbox.mapOpts.cluster = true;
+    sandbox.paintAll();
+    return marks === expanded && !withoutBadge.includes('t-scene-events')
+      ? true : expanded+' expanded, '+marks+' without badge';
+  });
+
   // ---- faces ----
   check('a face is sized on its own, not with the marks', () => {
     sandbox.mapOpts.head = 2;
@@ -1372,6 +1419,55 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     const b = sandbox.turned({ x: 3, z: 5 }, 1);
     const d = sandbox.turned({ x: 3, z: 5 }, 2);
     return (a.x === 3 && b.x === -5 && d.x === -3) ? true : 'the quarter turns are wrong';
+  });
+
+  check('the 3D grid is tied to world X, Y and Z coordinates', () => {
+    const build = { kind: 'shaft', player: 'Steve', dim: 'overworld', events: 41,
+                    from: sandbox.allData.to - 60000, to: sandbox.allData.to - 40000,
+                    x: 23, y: 37, z: 33 };
+    const was = sandbox.scene;
+    sandbox.scene = sandbox.sceneOf(build);
+    const grid = sandbox.sceneGridSvg(10, sandbox.scene.minY, sandbox.scene.maxY + 8);
+    sandbox.scene = was;
+    return /x -?\d+/.test(grid) && /z -?\d+/.test(grid) && /Y -?\d+/.test(grid)
+      ? true : 'one of the three axes has no numbered grid';
+  });
+
+  check('changed and live-world blocks carry exact click-to-inspect data', () => {
+    const changed = sandbox.cube(0, 0, 0, 12,
+      { put: true, what: 'Oak Planks', n: 1, wx: 120, y: 70, wz: -44 });
+    const world = sandbox.worldCube(1, 0, 0, 12,
+      { what: 'Stone', wx: 121, y: 69, wz: -44 });
+    if (!/class="sc-block"/.test(changed) || !/data-sc-state="placed"/.test(changed)) {
+      return 'a changed block is not inspectable';
+    }
+    if (!/data-sc-x="120"/.test(changed) || !/data-sc-y="70"/.test(changed)
+        || !/data-sc-z="-44"/.test(changed)) return 'its coordinates were lost';
+    return /data-sc-state="world now"/.test(world) && /Stone/.test(world)
+      ? true : 'the surrounding block cannot be identified';
+  });
+
+  check('nearby players use their recorded altitude in a 3D build scene', () => {
+    const savedData = sandbox.allData, savedScene = sandbox.scene;
+    const at = Date.now();
+    sandbox.allData = { trackSeconds: 5, tracks: {
+      Builder: [{ at: at, dim: 'overworld', x: 0, y: 64, z: 0 }],
+      Witness: [{ at: at + 1, dim: 'overworld', x: 3, y: 82, z: -2 }]
+    }, actions: [
+      { at: at, player: 'Builder', dim: 'overworld', action: 'place', detail: 'Stone',
+        x: 0, y: 64, z: 0, count: 1 },
+      { at: at + 2, player: 'Builder', dim: 'overworld', action: 'place', detail: 'Stone',
+        x: 1, y: 64, z: 0, count: 1 }
+    ] };
+    sandbox.scene = sandbox.sceneOf({ kind: 'build', events: 20, player: 'Builder',
+      dim: 'overworld', from: at - 1, to: at + 3, x: 0, y: 64, z: 0 });
+    const people = sandbox.scenePeopleAt(at + 2);
+    const witness = people.find(p => p.player === 'Witness');
+    const svg = witness ? sandbox.scenePlayer(witness.x, witness.y - sandbox.scene.minY,
+      witness.z, 10, witness) : '';
+    sandbox.scene = savedScene; sandbox.allData = savedData;
+    return witness && witness.y === 82 && /Witness · 3,82,-2/.test(svg)
+      ? true : 'the altitude-aware witness was not plotted';
   });
 
   // ---- forgetting with age ----
@@ -1645,7 +1741,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   check('the scene is fitted to its window rather than guessed at', () => {
     const src = fs.readFileSync(process.argv[2], 'utf8');
     const i = src.indexOf('function paintScene');
-    const body = src.slice(i, i + 2200);
+    const body = src.slice(i, src.indexOf('function sceneGridSvg', i));
     if (!/Math\.min\(W\/\(/.test(body)) return 'the scale ignores the window';
     return /translate\('\+tx/.test(body) ? true : 'it is not centred on what is in it';
   });
