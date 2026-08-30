@@ -270,6 +270,12 @@ public final class AlminConfig {
      */
     public boolean aiSendChat = true;
     /**
+     * Attach a small locally-rendered diagram of block-edit geometry when the
+     * selected model accepts image input. The transport retries with text only
+     * when an OpenAI-compatible or local model explicitly rejects vision.
+     */
+    public boolean aiSendSceneImages = true;
+    /**
      * Minutes between unattended summaries. 0 = only when someone asks.
      *
      * <p>Half an hour by default, which only ever runs once {@link #aiEnabled}
@@ -454,6 +460,8 @@ public final class AlminConfig {
             c -> c.aiBaseUrl, (c, v) -> c.aiBaseUrl = (String) v),
         boolKey("ai-send-chat", "Include what players said in what is sent to the model",
             c -> c.aiSendChat, (c, v) -> c.aiSendChat = (Boolean) v),
+        boolKey("ai-send-scene-images", "Send a compact block-layout diagram when the model supports image input",
+            c -> c.aiSendSceneImages, (c, v) -> c.aiSendSceneImages = (Boolean) v),
         intKey("ai-auto-minutes", "Minutes between unattended summaries (0 = only when asked)", 0, 1440,
             c -> c.aiAutoMinutes, (c, v) -> c.aiAutoMinutes = (Integer) v),
         intKey("ai-timeout-seconds", "How long to wait for the model (keep it under any reverse proxy's own timeout)", 5, 600,

@@ -460,7 +460,17 @@ public final class AiInsights {
             for (ActivityLog.Entry e : inScope) if ("chat".equals(e.action())) chat.add(e);
 
             String prompt = prompt(where, mine, inScope, chat, from, to, online, cfg.aiSendChat);
-            String text = ask(cfg, prompt);
+            byte[] sceneImage = cfg.aiSendSceneImages ? AiSceneImage.render(mine, inScope) : null;
+            if (sceneImage != null) prompt += """
+
+                A block-layout diagram is attached. It contains up to six bordered panels,
+                in the same order as the first spatial episodes above. In each panel the
+                large upper view is X/Z from above and the lower strip is elevation. Gold
+                marks are placements and red marks are breaks. Disconnected dots are
+                scattered edits, not evidence of a building merely because their bounding
+                box is wide or tall.
+                """;
+            String text = ask(cfg, prompt, sceneImage);
             Report report = parse(text, from, to, cfg, mine, where);
             remember(where.key(), report);
             return report;
@@ -497,7 +507,7 @@ public final class AiInsights {
 
         Write three things.
 
-        First, a short paragraph — three or four sentences — saying what \
+        First, a short paragraph — two or three sentences — saying what \
         happened, in plain language, as if telling the admin over their \
         shoulder. Name players. Say what people were doing, not what the log \
         recorded. Do not list every episode; say what the session was about.
@@ -513,9 +523,17 @@ public final class AiInsights {
         from what came before and after it and from where it was: getting to \
         the ore layer, clearing ground for the build next to it, stocking up \
         after dying there, walling in the farm they made an hour ago. One \
-        short sentence each. Where a stretch plainly stands alone and means \
+        Use a plain phrase of at most twelve words each. Where a stretch plainly \
+        stands alone and means \
         nothing beyond itself, leave it out rather than inventing a reason for \
         it.
+
+        Be conservative about construction. A count, a material name, or a wide \
+        bounding box does not make a village, base, expansion, building, or project. \
+        Use those words only when connected geometry or multiple corroborating \
+        episodes actually show one. If edits are isolated or splotched around, call \
+        them scattered placements or breaks and do not invent a purpose. The attached \
+        diagram, when present, is stronger evidence of shape than the headline.
 
         Last, look for patterns the episodes do not name. The episodes were \
         worked out by fixed rules that only know a short list of shapes — a \
@@ -655,6 +673,11 @@ public final class AiInsights {
 
     private static String ask(AlminConfig cfg, String prompt) throws IOException {
         return ask(cfg, SYSTEM, prompt);
+    }
+
+    private static String ask(AlminConfig cfg, String prompt, byte[] sceneImage)
+            throws IOException {
+        return AiTransport.ask(cfg, provider(cfg), SYSTEM, prompt, sceneImage);
     }
 
     private static String ask(AlminConfig cfg, String system, String prompt) throws IOException {

@@ -6289,6 +6289,9 @@ final class WebPage {
               '<div id="s-aihint" class="note" style="display:none"></div>'+
               '<label><span>Model</span>'+
                 '<input id="s-aimodel" placeholder="qwen2.5:3b"></label>'+
+              '<label><span>Block-layout image</span><select id="s-aiimage">'+
+                '<option value="true">send when supported</option>'+
+                '<option value="false">text only</option></select></label>'+
               '<label><span>API key</span>'+
                 '<input id="s-aikey" type="password" autocomplete="off" '+
                 'placeholder="not needed for a local model"></label>'+
@@ -6325,7 +6328,7 @@ final class WebPage {
             $('s-aidiag').onclick=()=>showAiDiagnostics(false);
             $('s-aikeyclr').onclick=()=>saveAiKey('');
             $('s-aiprov').onchange=aiFormChanged;
-            for(const id of ['s-aiurl','s-aimodel','s-aikey'])
+            for(const id of ['s-aiurl','s-aimodel','s-aikey','s-aiimage'])
               $(id).oninput=aiFormChanged;
             $('s-pwgo').onclick=setPassword;
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
@@ -6377,6 +6380,7 @@ final class WebPage {
             prov.value=a.provider||'local';
             $('s-aiurl').value=a.baseUrl||'';
             $('s-aimodel').value=a.model||'';
+            $('s-aiimage').value=a.sendSceneImages===false?'false':'true';
             $('s-aiauto').value=String(a.autoMinutes||0);
           }
           const local=(prov?prov.value:a.provider)==='local';
@@ -6386,6 +6390,7 @@ final class WebPage {
               'llama.cpp or LM Studio; a 3B model is enough for this.'
             : '<span class="state warn">Leaves this machine</span> Player names, what they '+
               'did and where, and '+(a.sendChat?'<b>what they said in chat</b>':'not their chat')+
+              (a.sendSceneImages===false?'':', plus a small diagram of block-edit positions')+
               ', are sent to <b>'+esc(prov?prov.value:a.provider)+'</b> each time a summary '+
               'is made. That is a decision about other people\u2019s data.';
           box.innerHTML=(a.enabled
@@ -6496,6 +6501,7 @@ final class WebPage {
           const prov=$('s-aiprov').value;
           const sets=[['ai-provider',prov],
                       ['ai-model',($('s-aimodel').value||'').trim()],
+                      ['ai-send-scene-images',$('s-aiimage').value],
                       ['ai-auto-minutes',$('s-aiauto').value]];
           if(aiHasUrl(prov)) sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
           for(const [k,v] of sets){

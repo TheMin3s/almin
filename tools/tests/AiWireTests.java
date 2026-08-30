@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Does it actually send the request?
@@ -97,6 +98,14 @@ public class AiWireTests {
         check("no bearer header for a local model", auth.get().equals("null"));
         check("the answer came back", r.ok() && r.summary().equals("A quiet night."));
 
+        List<com.schecks.almin.ActivityLog.Entry> sceneRows = sceneRows();
+        List<Episodes.Episode> sceneEpisodes = Episodes.of(sceneRows);
+        AiInsights.Report pictured = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
+            sceneRows, NOW - 60_000, NOW, 2, true);
+        check("OpenAI-compatible models receive the optional scene diagram",
+            pictured.ok() && body.get().contains("\"type\":\"image_url\"")
+                && body.get().contains("data:image/png;base64,"));
+
         // The provider the panel calls "somewhere else". It takes the same
         // road as `local` and the only way to know that is to watch it arrive.
         hits.clear(); path.set(""); auth.set("");
@@ -116,30 +125,39 @@ public class AiWireTests {
         // Hosted providers each have their own request and response contract.
         AiInsights.setKey("wire-secret");
         configure(true, "openai", "gpt-test", "");
-        AiInsights.Report oa = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
-            List.of(), 0, 1, 0, true);
+        AiInsights.Report oa = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
+            sceneRows, NOW - 60_000, NOW, 0, true);
         check("OpenAI uses the Responses endpoint", path.get().equals("/openai/responses"));
         check("OpenAI sends instructions, input and the Responses token limit",
             body.get().contains("\"instructions\"") && body.get().contains("\"input\"")
             && body.get().contains("\"max_output_tokens\":2000")
             && body.get().contains("\"store\":false"));
+        check("OpenAI Responses receives an input_image part",
+            body.get().contains("\"type\":\"input_image\"")
+                && body.get().contains("data:image/png;base64,"));
         check("OpenAI sends its bearer key", auth.get().equals("Bearer wire-secret"));
         check("OpenAI's response comes back", oa.ok() && oa.summary().equals("A quiet night."));
 
         configure(true, "anthropic", "claude-test", "");
-        AiInsights.Report an = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
-            List.of(), 0, 1, 0, true);
+        AiInsights.Report an = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
+            sceneRows, NOW - 60_000, NOW, 0, true);
         check("Anthropic uses Messages", path.get().equals("/anthropic/messages")
             && body.get().contains("\"system\"") && body.get().contains("\"messages\""));
+        check("Anthropic receives a base64 image content block",
+            body.get().contains("\"type\":\"image\"")
+                && body.get().contains("\"media_type\":\"image/png\""));
         check("Anthropic sends x-api-key", anthropicKey.get().equals("wire-secret"));
         check("Anthropic's response comes back", an.ok() && an.summary().equals("A quiet night."));
 
         configure(true, "google", "gemini-test", "");
-        AiInsights.Report go = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
-            List.of(), 0, 1, 0, true);
+        AiInsights.Report go = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
+            sceneRows, NOW - 60_000, NOW, 0, true);
         check("Gemini uses generateContent", path.get().equals("/google/generate")
             && body.get().contains("\"systemInstruction\"")
             && body.get().contains("\"generationConfig\""));
+        check("Gemini receives inline PNG data",
+            body.get().contains("\"inlineData\"")
+                && body.get().contains("\"mimeType\":\"image/png\""));
         check("Gemini sends x-goog-api-key", googleKey.get().equals("wire-secret"));
         check("Gemini's response comes back", go.ok() && go.summary().equals("A quiet night."));
         String diagnostic = diagnosticsText();
@@ -172,6 +190,39 @@ public class AiWireTests {
         hits.clear();
         AiInsights.summarise(AiInsights.Scope.all(), episodes(), List.of(), 0, 1, 0, false);
         check("an unforced call inside the cooldown does not ask again", hits.isEmpty());
+
+        // Some small local OpenAI-compatible models are text-only. One clear
+        // vision rejection should retry without the image and be remembered.
+        AtomicInteger visionAttempts = new AtomicInteger();
+        AtomicInteger imagesRejected = new AtomicInteger();
+        http.createContext("/visionless/v1/chat/completions", ex -> {
+            visionAttempts.incrementAndGet();
+            String request = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String reply;
+            int status;
+            if (request.contains("image_url")) {
+                imagesRejected.incrementAndGet(); status = 400;
+                reply = "{\"error\":{\"message\":\"image input is not supported by this model\"}}";
+            } else {
+                status = 200;
+                reply = "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"text fallback\\\"}\"}}]}";
+            }
+            byte[] bytes = reply.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(status, bytes.length);
+            try (OutputStream out = ex.getResponseBody()) { out.write(bytes); }
+            ex.close();
+        });
+        configure(true, "local", "text-only-model",
+            "http://127.0.0.1:" + port + "/visionless/v1");
+        AiInsights.Report fallback = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
+            sceneRows, NOW - 60_000, NOW, 0, true);
+        check("a text-only model falls back cleanly after rejecting the diagram",
+            fallback.ok() && fallback.summary().equals("text fallback")
+                && visionAttempts.get() == 2 && imagesRejected.get() == 1);
+        AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
+            sceneRows, NOW - 60_000, NOW, 0, true);
+        check("the text-only capability is remembered", visionAttempts.get() == 3
+            && imagesRejected.get() == 1);
 
         // A provider that errors must say so rather than looking like success.
         http.createContext("/bad", ex -> {
@@ -373,6 +424,16 @@ public class AiWireTests {
             "overworld", 10, 30, 20, 1);
     }
 
+    static List<com.schecks.almin.ActivityLog.Entry> sceneRows() {
+        List<com.schecks.almin.ActivityLog.Entry> out = new ArrayList<>();
+        for (int x = 0; x < 4; x++) for (int y = 0; y < 2; y++) {
+            out.add(new com.schecks.almin.ActivityLog.Entry(NOW - 30_000 + x * 10 + y,
+                "Steve", "u", "place", "Oak Planks", "overworld",
+                10 + x, 64 + y, 20, 1));
+        }
+        return out;
+    }
+
     static void configure(boolean on, String provider, String model, String base)
             throws Exception {
         Class<?> cfg = Class.forName("com.schecks.almin.AlminConfig");
@@ -382,6 +443,7 @@ public class AiWireTests {
         cfg.getField("aiModel").set(c, model);
         cfg.getField("aiBaseUrl").set(c, base);
         cfg.getField("aiSendChat").setBoolean(c, true);
+        cfg.getField("aiSendSceneImages").setBoolean(c, true);
         Field inst = cfg.getDeclaredField("instance");
         inst.setAccessible(true);
         inst.set(null, c);

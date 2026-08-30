@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,8 @@ final class AiTransport {
     private static final int MAX_RESPONSE = 512 * 1024;
     private static final int MAX_DIAGNOSTICS = 8;
     private static final ArrayDeque<Diagnostic> DIAGNOSTICS = new ArrayDeque<>();
+    private static final java.util.Set<String> NO_VISION =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * Test-only endpoint substitutions, set reflectively by the wire suite.
@@ -62,13 +65,45 @@ final class AiTransport {
 
     static String ask(AlminConfig cfg, String provider, String system, String prompt)
             throws IOException {
+        return ask(cfg, provider, system, prompt, null);
+    }
+
+    /** Sends a PNG when possible, remembering models that explicitly reject it. */
+    static String ask(AlminConfig cfg, String provider, String system, String prompt,
+                      byte[] scenePng) throws IOException {
+        String visionKey = provider + "\u0000" + cfg.aiModel + "\u0000" + cfg.aiBaseUrl;
+        String image = scenePng == null || NO_VISION.contains(visionKey) ? null
+            : "data:image/png;base64," + Base64.getEncoder().encodeToString(scenePng);
+        try {
+            return askProvider(cfg, provider, system, prompt, image);
+        } catch (IOException e) {
+            if (image == null || !visionRejected(e.getMessage())) throw e;
+            NO_VISION.add(visionKey);
+            AlminLog.info("[almin] {} does not accept image input; retrying with text only",
+                cfg.aiModel);
+            return askProvider(cfg, provider, system, prompt, null);
+        }
+    }
+
+    private static String askProvider(AlminConfig cfg, String provider, String system,
+                                      String prompt, String image) throws IOException {
         return switch (provider) {
-            case "openai" -> askOnce(openAi(cfg, system, prompt));
-            case "anthropic" -> askOnce(anthropic(cfg, system, prompt));
-            case "google" -> askOnce(google(cfg, system, prompt));
-            case "custom", "local" -> openAiCompatible(cfg, provider, system, prompt);
+            case "openai" -> askOnce(openAi(cfg, system, prompt, image));
+            case "anthropic" -> askOnce(anthropic(cfg, system, prompt, image));
+            case "google" -> askOnce(google(cfg, system, prompt, image));
+            case "custom", "local" -> openAiCompatible(cfg, provider, system, prompt, image);
             default -> throw new IOException("Unknown AI provider: " + provider);
         };
+    }
+
+    private static boolean visionRejected(String message) {
+        String s = message == null ? "" : message.toLowerCase(java.util.Locale.ROOT);
+        boolean image = s.contains("image") || s.contains("vision")
+            || s.contains("multimodal") || s.contains("content part");
+        boolean rejected = s.contains("unsupported") || s.contains("not support")
+            || s.contains("doesn't support") || s.contains("cannot accept")
+            || s.contains("invalid") || s.contains("unknown type");
+        return image && rejected;
     }
 
     static synchronized List<Diagnostic> diagnostics() {
@@ -77,6 +112,7 @@ final class AiTransport {
 
     static void setEndpointOverridesForTests(Map<String, String> endpoints) {
         endpointOverrides = endpoints == null ? Map.of() : Map.copyOf(endpoints);
+        NO_VISION.clear();
     }
 
     static synchronized void clearDiagnosticsForTests() {
@@ -84,25 +120,41 @@ final class AiTransport {
     }
 
     private static String openAiCompatible(AlminConfig cfg, String provider,
-                                            String system, String prompt)
+                                            String system, String prompt, String image)
             throws IOException {
-        Request first = openAiChat(cfg, provider, system, prompt, false);
+        Request first = openAiChat(cfg, provider, system, prompt, image, false);
         try {
             return askOnce(first);
         } catch (IOException e) {
             String said = e.getMessage() == null ? "" : e.getMessage();
             if (!said.contains("max_completion_tokens")) throw e;
             AlminLog.info("[almin] this model wants max_completion_tokens; asking again");
-            return askOnce(openAiChat(cfg, provider, system, prompt, true));
+            return askOnce(openAiChat(cfg, provider, system, prompt, image, true));
         }
     }
 
     /** OpenAI's current Responses API. */
-    private static Request openAi(AlminConfig cfg, String system, String prompt) {
+    private static Request openAi(AlminConfig cfg, String system, String prompt, String image) {
         JsonObject body = new JsonObject();
         body.addProperty("model", cfg.aiModel.trim());
         body.addProperty("instructions", system);
-        body.addProperty("input", prompt);
+        if (image == null) {
+            body.addProperty("input", prompt);
+        } else {
+            JsonArray content = new JsonArray();
+            content.add(textPart("input_text", prompt));
+            JsonObject picture = new JsonObject();
+            picture.addProperty("type", "input_image");
+            picture.addProperty("image_url", image);
+            picture.addProperty("detail", "low");
+            content.add(picture);
+            JsonObject turn = new JsonObject();
+            turn.addProperty("role", "user");
+            turn.add("content", content);
+            JsonArray input = new JsonArray();
+            input.add(turn);
+            body.add("input", input);
+        }
         body.addProperty("max_output_tokens", 2000);
         // These are one-shot summaries. Do not retain player activity as API state.
         body.addProperty("store", false);
@@ -114,14 +166,30 @@ final class AiTransport {
 
     /** OpenAI-compatible Chat Completions for local and custom endpoints. */
     private static Request openAiChat(AlminConfig cfg, String provider, String system,
-                                      String prompt, boolean renamedLimit) {
+                                      String prompt, String image, boolean renamedLimit) {
         JsonObject body = new JsonObject();
         body.addProperty("model", cfg.aiModel.trim());
         body.addProperty(renamedLimit ? "max_completion_tokens" : "max_tokens", 2000);
         body.addProperty("stream", false);
         JsonArray messages = new JsonArray();
         messages.add(message("system", system));
-        messages.add(message("user", prompt));
+        if (image == null) {
+            messages.add(message("user", prompt));
+        } else {
+            JsonObject user = new JsonObject();
+            user.addProperty("role", "user");
+            JsonArray content = new JsonArray();
+            content.add(textPart("text", prompt));
+            JsonObject picture = new JsonObject();
+            picture.addProperty("type", "image_url");
+            JsonObject url = new JsonObject();
+            url.addProperty("url", image);
+            url.addProperty("detail", "low");
+            picture.add("image_url", url);
+            content.add(picture);
+            user.add("content", content);
+            messages.add(user);
+        }
         body.add("messages", messages);
 
         String base = trimSlashes(cfg.aiBaseUrl);
@@ -133,13 +201,30 @@ final class AiTransport {
     }
 
     /** Anthropic's Messages API. */
-    private static Request anthropic(AlminConfig cfg, String system, String prompt) {
+    private static Request anthropic(AlminConfig cfg, String system, String prompt, String image) {
         JsonObject body = new JsonObject();
         body.addProperty("model", cfg.aiModel.trim());
         body.addProperty("max_tokens", 2000);
         body.addProperty("system", system);
         JsonArray messages = new JsonArray();
-        messages.add(message("user", prompt));
+        if (image == null) {
+            messages.add(message("user", prompt));
+        } else {
+            JsonObject user = new JsonObject();
+            user.addProperty("role", "user");
+            JsonArray content = new JsonArray();
+            content.add(textPart("text", prompt));
+            JsonObject picture = new JsonObject();
+            picture.addProperty("type", "image");
+            JsonObject source = new JsonObject();
+            source.addProperty("type", "base64");
+            source.addProperty("media_type", "image/png");
+            source.addProperty("data", image.substring(image.indexOf(',') + 1));
+            picture.add("source", source);
+            content.add(picture);
+            user.add("content", content);
+            messages.add(user);
+        }
         body.add("messages", messages);
 
         Map<String, String> headers = new LinkedHashMap<>();
@@ -151,7 +236,7 @@ final class AiTransport {
     }
 
     /** Google's Gemini generateContent API. */
-    private static Request google(AlminConfig cfg, String system, String prompt) {
+    private static Request google(AlminConfig cfg, String system, String prompt, String image) {
         JsonObject sys = new JsonObject();
         JsonArray sysParts = new JsonArray();
         JsonObject sysText = new JsonObject();
@@ -163,6 +248,14 @@ final class AiTransport {
         part.addProperty("text", prompt);
         JsonArray parts = new JsonArray();
         parts.add(part);
+        if (image != null) {
+            JsonObject picture = new JsonObject();
+            JsonObject inline = new JsonObject();
+            inline.addProperty("mimeType", "image/png");
+            inline.addProperty("data", image.substring(image.indexOf(',') + 1));
+            picture.add("inlineData", inline);
+            parts.add(picture);
+        }
         JsonObject turn = new JsonObject();
         turn.addProperty("role", "user");
         turn.add("parts", parts);
@@ -194,6 +287,13 @@ final class AiTransport {
         JsonObject o = new JsonObject();
         o.addProperty("role", role);
         o.addProperty("content", content);
+        return o;
+    }
+
+    private static JsonObject textPart(String type, String text) {
+        JsonObject o = new JsonObject();
+        o.addProperty("type", type);
+        o.addProperty("text", text);
         return o;
     }
 

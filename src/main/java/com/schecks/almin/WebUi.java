@@ -2733,6 +2733,7 @@ public final class WebUi {
         o.addProperty("model", cfg.aiModel);
         o.addProperty("baseUrl", cfg.aiBaseUrl);
         o.addProperty("sendChat", cfg.aiSendChat);
+        o.addProperty("sendSceneImages", cfg.aiSendSceneImages);
         o.addProperty("autoMinutes", cfg.aiAutoMinutes);
         o.addProperty("hasKey", AiInsights.hasKey());
         o.addProperty("problem", AiInsights.problem());
