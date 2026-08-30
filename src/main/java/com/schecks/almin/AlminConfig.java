@@ -259,8 +259,15 @@ public final class AlminConfig {
      * are a record of a game, and chat is a record of a conversation.
      */
     public boolean aiSendChat = true;
-    /** Minutes between unattended summaries. 0 = only when someone asks. */
-    public int aiAutoMinutes = 0;
+    /**
+     * Minutes between unattended summaries. 0 = only when someone asks.
+     *
+     * <p>Half an hour by default, which only ever runs once {@link #aiEnabled}
+     * is on — and that is the switch somebody has to reach for deliberately.
+     * A summary you have to ask for is one nobody reads: the value of the
+     * thing is walking up to the panel and finding out what happened.
+     */
+    public int aiAutoMinutes = 30;
     /**
      * Show player faces in the panel's player and activity lists.
      *

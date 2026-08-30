@@ -64,15 +64,26 @@ public final class AiInsights {
     public record Moment(long at, String label, String why, String player,
                          String dim, int x, int y, int z, int weight) {}
 
+    /**
+     * What one stretch of work was probably for.
+     *
+     * <p>Separate from a {@link Moment}, which points at something worth
+     * looking at. This is the other half of the question: not "what should I
+     * look at" but "why was that person doing that" — the thing an episode's
+     * own sentence cannot say, because it can only see the episode.
+     */
+    public record Meaning(long at, String player, String means) {}
+
     /** The last thing the model said, and when. */
     public record Report(long generated, long from, long to, String summary,
-                         List<Moment> moments, String model, String provider,
-                         String error) {
+                         List<Moment> moments, List<Meaning> meanings,
+                         String model, String provider, String error) {
 
         public boolean ok() { return error == null || error.isEmpty(); }
 
         public static Report failed(String why) {
-            return new Report(System.currentTimeMillis(), 0, 0, "", List.of(), "", "", why);
+            return new Report(System.currentTimeMillis(), 0, 0, "", List.of(), List.of(),
+                "", "", why);
         }
     }
 
@@ -310,7 +321,7 @@ public final class AiInsights {
         log. Coordinates are Minecraft x,y,z; y is height, so low y means \
         underground.
 
-        Write two things.
+        Write three things.
 
         First, a short paragraph — three or four sentences — saying what \
         happened, in plain language, as if telling the admin over their \
@@ -322,14 +333,26 @@ public final class AiInsights {
         anyone did. A quiet server has few or none, and saying so is a correct \
         answer.
 
-        Judge only from what you are given. Do not guess at motive, do not \
-        accuse anyone of cheating or griefing, and do not invent numbers, \
-        coordinates or events that are not listed.
+        Then, for up to twelve of the episodes, say what it was probably FOR. \
+        The episode line already says what happened — "dug a shaft from y 64 \
+        down to y 11" — so do not repeat it. Say what it was in aid of, read \
+        from what came before and after it and from where it was: getting to \
+        the ore layer, clearing ground for the build next to it, stocking up \
+        after dying there, walling in the farm they made an hour ago. One \
+        short sentence each. Where a stretch plainly stands alone and means \
+        nothing beyond itself, leave it out rather than inventing a reason for \
+        it.
+
+        Judge only from what you are given. Do not guess at motive in the sense \
+        of accusing anyone — no cheating, no griefing, no bad faith — and do \
+        not invent numbers, coordinates or events that are not listed. \
+        "Probably" and "looks like" are honest; certainty is not.
 
         Answer as JSON and nothing else:
-        {"summary": "...", "moments": [{"at": <timestamp from an episode>, \
-        "label": "short title", "why": "one sentence", "player": "name", \
-        "weight": 0-100}]}""";
+        {"summary": "...", \
+        "moments": [{"at": <timestamp from an episode>, "label": "short title", \
+        "why": "one sentence", "player": "name", "weight": 0-100}], \
+        "sequences": [{"at": <timestamp from an episode>, "means": "one sentence"}]}""";
 
     /** Everything the model is told, and nothing else. */
     static String prompt(List<Episodes.Episode> episodes, List<ActivityLog.Entry> chat,
@@ -510,6 +533,16 @@ public final class AiInsights {
             throw new IOException("interrupted");
         } catch (com.google.gson.JsonParseException e) {
             throw new IOException("The service sent back something that was not JSON.");
+        } catch (java.net.ConnectException e) {
+            // The most common failure by far, and "java.net.ConnectException"
+            // tells an admin nothing about what to do next.
+            throw new IOException("Nothing answered at " + hostOf(url)
+                + ". Is the model running, and is the address right?");
+        } catch (java.net.http.HttpTimeoutException e) {
+            throw new IOException("The model took longer than "
+                + TIMEOUT.toSeconds() + " seconds to answer.");
+        } catch (java.net.UnknownHostException e) {
+            throw new IOException("No such host: " + hostOf(url));
         }
     }
 
@@ -519,6 +552,16 @@ public final class AiInsights {
      * <p>The provider's own message is worth showing — it is usually the
      * actual reason — but it is not worth showing three kilobytes of it.
      */
+    /** Just the host and port, for a message somebody has to act on. */
+    private static String hostOf(String url) {
+        try {
+            URI u = URI.create(url);
+            return u.getPort() > 0 ? u.getHost() + ":" + u.getPort() : u.getHost();
+        } catch (RuntimeException e) {
+            return url;
+        }
+    }
+
     private static String explain(int status, String body) {
         String detail = "";
         try {
@@ -559,7 +602,7 @@ public final class AiInsights {
         String json = firstObject(text);
         if (json.isEmpty()) {
             return new Report(System.currentTimeMillis(), from, to, text.trim(),
-                List.of(), model, provider, "");
+                List.of(), List.of(), model, provider, "");
         }
         try {
             JsonObject o = JsonParser.parseString(json).getAsJsonObject();
@@ -573,15 +616,24 @@ public final class AiInsights {
                     if (moments.size() >= 8) break;
                 }
             }
-            if (summary.isEmpty() && moments.isEmpty()) {
+            List<Meaning> meanings = new ArrayList<>();
+            if (o.has("sequences") && o.get("sequences").isJsonArray()) {
+                for (JsonElement el : o.getAsJsonArray("sequences")) {
+                    if (!el.isJsonObject()) continue;
+                    Meaning m = meaning(el.getAsJsonObject(), episodes);
+                    if (m != null) meanings.add(m);
+                    if (meanings.size() >= 16) break;
+                }
+            }
+            if (summary.isEmpty() && moments.isEmpty() && meanings.isEmpty()) {
                 return new Report(System.currentTimeMillis(), from, to, text.trim(),
-                    List.of(), model, provider, "");
+                    List.of(), List.of(), model, provider, "");
             }
             return new Report(System.currentTimeMillis(), from, to, summary, moments,
-                model, provider, "");
+                meanings, model, provider, "");
         } catch (Exception e) {
             return new Report(System.currentTimeMillis(), from, to, text.trim(),
-                List.of(), model, provider, "");
+                List.of(), List.of(), model, provider, "");
         }
     }
 
@@ -617,6 +669,28 @@ public final class AiInsights {
             anchored ? nearest.dim() : "",
             anchored ? nearest.x() : 0, anchored ? nearest.y() : 0, anchored ? nearest.z() : 0,
             weight);
+    }
+
+    /**
+     * One episode's meaning, anchored the same way a moment is.
+     *
+     * <p>Refused unless the timestamp is one that was actually given: a
+     * sentence attached to nothing is a sentence about nothing, and this is
+     * the field most likely to attract an invented one.
+     */
+    private static Meaning meaning(JsonObject o, List<Episodes.Episode> episodes) {
+        String means = cut(str(o, "means"), 200);
+        if (means.isEmpty()) return null;
+        long at;
+        try { at = o.has("at") ? o.get("at").getAsLong() : 0; }
+        catch (Exception e) { return null; }
+        // Anchored to the player as well as the moment: two people can finish
+        // something in the same second, and a reading attached to the wrong
+        // one of them is worse than none.
+        for (Episodes.Episode e : episodes) {
+            if (Math.abs(e.to() - at) <= 1000) return new Meaning(e.to(), e.player(), means);
+        }
+        return null;
     }
 
     /** The first balanced {...} in a string, ignoring braces inside strings. */

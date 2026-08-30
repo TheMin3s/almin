@@ -210,6 +210,9 @@ public final class WorldSnapshots {
         int minZ = Math.floorDiv(cz - blocks / 2, GRID) * GRID;
 
         int[] pixels = new int[size * size];
+        // The surface height of each column, so the picture can be stood up
+        // in three dimensions rather than only laid flat.
+        int[] heights = new int[size * size];
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         LevelChunk chunk = null;
         int chunkX = Integer.MIN_VALUE, chunkZ = Integer.MIN_VALUE;
@@ -229,6 +232,7 @@ public final class WorldSnapshots {
                 int color = column(level, chunk, pos, wx, wz, scale);
                 if (color != 0) {
                     pixels[py * size + px] = color;
+                    heights[py * size + px] = surfaceOf(chunk, wx, wz);
                     anything = true;
                 }
             }
@@ -236,8 +240,34 @@ public final class WorldSnapshots {
         if (!anything) return;
 
         String dim = level.dimension().identifier().getPath();
-        store(dim, System.currentTimeMillis(), minX, minZ, blocks, scale, pixels, size);
+        store(dim, System.currentTimeMillis(), minX, minZ, blocks, scale, pixels, heights, size);
     }
+
+    /** The top of the ground at a column, which is what a shape is built from. */
+    private static int surfaceOf(LevelChunk chunk, int wx, int wz) {
+        return chunk.getHeight(Heightmap.Types.WORLD_SURFACE, wx & 15, wz & 15);
+    }
+
+    /**
+     * Heights as a picture, so the same file machinery carries them.
+     *
+     * <p>Sixteen bits split across red and green, offset so the deep negatives
+     * a modern world reaches are still positive; alpha says whether the column
+     * was known at all. Storing them beside the colours rather than inside
+     * them keeps the colour file an ordinary PNG that anything can open.
+     */
+    static int[] heightPixels(int[] heights, int[] colours) {
+        int[] out = new int[heights.length];
+        for (int i = 0; i < heights.length; i++) {
+            if (colours[i] == 0) continue;                  // unknown stays transparent
+            int v = Math.max(0, Math.min(65535, heights[i] + HEIGHT_OFFSET));
+            out[i] = 0xFF000000 | ((v >> 8) << 16) | ((v & 0xFF) << 8);
+        }
+        return out;
+    }
+
+    /** Added before encoding so the world's negative depths fit in the channel. */
+    static final int HEIGHT_OFFSET = 2048;
 
     // ---------- keeping only what changed ----------
 
@@ -291,7 +321,7 @@ public final class WorldSnapshots {
      * — the map showing what it saw beats it forgetting.
      */
     private static void store(String dim, long at, int minX, int minZ, int blocks, int scale,
-                              int[] pixels, int size) {
+                              int[] pixels, int[] heights, int size) {
         Frame frame = keyframes.get(dim);
         boolean sameGround = frame != null && frame.covers(minX, minZ, blocks, scale)
             && frame.pixels().length == pixels.length
@@ -314,7 +344,13 @@ public final class WorldSnapshots {
         }
 
         keyframes.put(dim, new Frame(minX, minZ, blocks, scale, at, pixels.clone()));
-        write(new Shot(at, dim, minX, minZ, blocks, scale, 0L, ""), pixels, size);
+        Shot whole = new Shot(at, dim, minX, minZ, blocks, scale, 0L, "");
+        write(whole, pixels, size);
+        // Only alongside a whole picture. Ground moves slowly, and a shape
+        // from the nearest keyframe is right for everything the scene uses it
+        // for — a second file per difference would double the count to say
+        // almost nothing new.
+        writeHeights(whole, heightPixels(heights, pixels), size);
     }
 
     /**
@@ -514,6 +550,48 @@ public final class WorldSnapshots {
 
     // ---------- writing and keeping ----------
 
+    /** The heights file beside a whole picture. The same name plus {@code .h}. */
+    private static String heightName(Shot s) {
+        return name(s).replace(".png", ".h.png");
+    }
+
+    private static void writeHeights(Shot shot, int[] pixels, int size) {
+        ExecutorService pool = writer;
+        Path d = dir;
+        if (pool == null || d == null) return;
+        pool.execute(() -> {
+            try {
+                Files.createDirectories(d);
+                Files.write(d.resolve(heightName(shot)), Png.encode(pixels, size, size));
+            } catch (Throwable t) {
+                // A missing shape file only means a flat scene.
+                AlminLog.warn("[almin] could not save map heights: {}", t.toString());
+            }
+        });
+    }
+
+    /**
+     * The heights beside a snapshot, or null if there are none.
+     *
+     * <p>A difference has no heights of its own, so it borrows its keyframe's.
+     * That is the ground as it was up to half an hour earlier, which for the
+     * shape of the land is the same ground.
+     */
+    public static byte[] heights(Shot shot) {
+        if (shot == null) return null;
+        Shot whole = shot.whole() ? shot : baseOf(shot);
+        if (whole == null) return null;
+        Path d = dir;
+        if (d == null) return null;
+        try {
+            Path f = d.resolve(heightName(whole)).normalize();
+            if (!f.startsWith(d.normalize())) return null;
+            return Files.isRegularFile(f) ? Files.readAllBytes(f) : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     private static void write(Shot shot, int[] pixels, int size) {
         ExecutorService pool = writer;
         Path d = dir;
@@ -671,6 +749,13 @@ public final class WorldSnapshots {
             return false;
         }
         Shot named = new Shot(s.at(), s.dim(), s.minX(), s.minZ(), s.blocks(), s.scale(), 0L, file);
+        // The shape it borrowed from its keyframe becomes its own, or a
+        // flattened picture would lose the third dimension its base had.
+        byte[] shape = heights(s);
+        if (shape != null) {
+            try { Files.write(d.resolve(heightName(named)), shape); }
+            catch (IOException ignored) { /* a flat scene, not a broken one */ }
+        }
         shots.remove(s);
         shots.add(named);
         COMPOSED.remove(s.file());
@@ -683,6 +768,7 @@ public final class WorldSnapshots {
         if (d == null || s.file().isEmpty()) return;
         try {
             Files.deleteIfExists(d.resolve(s.file()));
+            if (s.whole()) Files.deleteIfExists(d.resolve(s.file().replace(".png", ".h.png")));
         } catch (IOException ignored) {
             // A file we could not delete is only clutter.
         }

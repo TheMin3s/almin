@@ -558,6 +558,12 @@ or a name in the legend, or anyone in the online strip — **focuses** that
 player: the map, the timeline ticks and the side list all drop everyone else.
 Click again to get them back.
 
+**A coordinate grid** sits under everything, on round block coordinates chosen
+for the zoom and labelled with them, with x=0 and z=0 brighter than the rest.
+It replaces four lines at quarters of the screen, which moved when you panned
+and stood for no coordinate at all — a world people navigate by numbers should
+show the numbers. The cog turns it off.
+
 Marks keep their size **on the screen** rather than in the map's own
 coordinates, so making the map bigger shows more map instead of bigger marks.
 Without that, fullscreen made a mark that read well in the panel fill a
@@ -641,12 +647,16 @@ on the outline. Two questions, two channels: a wall of solid yellow only said
 "somebody put blocks here", which the sentence above the picture had already
 said.
 
-The ground under it is the map picture, laid flat at the lowest block in the
-scene and darkened. Flat and honestly so: the only record of the world there is
-a picture from above, so its height is not knowable and a guess at it would be
-an invention. What it does give is *where* this is — on sand, beside water, in
-the middle of a field — which is most of what "the world around it" was for.
-**Ground** turns it off.
+The ground around it is the world itself, in three dimensions: snapshots carry
+a height for every column beside its colour, so the land is built out of the
+same blocks the build is — a top face per column at its own height and a side
+face wherever the ground next to it is lower. A hillside is a hillside rather
+than a picture of one. **Ground** turns it off.
+
+Heights are stored beside each whole picture, not each difference: ground moves
+slowly, and the shape from the nearest keyframe is the same shape. A snapshot
+taken before this existed has no heights, and the scene is then the blocks
+alone rather than an error.
 
 Turn it a quarter at a time to see round the back, and drag the slider to watch
 it go up in the order it actually went up. The block size and the framing come
@@ -911,10 +921,30 @@ hole is a hole whether it was a mine or a grief.
 
 #### Handing that to a model
 
-**Off by default.** With `ai-enabled` on, **Summarise** hands the list above to
-a language model and gets back a paragraph saying what the session was about,
-plus up to five moments worth looking at. Those are marked on the timeline and
-listed under the summary, and clicking one takes the map there.
+**Off by default.** Settings → *Reading the log with a model* has the whole
+thing in one place: where (a local model, Anthropic, OpenAI), the address for a
+local one, the model name, the API key, how often to summarise on its own, and
+the switch. **Turn on** stays disabled until there is enough to talk to — a
+model name, and an address if it is a local one. The key is not part of that
+test: a local model does not want one, and refusing to start until somebody
+typed a key they do not need would be the wrong half of the check. **Test it**
+saves, asks for a summary, and tells you what came back, so "is it working" has
+an answer that is not a guess.
+
+Once on, it summarises **on its own** every `ai-auto-minutes` (half an hour by
+default) as well as when **Summarise** is pressed. A summary you have to ask
+for is one nobody reads; the value is walking up to the panel and finding out
+what happened. It skips when nothing has been recorded since the last one.
+
+You get a paragraph saying what the session was about, up to five moments worth
+looking at — marked on the timeline, clickable — and, for up to a dozen
+stretches, **what that stretch was probably for**. That last one is the thing
+the episode's own sentence cannot know: "dug a shaft from y 64 down to y 11" is
+what happened, and "getting down to the ore layer under the base" is what it
+was in aid of, read from what came before and after it. It shows under the
+episode in the list and on the badge's hover, kept visually apart from the
+fact, because the fact is certain and the reading is not. A stretch the model
+has nothing to say about gets nothing rather than an invented reason.
 
 The model is given the episodes, not the log — forty sentences rather than four
 thousand rows. That is deliberate twice over. Counting coordinates is the thing
@@ -934,7 +964,7 @@ prose instead of JSON, the prose becomes the summary rather than an error.
 | `ai-model` | `qwen2.5:3b` | model name, as that service spells it |
 | `ai-base-url` | `http://127.0.0.1:11434/v1` | where `local` lives |
 | `ai-send-chat` | `true` | include what players said |
-| `ai-auto-minutes` | `0` | summarise unattended every N minutes; `0` is only when asked |
+| `ai-auto-minutes` | `30` | summarise unattended every N minutes; `0` is only when asked |
 
 `local` means anything speaking the OpenAI chat API at `ai-base-url` — Ollama,
 llama.cpp's server, LM Studio — and it is the default because it is the only

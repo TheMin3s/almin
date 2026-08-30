@@ -2334,6 +2334,15 @@ public final class WebUi {
             moments.add(j);
         }
         o.add("moments", moments);
+        JsonArray means = new JsonArray();
+        for (AiInsights.Meaning m : r.meanings()) {
+            JsonObject j = new JsonObject();
+            j.addProperty("at", m.at());
+            j.addProperty("player", m.player());
+            j.addProperty("means", m.means());
+            means.add(j);
+        }
+        o.add("sequences", means);
         return o;
     }
 
@@ -2594,8 +2603,16 @@ public final class WebUi {
                 return;
             }
             WorldSnapshots.Shot shot = WorldSnapshots.at(dim, at);
-            byte[] png = shot == null ? null : WorldSnapshots.read(shot);
-            if (png == null) { json(ex, 404, err("No picture of that moment.")); return; }
+            // The same picture, but the shape of the ground rather than its
+            // colour, for the isometric view.
+            boolean shape = "1".equals(queryParam(ex, "height"));
+            byte[] png = shot == null ? null
+                : (shape ? WorldSnapshots.heights(shot) : WorldSnapshots.read(shot));
+            if (png == null) {
+                json(ex, 404, err(shape ? "No shape recorded for that moment."
+                                        : "No picture of that moment."));
+                return;
+            }
             // Each picture is immutable once written, and the browser asks for
             // a lot of them while scrubbing the timeline.
             ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");

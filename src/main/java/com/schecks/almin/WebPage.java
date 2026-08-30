@@ -253,6 +253,8 @@ final class WebPage {
           .moment:hover{background:var(--card2)}
           .moment .lb{font-weight:650}
           .moment .wy{color:var(--dim)}
+          .means{color:var(--brand);font-size:12px;margin-top:2px;opacity:.92}
+          .means::before{content:'\u2192 ';opacity:.6}
           /* Fullscreen: the map takes the window and everything else floats
              on top of it, because the point of going fullscreen is the map. */
           .maplayout.fullmap{position:fixed;inset:0;z-index:60;display:block;
@@ -373,6 +375,13 @@ final class WebPage {
           .facts b{color:var(--ink);font-weight:600;word-break:break-word}
           .csec{margin:16px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.9px;
                 color:var(--brand)}
+          .aiform{display:grid;gap:9px;margin-top:12px;max-width:620px}
+          .aiform label{display:flex;align-items:center;gap:10px}
+          .aiform label span{flex:none;width:150px;color:var(--dim);font-size:13px}
+          .aiform input,.aiform select{flex:1;min-width:0;padding:7px 10px;font-size:13px}
+          .airow{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}
+          @media(max-width:620px){.aiform label{flex-wrap:wrap}
+                                  .aiform label span{width:100%}}
           .cmod{display:flex;gap:8px;align-items:baseline;padding:4px 2px;font-size:12.5px;
                 border-bottom:1px solid rgba(255,255,255,.05)}
           .cmod:last-child{border-bottom:0}
@@ -1926,7 +1935,7 @@ final class WebPage {
          */
         const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.0, colour:'action',
                             faces:true, paths:true, cluster:true, overlays:true,
-                            sequences:true, refresh:10, v:2, sceneGround:true,
+                            sequences:true, refresh:10, v:2, sceneGround:true, grid:true,
                             // Off by default: the map's job is to show what
                             // happened, and something that quietly removes
                             // things should be asked for rather than assumed.
@@ -2488,7 +2497,11 @@ final class WebPage {
             case 'chest':   return '<rect x="-5" y="-3.6" width="10" height="7.6" rx="1" fill="'+c+
                                    '"/><path d="M-5 -0.6h10" stroke="#0b0d11" stroke-width="1.3"/>'+
                                    '<rect x="-1.1" y="-1.8" width="2.2" height="3" fill="#0b0d11"/>';
-            case 'boots':   return '<path d="M-3.4 -4.6v6.4h6.8v2.6h-9.6v-9z" fill="'+c+'"/>';
+            // A boot, centred on the badge. It used to be drawn from a
+            // corner, so it hung to the left of the circle it sits in and
+            // read as a chevron pointing nowhere.
+            case 'boots':   return '<path d="M-1.2 -5v6.6h4.4v3.4h-6.4v-10z" fill="'+c+
+                                   '" transform="translate(1 0.6)"/>';
             case 'loop':    return '<path d="M4.4 -1.2a4.8 4.8 0 1 1 -1.6 -3.2" fill="none" '+
                                    'stroke="'+c+'" stroke-width="2" stroke-linecap="round"/>'+
                                    '<path d="M2 -5.4l1.6 1.4l-1.8 1.4z" fill="'+c+'"/>';
@@ -2770,17 +2783,7 @@ final class WebPage {
               '" height="'+h.toFixed(1)+
               '" preserveAspectRatio="none" style="image-rendering:pixelated"/>');
           }
-          // Only where there is no picture at all. Over terrain a grid is four
-          // lines that mean nothing crossing something that does.
-          const grid=[];
-          if(!patches.length){
-            for(let g=0;g<=4;g++){
-              grid.push('<line x1="'+(W/4)*g+'" y1="0" x2="'+(W/4)*g+'" y2="'+H+
-                '" stroke="#1b1f27"/>');
-              grid.push('<line x1="0" y1="'+(H/4)*g+'" x2="'+W+'" y2="'+(H/4)*g+
-                '" stroke="#1b1f27"/>');
-            }
-          }
+          const grid=mapOpts.grid?coordGrid(W,H,span,sx,sz):[];
 
           const groundImage=patches.length
             ? patches.join('')+
@@ -2867,8 +2870,14 @@ final class WebPage {
                     .map(q=>(tx+q[0]).toFixed(1)+','+(ty+q[1]).toFixed(1)).join(' ')+
                   '" fill="#9aa3ae"/>';
               }
+              // The state and the moment travel with the mark, so the hover
+              // handler does not have to work them out again from data that
+              // will have been rebuilt by the time anyone points at it.
+              const when=gone?away[n].at:last.at;
               heads.push('<g class="thead'+(idle?' afk':'')+(gone?' gone':'')+
-                '" data-who="'+esc(n)+'" style="cursor:pointer">'+head+'<title>'+esc(n)+
+                '" data-who="'+esc(n)+'" data-state="'+(gone?'gone':idle?'afk':'here')+
+                '" data-at="'+when+'" data-still="'+Math.round(stillFor/1000)+
+                '" style="cursor:pointer">'+head+'<title>'+esc(n)+
                 (gone?' — left here '+fmtAgo(away[n].at)
                      :(idle?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):''))+
                 '</title></g>');
@@ -3017,6 +3026,7 @@ final class WebPage {
             check('o-paths','Paths',mapOpts.paths)+
             check('o-cluster','Group crowded marks',mapOpts.cluster)+
             check('o-seq','Sequence badges',mapOpts.sequences)+
+            check('o-grid','Coordinate grid',mapOpts.grid)+
             check('o-overlays','Side panel and player bar',mapOpts.overlays)+
             '<hr>'+
             '<label><span>Refresh every</span><input type="range" id="o-refresh" min="2" '+
@@ -3064,6 +3074,7 @@ final class WebPage {
           set('o-paths','onchange',el=>mapOpts.paths=el.checked);
           set('o-cluster','onchange',el=>mapOpts.cluster=el.checked);
           set('o-seq','onchange',el=>mapOpts.sequences=el.checked);
+          set('o-grid','onchange',el=>mapOpts.grid=el.checked);
           set('o-overlays','onchange',el=>mapOpts.overlays=el.checked);
           set('o-refresh','oninput',el=>mapOpts.refresh=+el.value);
           set('o-fademins','oninput',el=>mapOpts.fade.minutes=+el.value);
@@ -3257,6 +3268,27 @@ final class WebPage {
           return null;
         }
 
+        /**
+         * What the model thought this stretch was for.
+         *
+         * <p>Different from a moment: a moment says "look at this", and this
+         * says "that was them clearing ground for the build next to it" —
+         * which is the thing the episode's own sentence cannot know, because
+         * it can only see the episode.
+         */
+        function meaningFor(e){
+          if(!aiReport || !aiReport.sequences) return '';
+          for(const m of aiReport.sequences){
+            // The player too: two people can finish something in the same
+            // second, and the wrong reading on the right row is worse than
+            // no reading at all.
+            if(Math.abs(m.at-e.to)>1000) continue;
+            if(m.player && m.player!==e.player) continue;
+            return m.means||'';
+          }
+          return '';
+        }
+
         function wireSequences(box,shown){
           const svg=$('t-svg'), tip=$('t-tip');
           box.querySelectorAll('.tsq').forEach(el=>{
@@ -3272,8 +3304,9 @@ final class WebPage {
               const e=shown[+el.getAttribute('data-i')];
               if(!e) return;
               const note=momentFor(e);
+              const means=meaningFor(e);
               tip.textContent=(e.mask||e.player)+' · '+e.headline+
-                (note&&note.why?' — '+note.why:'')+
+                (means?' — '+means:(note&&note.why?' — '+note.why:''))+
                 ' · '+fmtAgo(e.to)+(hasShape(e)?' · click to see it':'');
               placeTip(tip,el,svg,box);
             });
@@ -3295,6 +3328,52 @@ final class WebPage {
           const wide=tip.offsetWidth||160;
           tip.style.left=Math.max(6,Math.min(box.clientWidth-wide-6,x-wide/2))+'px';
           tip.style.top=Math.max(4,y)+'px';
+        }
+
+        /**
+         * Lines on round block coordinates, with the numbers on them.
+         *
+         * <p>The old grid was four lines at quarters of the screen, which meant
+         * nothing — they moved when you panned and stood for no coordinate. A
+         * map of a world people navigate by numbers should show the numbers,
+         * so these sit on multiples of a round figure chosen for the zoom, and
+         * are labelled where they meet the edges.
+         */
+        function coordGrid(W,H,span,sx,sz){
+          const out=[];
+          // Roughly one line every 130 pixels, rounded to something a person
+          // would say out loud.
+          const want=span*(130/W);
+          const steps=[8,16,32,64,128,256,512,1024,2048,4096,8192];
+          let step=steps[steps.length-1];
+          for(const v of steps){ if(v>=want){ step=v; break; } }
+
+          const left=worldX(0), right=worldX(W);
+          const top=worldZ(0), bottom=worldZ(H);
+          const line=(x1,y1,x2,y2,strong)=>
+            '<line x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+
+            '" y2="'+y2.toFixed(1)+'" stroke="#dfe6ef" stroke-opacity="'+
+            (strong?'.22':'.10')+'" stroke-width="'+(strong?1.2:0.8)+'"/>';
+          const label=(text,x,y,anchor)=>
+            '<text x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" fill="#cbd3dd" '+
+            'fill-opacity=".72" font-size="'+(11*unitAdjust).toFixed(1)+
+            '" text-anchor="'+anchor+'" style="paint-order:stroke" stroke="#0a0c10" '+
+            'stroke-width="'+(2.6*unitAdjust).toFixed(1)+'" stroke-opacity=".65">'+
+            text+'</text>';
+
+          for(let x=Math.ceil(left/step)*step;x<=right;x+=step){
+            const px=sx(x);
+            // The axis itself gets a brighter line: x=0 and z=0 are the two
+            // coordinates everybody actually knows.
+            out.push(line(px,0,px,H,x===0));
+            out.push(label('x '+x,px+4,13*unitAdjust,'start'));
+          }
+          for(let z=Math.ceil(top/step)*step;z<=bottom;z+=step){
+            const pz=sz(z);
+            out.push(line(0,pz,W,pz,z===0));
+            out.push(label('z '+z,4,pz-4,'start'));
+          }
+          return out;
         }
 
         /** Who is on right now, greyed if they have stopped moving. */
@@ -3681,10 +3760,16 @@ final class WebPage {
           if(cog) cog.onclick=()=>{ optsOpen=!optsOpen; paintAll(); };
           const full=$('t-full');
           if(full) full.onclick=()=>setFull(!fullMap);
-          const svg=$('t-svg');
+          const svg=$('t-svg'), tip=$('t-tip'), box=$('t-map');
           if(svg) svg.querySelectorAll('.thead').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
               focusPlayer=focusPlayer===n?'':n; paintAll(); };
+            if(!tip||!box) return;
+            el.addEventListener('mouseenter',()=>{
+              tip.textContent=headStory(el);
+              placeTip(tip,el,svg,box);
+            });
+            el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
           });
         }
 
@@ -3713,6 +3798,31 @@ final class WebPage {
             if(fullMap){ e.preventDefault(); setFull(false); }
             else if(clusterAt) closeCluster();
           });
+        }
+
+        /**
+         * What to say about a face on the map.
+         *
+         * <p>Both clocks for somebody who has gone: how long ago, because that
+         * is the question, and the time itself, because "three hours ago" is
+         * the answer you have to do arithmetic on before you can compare it to
+         * anything else you know.
+         */
+        function headStory(el){
+          const who=el.getAttribute('data-who')||'';
+          const state=el.getAttribute('data-state');
+          const at=+el.getAttribute('data-at')||0;
+          const still=+el.getAttribute('data-still')||0;
+          if(state==='gone'){
+            return who+' left here '+fmtAgo(at)+
+              (fmtWhen(at)?', at '+fmtWhen(at):'')+
+              ' · click to show only them';
+          }
+          if(state==='afk'){
+            return who+' — not moving for '+humanSeconds(still)+
+              ', since '+fmtWhen(at)+' · click to show only them';
+          }
+          return who+' — here, last moved '+fmtAgo(at)+' · click to show only them';
         }
 
         function wireMarkers(box,shownActs,W,H){
@@ -3815,9 +3925,14 @@ final class WebPage {
             row.className='episode';
             row.appendChild(avatar(e.player,e.uuid,'sm'));
             const body=document.createElement('div');
+            const means=meaningFor(e);
             body.innerHTML='<span class="kind">'+esc(e.kind)+'</span>'+
               '<span class="nm" style="font-weight:650">'+esc(e.mask||e.player)+'</span> '+
-              esc(e.headline);
+              esc(e.headline)+
+              // The model's reading of it, under the fact rather than instead
+              // of it: the sentence above is what happened and is certain, and
+              // this is what it was probably for and is not.
+              (means?'<div class="means">'+esc(means)+'</div>':'');
             row.appendChild(body);
             const when=document.createElement('span');
             when.className='tm';
@@ -4050,6 +4165,9 @@ final class WebPage {
           const built=sceneOf(e);
           if(!built){ return; }
           scene=built;
+          // Fetched once per scene and kept on it: turning the view or
+          // dragging the slider must not go back to the network.
+          loadTerrain(e,t=>{ if(scene===built){ scene.terrain=t; paintScene(); } });
           modal('What was built here', body=>{
             body.innerHTML='<p class="muted" style="margin:0 0 10px">'+
               esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+' '+e.x+','+e.y+','+e.z+
@@ -4069,10 +4187,9 @@ final class WebPage {
                 '<span><i style="border:2px solid #ffd34d;background:#6b5a2a"></i>placed</span>'+
                 '<span><i style="border:2px solid #ff5a5a;background:transparent"></i>broken</span>'+
                 (built.marks.length?'<span><i style="background:#ff3b3b"></i>something was hit</span>':'')+
-                '<span class="muted">Blocks are drawn in their own colours. The ground is '+
-                'the map picture, laid flat at the lowest block \u2014 its height was never '+
-                'recorded, so it is where this happened rather than what it looked like.'+
-                '</span>'+
+                '<span class="muted">Blocks are drawn in their own colours, and the ground '+
+                'around them is the world as the last snapshot found it \u2014 its own '+
+                'colours, at its own heights.</span>'+
               '</div>';
             setTimeout(()=>{
               $('sc-left').onclick=()=>{ scene.turn=(scene.turn+3)%4; paintScene(); };
@@ -4173,47 +4290,124 @@ final class WebPage {
         }
 
         /**
-         * The ground around it, from the map picture, darkened.
+         * The ground around it, standing up.
          *
-         * <p>Flat, at the lowest block in the scene, and honestly so: the only
-         * record of the world here is a picture from above, so its height is
-         * not knowable and a guess at it would be an invention. What it does
-         * give is where this is — on sand, beside water, in the middle of a
-         * field — which is most of what "the world around it" was for.
+         * <p>Snapshots carry a height for every column beside the colour, so
+         * the land can be built out of the same blocks the build is: one top
+         * face per column at its own height, and a side face wherever the
+         * ground next to it is lower. That is what makes a hillside a
+         * hillside instead of a picture of one.
          *
-         * <p>Drawn with a matrix rather than by sampling pixels, because the
-         * projection of a flat plane is linear: an image whose pixels are
-         * blocks maps onto the isometric parallelogram exactly.
+         * <p>Only the sides that face the viewer are drawn, and only as far
+         * down as the neighbour they are hiding — a full column down to
+         * bedrock would be thousands of faces nobody can see.
          */
         function groundPlane(S){
           if(!scene || !mapOpts.sceneGround) return '';
-          const e=scene.ep;
+          const t=scene.terrain;
+          if(!t || !t.ready) return '';
           const half=SCENE_MAX/2;
+          const base=scene.minY;
+
+          // A step, when the region is large enough that a face per block is
+          // more faces than the picture can use.
+          const span=half*2;
+          const step=Math.max(1,Math.round(span/72));
+          const cells=[];
+          for(let dz=-half;dz<half;dz+=step){
+            for(let dx=-half;dx<half;dx+=step){
+              const c=t.at(dx,dz);
+              if(!c) continue;
+              const r=turned({x:dx,z:dz},scene.turn);
+              cells.push({x:r.x, z:r.z, y:c.y, rgb:c.rgb,
+                          // The neighbours that will be behind this one once
+                          // it is turned, so the skirt is drawn on the sides
+                          // that show.
+                          right:t.at(dx+step,dz), down:t.at(dx,dz+step)});
+            }
+          }
+          // Back to front, same rule the blocks use.
+          cells.sort((a,b)=>(a.x+a.z)-(b.x+b.z));
+
           const out=[];
-          for(const p of shotsFor(e.dim,e.to)){
-            // Only the pictures that overlap the box this scene is about.
-            if(p.minX>e.x+half || p.minX+p.span<e.x-half) continue;
-            if(p.minZ>e.z+half || p.minZ+p.span<e.z-half) continue;
-            // One image pixel is one block, which is what the matrix is
-            // written in; a coarser picture is stretched by the same matrix.
-            const a=S/2, b=S/4, c=-S/2, d=S/4;
-            const rx=p.minX-e.x, rz=p.minZ-e.z;
-            const ex=(rx-rz)*S/2, fy=(rx+rz)*S/4;
-            out.push('<image href="/api/map?at='+p.at+'&dim='+encodeURIComponent(e.dim)+
-              '" width="'+p.span+'" height="'+p.span+'" preserveAspectRatio="none" '+
-              'style="image-rendering:pixelated" transform="matrix('+
-              a.toFixed(4)+' '+b.toFixed(4)+' '+c.toFixed(4)+' '+d.toFixed(4)+' '+
-              ex.toFixed(2)+' '+fy.toFixed(2)+')"/>');
+          for(const c of cells){
+            const y=c.y-base;
+            const ox=isoX(c.x,c.z,S)*1, oy=isoY(c.x,y,c.z,S);
+            const w=S/2*step, q=S/4*step;
+            const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+            const top=[[ox,oy],[ox+w,oy+q],[ox,oy+2*q],[ox-w,oy+q]];
+            out.push('<polygon points="'+pts(top)+'" fill="'+shadeHex(c.rgb,1)+'"/>');
+            // Skirts, only as deep as the drop to the neighbour.
+            const drop=(n)=>n?Math.max(0,c.y-n.y):2;
+            const dr=Math.min(24,drop(c.right)), dd=Math.min(24,drop(c.down));
+            if(dd>0){
+              const h=dd*S/2;
+              out.push('<polygon points="'+pts([[ox-w,oy+q],[ox,oy+2*q],
+                [ox,oy+2*q+h],[ox-w,oy+q+h]])+'" fill="'+shadeHex(c.rgb,0.74)+'"/>');
+            }
+            if(dr>0){
+              const h=dr*S/2;
+              out.push('<polygon points="'+pts([[ox,oy+2*q],[ox+w,oy+q],
+                [ox+w,oy+q+h],[ox,oy+2*q+h]])+'" fill="'+shadeHex(c.rgb,0.56)+'"/>');
+            }
           }
           if(!out.length) return '';
-          const corner=(x,z)=>((x-z)*S/2).toFixed(1)+','+((x+z)*S/4).toFixed(1);
-          const foot=[corner(-half,-half),corner(half,-half),
-                      corner(half,half),corner(-half,half)].join(' ');
-          // Clipped to the scene's own footprint and pushed well back, so it
-          // is context rather than the subject.
-          return '<defs><clipPath id="scfoot"><polygon points="'+foot+'"/></clipPath></defs>'+
-            '<g clip-path="url(#scfoot)"><g opacity=".55">'+out.join('')+'</g>'+
-            '<polygon points="'+foot+'" fill="#05070a" opacity=".5"/></g>';
+          // Pushed back, so it is the setting rather than the subject.
+          return '<g opacity=".78">'+out.join('')+'</g>';
+        }
+
+        /**
+         * Reads a snapshot's colours and heights into something the scene can
+         * ask questions of.
+         *
+         * <p>Through a canvas, because a PNG is only pixels once something has
+         * drawn it. Both images are same-origin, so this is allowed; a server
+         * with no shape file simply comes back not ready and the scene is the
+         * blocks alone.
+         */
+        function loadTerrain(e,then){
+          const patch=shotsFor(e.dim,e.to).find(p=>
+            p.minX<=e.x && p.minX+p.span>e.x && p.minZ<=e.z && p.minZ+p.span>e.z);
+          if(!patch){ then(null); return; }
+          const url=a=>'/api/map?at='+patch.at+'&dim='+encodeURIComponent(e.dim)+a;
+          const colour=new Image(), shape=new Image();
+          let done=0, failed=false;
+          const finish=()=>{
+            if(++done<2) return;
+            if(failed){ then(null); return; }
+            try {
+              const n=colour.naturalWidth;
+              const c=document.createElement('canvas');
+              c.width=n; c.height=colour.naturalHeight;
+              const cx=c.getContext('2d');
+              cx.drawImage(colour,0,0);
+              const cd=cx.getImageData(0,0,c.width,c.height).data;
+              const h=document.createElement('canvas');
+              h.width=shape.naturalWidth; h.height=shape.naturalHeight;
+              const hx=h.getContext('2d');
+              hx.drawImage(shape,0,0);
+              const hd=hx.getImageData(0,0,h.width,h.height).data;
+              // One image pixel is span/n blocks; at the default that is one.
+              const per=patch.span/n;
+              then({ready:true, at:(dx,dz)=>{
+                const px=Math.floor((e.x+dx-patch.minX)/per);
+                const pz=Math.floor((e.z+dz-patch.minZ)/per);
+                if(px<0||pz<0||px>=n||pz>=c.height) return null;
+                const i=(pz*n+px)*4;
+                if(cd[i+3]<128 || hd[i+3]<128) return null;
+                return {y:((hd[i]<<8)|hd[i+1])-2048,
+                        rgb:'#'+[cd[i],cd[i+1],cd[i+2]]
+                          .map(v=>v.toString(16).padStart(2,'0')).join('')};
+              }});
+            } catch(err){ then(null); }
+          };
+          colour.onload=finish; shape.onload=finish;
+          colour.onerror=()=>{ failed=true; finish(); };
+          // No shape file is not a failure: it is an older snapshot, and the
+          // scene is still worth drawing without the land around it.
+          shape.onerror=()=>{ failed=true; finish(); };
+          colour.src=url('');
+          shape.src=url('&height=1');
         }
 
         /** Quarter turns about the centre, so you can see round the back. */
@@ -4579,11 +4773,34 @@ final class WebPage {
             'and that costs nothing and never leaves this machine. A language model can '+
             'read that list and write a paragraph over it.</p>'+
             '<div id="s-ai" class="note">…</div>'+
-            '<div class="term" style="margin-top:10px">'+
-            '<input id="s-aikey" type="password" autocomplete="off" '+
-            'placeholder="API key (not needed for a local model)">'+
-            '<button class="btn" id="s-aikeygo">Save</button>'+
-            '<button class="btn" id="s-aikeyclr">Forget</button></div>'+
+            '<div class="aiform">'+
+              '<label><span>Where</span><select id="s-aiprov">'+
+                '<option value="local">On this machine (Ollama, llama.cpp, LM Studio)</option>'+
+                '<option value="anthropic">Anthropic</option>'+
+                '<option value="openai">OpenAI</option>'+
+              '</select></label>'+
+              '<label id="s-aiurlrow"><span>Address</span>'+
+                '<input id="s-aiurl" placeholder="http://127.0.0.1:11434/v1"></label>'+
+              '<label><span>Model</span>'+
+                '<input id="s-aimodel" placeholder="qwen2.5:3b"></label>'+
+              '<label><span>API key</span>'+
+                '<input id="s-aikey" type="password" autocomplete="off" '+
+                'placeholder="not needed for a local model"></label>'+
+              '<label><span>Summarise on its own</span>'+
+                '<select id="s-aiauto">'+
+                  '<option value="0">only when asked</option>'+
+                  '<option value="10">every 10 minutes</option>'+
+                  '<option value="30">every 30 minutes</option>'+
+                  '<option value="60">every hour</option>'+
+                  '<option value="180">every 3 hours</option>'+
+                '</select></label>'+
+            '</div>'+
+            '<div class="airow">'+
+              '<button class="btn go" id="s-aisave">Save</button>'+
+              '<button class="btn" id="s-aion">Turn on</button>'+
+              '<button class="btn" id="s-aitest">Test it</button>'+
+              '<button class="btn" id="s-aikeyclr">Forget the key</button>'+
+            '</div>'+
             '<div class="msg" id="s-aimsg"></div></section>'+
             '<section><h2>Settings</h2>'+
             '<p class="muted">Written to <code>config/almin/config.json</code> as you change them, '+
@@ -4594,8 +4811,13 @@ final class WebPage {
           wrap.appendChild(body);
           setTimeout(()=>{
             loadConfig(); loadUpdate(); showRelaunch(); showAi();
-            $('s-aikeygo').onclick=()=>saveAiKey($('s-aikey').value);
+            $('s-aisave').onclick=saveAi;
+            $('s-aion').onclick=toggleAi;
+            $('s-aitest').onclick=testAi;
             $('s-aikeyclr').onclick=()=>saveAiKey('');
+            $('s-aiprov').onchange=aiFormChanged;
+            for(const id of ['s-aiurl','s-aimodel','s-aikey'])
+              $(id).oninput=aiFormChanged;
             $('s-pwgo').onclick=setPassword;
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
@@ -4625,30 +4847,179 @@ final class WebPage {
          * flips it should be told that in the place where they flip it, not in
          * a README, and told which company.
          */
+        /**
+         * What turning this on would actually do, in words, before it is on.
+         *
+         * <p>The switch sends other people's activity to a company. Whoever
+         * flips it should be told that in the place where they flip it, not in
+         * a README, and told which company.
+         */
+        let aiState=null;
         async function showAi(){
           const box=$('s-ai'); if(!box) return;
           const r=await jget('/api/insights');
           const a=(r.status===200 && r.body.ai)?r.body.ai:null;
           if(!a){ box.textContent='unavailable'; return; }
-          const local=a.provider==='local';
+          aiState=a;
+          // Fill the form from the server, once — typing into it must not be
+          // overwritten by the next poll.
+          const prov=$('s-aiprov');
+          if(prov && !prov.almTouched){
+            prov.value=a.provider||'local';
+            $('s-aiurl').value=a.baseUrl||'';
+            $('s-aimodel').value=a.model||'';
+            $('s-aiauto').value=String(a.autoMinutes||0);
+          }
+          const local=(prov?prov.value:a.provider)==='local';
           const leaves=local
             ? '<span class="state good">Stays on this machine</span> Almin will talk to '+
-              '<code>'+esc(a.baseUrl||'?')+'</code> and nothing goes to anyone else. '+
-              'Point it at Ollama, llama.cpp or LM Studio; a 3B model is enough for this.'
+              'the address below and nothing goes to anyone else. Point it at Ollama, '+
+              'llama.cpp or LM Studio; a 3B model is enough for this.'
             : '<span class="state warn">Leaves this machine</span> Player names, what they '+
               'did and where, and '+(a.sendChat?'<b>what they said in chat</b>':'not their chat')+
-              ', are sent to <b>'+esc(a.provider)+'</b> each time a summary is made. '+
-              'That is a decision about other people\u2019s data.';
+              ', are sent to <b>'+esc(prov?prov.value:a.provider)+'</b> each time a summary '+
+              'is made. That is a decision about other people\u2019s data.';
           box.innerHTML=(a.enabled
               ? '<span class="state good">On</span>'
-              : '<span class="state">Off</span> Set <code>ai-enabled</code> below to turn it on.')+
+              : '<span class="state">Off</span> Fill this in and press <b>Turn on</b>.')+
             '<div style="margin-top:8px">'+leaves+'</div>'+
-            '<div class="muted" style="margin-top:8px">Provider <code>'+esc(a.provider)+
-            '</code> · model <code>'+esc(a.model||'not set')+'</code> · '+
-            (a.hasKey?'key saved':'no key saved')+
-            (a.autoMinutes>0?' · summarised on its own every '+a.autoMinutes+' min'
-                            :' · only when asked')+'</div>'+
-            (a.problem?'<div class="msg err" style="margin-top:8px">'+esc(a.problem)+'</div>':'');
+            (a.problem&&a.enabled
+              ? '<div class="msg err" style="margin-top:8px">'+esc(a.problem)+'</div>':'');
+          aiFormChanged();
+        }
+
+        /** Marks the form as the person's rather than the server's. */
+        function aiFormChanged(){
+          const prov=$('s-aiprov'); if(!prov) return;
+          prov.almTouched=true;
+          const local=prov.value==='local';
+          // A hosted provider has one address and it is not a setting.
+          const row=$('s-aiurlrow');
+          if(row) row.style.display=local?'':'none';
+          // A model name that belongs to the provider they just picked, so the
+          // common case is one dropdown and a button.
+          const model=$('s-aimodel');
+          if(model && !model.value.trim()){
+            model.placeholder=local?'qwen2.5:3b'
+              :(prov.value==='anthropic'?'claude-haiku-4-5':'gpt-4o-mini');
+          }
+          const url=$('s-aiurl');
+          if(url && local && !url.value.trim()) url.value='http://127.0.0.1:11434/v1';
+
+          const on=$('s-aion');
+          if(on){
+            const ready=aiReady();
+            on.disabled=!ready && !(aiState&&aiState.enabled);
+            on.className='btn'+((aiState&&aiState.enabled)?' on':'');
+            on.textContent=(aiState&&aiState.enabled)?'Turn off':'Turn on';
+            on.title=on.disabled
+              ? 'Fill in '+aiMissing().join(' and ')+' first'
+              : ((aiState&&aiState.enabled)?'Stop summarising':'Start summarising');
+          }
+          const test=$('s-aitest');
+          if(test) test.disabled=!aiReady();
+        }
+
+        /**
+         * Whether there is enough here to talk to anything.
+         *
+         * <p>The key is not part of it: a local model does not want one, and
+         * refusing to switch on until somebody typed a key they do not need
+         * would be the wrong half of the check.
+         */
+        function aiMissing(){
+          const prov=$('s-aiprov'); if(!prov) return ['a provider'];
+          const missing=[];
+          if(!($('s-aimodel').value||'').trim()) missing.push('a model');
+          if(prov.value==='local' && !($('s-aiurl').value||'').trim()) missing.push('an address');
+          return missing;
+        }
+        function aiReady(){ return aiMissing().length===0; }
+
+        /** Writes the form out, key included if one was typed. */
+        async function saveAi(quiet){
+          const msg=$('s-aimsg');
+          const prov=$('s-aiprov').value;
+          const sets=[['ai-provider',prov],
+                      ['ai-model',($('s-aimodel').value||'').trim()],
+                      ['ai-auto-minutes',$('s-aiauto').value]];
+          if(prov==='local') sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
+          for(const [k,v] of sets){
+            const r=await jpost('/api/config',{key:k,value:v});
+            if(r.status!==200){
+              if(msg){ msg.className='msg err';
+                msg.textContent=(r.body&&r.body.error)||('could not set '+k); }
+              return false;
+            }
+          }
+          const key=($('s-aikey').value||'').trim();
+          if(key){
+            const r=await jpost('/api/ai/key',{key:key});
+            if(r.status!==200){
+              if(msg){ msg.className='msg err';
+                msg.textContent=(r.body&&r.body.error)||'could not save the key'; }
+              return false;
+            }
+            $('s-aikey').value='';
+          }
+          if(msg && !quiet){
+            msg.className='msg ok';
+            msg.textContent='Saved'+(key?'. The key is kept outside config.json and the '+
+              'file browser will not open it.':'.');
+          }
+          await showAi();
+          return true;
+        }
+
+        /** Saves first, then flips the switch — so it never turns on half-set. */
+        async function toggleAi(){
+          const msg=$('s-aimsg');
+          const turningOn=!(aiState&&aiState.enabled);
+          if(turningOn){
+            if(!aiReady()){
+              msg.className='msg err';
+              msg.textContent='Fill in '+aiMissing().join(' and ')+' first.';
+              return;
+            }
+            if(!await saveAi(true)) return;
+          }
+          const r=await jpost('/api/config',{key:'ai-enabled',value:turningOn?'true':'false'});
+          msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent=r.status===200
+            ? (turningOn?'On. Summaries will be made on their own; Summarise on the '+
+                         'Activity tab does one now.'
+                       :'Off. Nothing more is sent.')
+            : ((r.body&&r.body.error)||'failed');
+          await showAi();
+        }
+
+        /** Saves, then asks for a summary, so "does it work" has an answer. */
+        async function testAi(){
+          const msg=$('s-aimsg');
+          if(!await saveAi(true)) return;
+          msg.className='msg';
+          msg.textContent='Asking the model…';
+          if(!(aiState&&aiState.enabled)){
+            const on=await jpost('/api/config',{key:'ai-enabled',value:'true'});
+            if(on.status!==200){ msg.className='msg err';
+              msg.textContent='could not turn it on'; return; }
+          }
+          const r=await jpost('/api/insights',{});
+          const report=r.body&&r.body.report;
+          if(r.status!==200){
+            msg.className='msg err';
+            msg.textContent=(r.body&&r.body.error)||'failed';
+          } else if(report && report.error){
+            msg.className='msg err';
+            msg.textContent=report.error;
+          } else if(report && (report.summary||'').trim()){
+            msg.className='msg ok';
+            msg.textContent='It works. It said: '+report.summary;
+          } else {
+            msg.className='msg ok';
+            msg.textContent='It answered, but had nothing to say — usually an empty log.';
+          }
+          await showAi();
         }
 
         async function saveAiKey(value){

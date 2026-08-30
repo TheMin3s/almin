@@ -450,11 +450,15 @@ public final class Episodes {
         String uuid = idOf(name);
 
         if (net >= 200 && walked >= net * 0.9) {
+            // Marked where they arrived, not at the midpoint of the walk. The
+            // middle of a journey is usually open ocean or the inside of a
+            // hill — a badge floating there says nothing, and the useful
+            // question about a journey is where it went.
             return new Episode("travel",
                 "Travelled " + Math.round(net) + " blocks — " + a.x() + "," + a.z()
                     + " to " + b.x() + "," + b.z() + ", " + plural(mins, "minute"),
-                name, uuid, b.dim(), a.at(), b.at(), (b.x() + a.x()) / 2, b.y(),
-                (b.z() + a.z()) / 2, (int) Math.round(net), 0, pts.size(), 24, "boots");
+                name, uuid, b.dim(), a.at(), b.at(), b.x(), b.y(), b.z(),
+                (int) Math.round(net), 0, pts.size(), 24, "boots");
         }
         if (walked >= 220 && net < walked / 6 && radius <= 40 && mins >= 3) {
             return new Episode("pace",
