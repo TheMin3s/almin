@@ -6071,7 +6071,7 @@ final class WebPage {
             opts=opts||{};
             const key=c.wx+','+c.y+','+c.wz+','+c.put; if(cubeKeys.has(key)) return;
             cubeKeys.add(key); if(cubeKeys.size>3000) return;
-            scenes.push({id:(opts.recent?'recent-block-':'b')+cubeKeys.size,
+            scenes.push({id:opts.id||((opts.recent?'recent-block-':'b')+cubeKeys.size),
               type:'box',kind:opts.recent?'block-change':'block',x:c.wx,y:c.y,z:c.wz,
               color:c.put?'#48df6b':'#ff565d',fill:c.put?.16:.12,
               opacity:opts.opacity==null?1:opts.opacity,
@@ -6081,19 +6081,28 @@ final class WebPage {
           // BlueMap's world coordinates let individual edits be useful without
           // opening a generated event first. Keep only the newest edit at a
           // coordinate, so place-then-break reads as the red break it now is.
-          if(mapOpts.blocks){
+          // The first payload is sent before BlueMap reports its camera. Do
+          // not answer that blank camera with every edit in the world: a busy
+          // server can have thousands, and constructing all those extrusions
+          // at once makes the map lock up precisely when the panel opens.
+          if(mapOpts.blocks&&blueCamera){
+            const recentRadius=Math.max(96,Math.min(512,distance*1.35));
             const recent=new Map();
             for(const a of d.shownActs){
-              if((a.action!=='place'&&a.action!=='break')||!nearby(a)) continue;
+              if((a.action!=='place'&&a.action!=='break')||
+                 Math.abs(a.x-centre.x)>recentRadius||Math.abs(a.z-centre.z)>recentRadius) continue;
               const fade=blockChangeOpacity(d.cursor-a.at); if(!(fade>0)) continue;
               const key=a.x+','+a.y+','+a.z, was=recent.get(key);
               if(!was||a.at>=was.a.at) recent.set(key,{a:a,fade:fade});
             }
-            for(const q of recent.values()){
+            // Newest first is both the useful order and a hard ceiling on
+            // geometry churn. Stable coordinate IDs let BlueMap retain boxes
+            // that stay in view instead of rebuilding them after every pan.
+            const latest=[...recent.values()].sort((a,b)=>b.a.at-a.a.at).slice(0,500);
+            for(const q of latest){
               const a=q.a;
               putCube({wx:a.x,y:a.y,wz:a.z,put:a.action==='place',what:a.detail},
-                {recent:true,opacity:q.fade});
-              if(cubeKeys.size>3000) break;
+                {recent:true,opacity:q.fade,id:'recent-block-'+a.x+'-'+a.y+'-'+a.z});
             }
           }
           if(mapOpts.sceneEvents){

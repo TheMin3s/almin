@@ -2983,7 +2983,15 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       'a connected BlueMap becomes the main activity map');
     if (!world) failures.push('BlueMap did not become the main renderer');
 
-    const payload = sandbox.bluePendingState || {};
+    let payload = sandbox.bluePendingState || {};
+    const coldStartSafe=!(payload.scenes||[]).some(m=>m.kind==='block-change');
+    console.log((coldStartSafe ? '  PASS  ' : '  FAIL  ') +
+      'BlueMap startup waits for a camera before creating block geometry');
+    if (!coldStartSafe) failures.push('BlueMap created world-wide block boxes before its camera');
+
+    sandbox.blueCamera={x:0,y:70,z:0,distance:300,map:'world'};
+    sandbox.paintAll();
+    payload = sandbox.bluePendingState || {};
     const carried = (payload.markers || []).length > 0 && (payload.lines || []).length > 0
       && (payload.grid || []).some((g) => g.type === 'label');
     console.log((carried ? '  PASS  ' : '  FAIL  ') +
@@ -3007,10 +3015,26 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     const recentBlocks=(payload.scenes||[]).filter(m=>m.kind==='block-change');
     const automaticBlocks=recentBlocks.some(m=>m.color==='#48df6b') &&
       recentBlocks.some(m=>m.color==='#ff565d') &&
-      recentBlocks.every(m=>m.opacity>0&&m.opacity<=1);
+      recentBlocks.every(m=>m.opacity>0&&m.opacity<=1) &&
+      recentBlocks.every(m=>/^recent-block--?\d+--?\d+--?\d+$/.test(m.id));
     console.log((automaticBlocks ? '  PASS  ' : '  FAIL  ') +
       'recent placed and broken blocks appear automatically and carry fade opacity');
     if (!automaticBlocks) failures.push('automatic BlueMap block outlines are missing or unfaded');
+
+    const savedActions=sandbox.allData.actions;
+    sandbox.allData.actions=savedActions.concat(Array.from({length:900},(_,i)=>({
+      at:sandbox.cursorAt-i,player:'Load',mask:'',action:i%2?'place':'break',detail:'Stone',
+      dim:'overworld',x:(i%30)-15,y:40+Math.floor(i/900),z:Math.floor(i/30)-15,count:1
+    })));
+    sandbox.paintAll();
+    const busyBlocks=(sandbox.bluePendingState.scenes||[]).filter(m=>m.kind==='block-change');
+    const bounded=busyBlocks.length===500 && new Set(busyBlocks.map(m=>m.id)).size===500;
+    console.log((bounded ? '  PASS  ' : '  FAIL  ') +
+      'a busy server caps recent block geometry at 500 stable markers');
+    if (!bounded) failures.push('busy BlueMap block geometry was not bounded');
+    sandbox.allData.actions=savedActions;
+    sandbox.paintAll();
+    payload=sandbox.bluePendingState||{};
 
     const oldBlockMinutes=sandbox.mapOpts.blockMinutes;
     sandbox.mapOpts.blockMinutes=10;

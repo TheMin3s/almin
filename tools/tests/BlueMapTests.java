@@ -128,6 +128,9 @@ public class BlueMapTests {
                 page.contains("function blockChangeOpacity")
                     && page.contains("kind:opts.recent?'block-change':'block'")
                     && page.contains("'#48df6b':'#ff565d'")
+                    && page.contains("mapOpts.blocks&&blueCamera")
+                    && page.contains(".slice(0,500)")
+                    && page.contains("id:'recent-block-'+a.x")
                     && integration.contains(".95*opacity"),
                 "recent block outline fading is incomplete");
             check("BlueMap messages are accepted only from Almin's own iframe",
