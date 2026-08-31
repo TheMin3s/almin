@@ -125,20 +125,20 @@ public final class Episodes {
      * @param rows any order; rows without a place are ignored, since an
      *             episode is a thing that happened somewhere
      */
-    public static List<Episode> of(List<ActivityLog.Entry> rows) {
-        Map<String, List<ActivityLog.Entry>> byPlayer = new LinkedHashMap<>();
-        for (ActivityLog.Entry e : rows) {
+    public static List<Episode> of(List<ActivityEntry> rows) {
+        Map<String, List<ActivityEntry>> byPlayer = new LinkedHashMap<>();
+        for (ActivityEntry e : rows) {
             if (e == null || e.dim() == null || e.dim().isEmpty()) continue;
             byPlayer.computeIfAbsent(e.player(), k -> new ArrayList<>()).add(e);
         }
 
         List<Episode> out = new ArrayList<>();
-        for (Map.Entry<String, List<ActivityLog.Entry>> who : byPlayer.entrySet()) {
-            List<ActivityLog.Entry> mine = new ArrayList<>(who.getValue());
-            mine.sort(Comparator.comparingLong(ActivityLog.Entry::at));
+        for (Map.Entry<String, List<ActivityEntry>> who : byPlayer.entrySet()) {
+            List<ActivityEntry> mine = new ArrayList<>(who.getValue());
+            mine.sort(Comparator.comparingLong(ActivityEntry::at));
 
-            List<ActivityLog.Entry> run = new ArrayList<>();
-            for (ActivityLog.Entry e : mine) {
+            List<ActivityEntry> run = new ArrayList<>();
+            for (ActivityEntry e : mine) {
                 if (!run.isEmpty() && !continues(run, e)) {
                     Episode ep = classify(run);
                     if (ep != null) out.add(ep);
@@ -158,12 +158,12 @@ public final class Episodes {
     }
 
     /** Whether a row belongs to the run being built: same place, no long pause. */
-    private static boolean continues(List<ActivityLog.Entry> run, ActivityLog.Entry e) {
-        ActivityLog.Entry last = run.get(run.size() - 1);
+    private static boolean continues(List<ActivityEntry> run, ActivityEntry e) {
+        ActivityEntry last = run.get(run.size() - 1);
         if (!last.dim().equals(e.dim())) return false;
         if (e.at() - last.at() > IDLE_MS) return false;
         long sx = 0, sz = 0;
-        for (ActivityLog.Entry r : run) { sx += r.x(); sz += r.z(); }
+        for (ActivityEntry r : run) { sx += r.x(); sz += r.z(); }
         int cx = (int) (sx / run.size()), cz = (int) (sz / run.size());
         return Math.abs(e.x() - cx) <= NEAR && Math.abs(e.z() - cz) <= NEAR;
     }
@@ -203,9 +203,9 @@ public final class Episodes {
         int cz() { return (minZ + maxZ) / 2; }
     }
 
-    private static Stats measure(List<ActivityLog.Entry> run) {
+    private static Stats measure(List<ActivityEntry> run) {
         Stats s = new Stats();
-        for (ActivityLog.Entry e : run) {
+        for (ActivityEntry e : run) {
             int n = Math.max(1, e.count());
             String d = e.detail() == null ? "" : e.detail().toLowerCase(Locale.ROOT);
             switch (e.action()) {
@@ -331,7 +331,7 @@ public final class Episodes {
      * rather than on any one row, which is why "tunnelled 200 blocks" can be
      * said at all — no row knows it was part of a tunnel.
      */
-    private static Episode classify(List<ActivityLog.Entry> run) {
+    private static Episode classify(List<ActivityEntry> run) {
         Stats all = measure(run);
         if (all.events() < MIN_EVENTS && all.deaths == 0) return null;
 
@@ -341,11 +341,11 @@ public final class Episodes {
         // "building". Geometry and material counts come only from the largest
         // connected heap of block edits; combat and other event rules still
         // see the whole run.
-        List<ActivityLog.Entry> workRows = mainWork(run);
+        List<ActivityEntry> workRows = mainWork(run);
         Stats work = workRows.isEmpty() ? all : measure(workRows);
         Stats s = all;
 
-        ActivityLog.Entry any = run.get(0);
+        ActivityEntry any = run.get(0);
         String kind, headline;
         int weight;
 
@@ -522,9 +522,9 @@ public final class Episodes {
      * Package-private so the AI diagram can use exactly the same geometry as
      * the headline and the browser scene.
      */
-    static List<ActivityLog.Entry> mainWork(List<ActivityLog.Entry> run) {
-        List<ActivityLog.Entry> blocks = new ArrayList<>();
-        for (ActivityLog.Entry e : run) {
+    static List<ActivityEntry> mainWork(List<ActivityEntry> run) {
+        List<ActivityEntry> blocks = new ArrayList<>();
+        for (ActivityEntry e : run) {
             if ("place".equals(e.action()) || "break".equals(e.action())) blocks.add(e);
         }
         if (blocks.size() < 2) return blocks;
@@ -533,7 +533,7 @@ public final class Episodes {
         for (int i = 0; i < owner.length; i++) owner[i] = i;
         Map<String, List<Integer>> bins = new HashMap<>();
         for (int i = 0; i < blocks.size(); i++) {
-            ActivityLog.Entry e = blocks.get(i);
+            ActivityEntry e = blocks.get(i);
             int gx = Math.floorDiv(e.x(), WORK_GAP);
             int gy = Math.floorDiv(e.y(), WORK_GAP);
             int gz = Math.floorDiv(e.z(), WORK_GAP);
@@ -543,7 +543,7 @@ public final class Episodes {
                         List<Integer> near = bins.get(bin(gx + dx, gy + dy, gz + dz));
                         if (near == null) continue;
                         for (int j : near) {
-                            ActivityLog.Entry o = blocks.get(j);
+                            ActivityEntry o = blocks.get(j);
                             if (Math.abs(e.x() - o.x()) <= WORK_GAP
                                 && Math.abs(e.y() - o.y()) <= WORK_GAP
                                 && Math.abs(e.z() - o.z()) <= WORK_GAP) {
@@ -556,19 +556,19 @@ public final class Episodes {
             bins.computeIfAbsent(bin(gx, gy, gz), k -> new ArrayList<>()).add(i);
         }
 
-        Map<Integer, List<ActivityLog.Entry>> groups = new HashMap<>();
+        Map<Integer, List<ActivityEntry>> groups = new HashMap<>();
         Map<Integer, Integer> weights = new HashMap<>();
         for (int i = 0; i < blocks.size(); i++) {
             int root = find(owner, i);
-            ActivityLog.Entry e = blocks.get(i);
+            ActivityEntry e = blocks.get(i);
             groups.computeIfAbsent(root, k -> new ArrayList<>()).add(e);
             weights.merge(root, Math.max(1, e.count()), Integer::sum);
         }
         int best = -1, most = -1;
         long latest = Long.MIN_VALUE;
-        for (Map.Entry<Integer, List<ActivityLog.Entry>> group : groups.entrySet()) {
+        for (Map.Entry<Integer, List<ActivityEntry>> group : groups.entrySet()) {
             int weight = weights.getOrDefault(group.getKey(), group.getValue().size());
-            long end = group.getValue().stream().mapToLong(ActivityLog.Entry::at).max().orElse(0);
+            long end = group.getValue().stream().mapToLong(ActivityEntry::at).max().orElse(0);
             if (weight > most || (weight == most && end > latest)) {
                 best = group.getKey(); most = weight; latest = end;
             }
@@ -606,10 +606,10 @@ public final class Episodes {
      * "two players fought" is a different event from "someone fought a
      * zombie", and getting it wrong in that direction is the safe way round.
      */
-    private static boolean looksLikePlayer(String foe, List<ActivityLog.Entry> run) {
+    private static boolean looksLikePlayer(String foe, List<ActivityEntry> run) {
         if (foe == null || foe.isEmpty()) return false;
         if (!foe.matches("[A-Za-z0-9_]{3,16}")) return false;
-        for (ActivityLog.Entry e : run) {
+        for (ActivityEntry e : run) {
             if (foe.equalsIgnoreCase(e.player())) return false;   // hitting yourself: no
         }
         return PlayerTracks.uuidOf(foe) != null;
@@ -637,10 +637,10 @@ public final class Episodes {
      *
      * @param tracks name to that player's samples, oldest first
      */
-    public static List<Episode> ofMovement(Map<String, List<PlayerTracks.Point>> tracks) {
+    public static List<Episode> ofMovement(Map<String, List<PlayerTrackPoint>> tracks) {
         List<Episode> out = new ArrayList<>();
-        for (Map.Entry<String, List<PlayerTracks.Point>> who : tracks.entrySet()) {
-            List<PlayerTracks.Point> pts = who.getValue();
+        for (Map.Entry<String, List<PlayerTrackPoint>> who : tracks.entrySet()) {
+            List<PlayerTrackPoint> pts = who.getValue();
             if (pts == null || pts.size() < 6) continue;
             int i = 0;
             while (i < pts.size() - 1) {
@@ -674,12 +674,12 @@ public final class Episodes {
      * to one over a small area is not travel, it is pacing — someone searching
      * for something, waiting for someone, or a farm being run in a loop.
      */
-    private static Episode movement(String name, List<PlayerTracks.Point> pts, double walked) {
-        PlayerTracks.Point a = pts.get(0), b = pts.get(pts.size() - 1);
+    private static Episode movement(String name, List<PlayerTrackPoint> pts, double walked) {
+        PlayerTrackPoint a = pts.get(0), b = pts.get(pts.size() - 1);
         double net = dist(a, b);
         int mins = (int) Math.max(1, Math.round((b.at() - a.at()) / 60000.0));
         int radius = 0;
-        for (PlayerTracks.Point p : pts) {
+        for (PlayerTrackPoint p : pts) {
             radius = Math.max(radius, (int) Math.round(dist(p, a)));
         }
         String uuid = idOf(name);
@@ -735,7 +735,7 @@ public final class Episodes {
         return id == null ? "" : id.toString();
     }
 
-    private static double dist(PlayerTracks.Point a, PlayerTracks.Point b) {
+    private static double dist(PlayerTrackPoint a, PlayerTrackPoint b) {
         double dx = a.x() - b.x(), dz = a.z() - b.z();
         return Math.sqrt(dx * dx + dz * dz);
     }

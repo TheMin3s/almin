@@ -118,7 +118,7 @@ public final class AiInsights {
         }
 
         /** Whether one row belongs to this scope. */
-        public boolean holds(ActivityLog.Entry e) {
+        public boolean holds(ActivityEntry e) {
             if (e == null) return false;
             return switch (kind) {
                 case "player" -> player.equalsIgnoreCase(e.player());
@@ -288,10 +288,10 @@ public final class AiInsights {
             if (now - lastAsked < every * 60_000L) return;
             if (!problem().isEmpty()) return;
 
-            List<ActivityLog.Entry> rows = ActivityLog.recent(2500);
+            List<ActivityEntry> rows = ActivityLog.recent(2500);
             if (rows.isEmpty()) return;
             long newest = 0, oldest = Long.MAX_VALUE;
-            for (ActivityLog.Entry e : rows) {
+            for (ActivityEntry e : rows) {
                 newest = Math.max(newest, e.at());
                 oldest = Math.min(oldest, e.at());
             }
@@ -437,7 +437,7 @@ public final class AiInsights {
      * timeline — is cut out of them here, so a caller cannot forget one.
      */
     public static Report summarise(Scope scope, List<Episodes.Episode> episodes,
-                                   List<ActivityLog.Entry> rows,
+                                   List<ActivityEntry> rows,
                                    long from, long to, int online, boolean force) {
         Scope where = scope == null ? Scope.all() : scope;
         String why = problem();
@@ -454,10 +454,10 @@ public final class AiInsights {
             AlminConfig cfg = AlminConfig.get();
             List<Episodes.Episode> mine = new ArrayList<>();
             for (Episodes.Episode e : episodes) if (where.holds(e)) mine.add(e);
-            List<ActivityLog.Entry> inScope = new ArrayList<>();
-            for (ActivityLog.Entry e : rows) if (where.holds(e)) inScope.add(e);
-            List<ActivityLog.Entry> chat = new ArrayList<>();
-            for (ActivityLog.Entry e : inScope) if ("chat".equals(e.action())) chat.add(e);
+            List<ActivityEntry> inScope = new ArrayList<>();
+            for (ActivityEntry e : rows) if (where.holds(e)) inScope.add(e);
+            List<ActivityEntry> chat = new ArrayList<>();
+            for (ActivityEntry e : inScope) if ("chat".equals(e.action())) chat.add(e);
 
             String prompt = prompt(where, mine, inScope, chat, from, to, online, cfg.aiSendChat);
             byte[] sceneImage = cfg.aiSendSceneImages ? AiSceneImage.render(mine, inScope) : null;
@@ -562,7 +562,7 @@ public final class AiInsights {
 
     /** Everything the model is told, and nothing else. */
     static String prompt(Scope scope, List<Episodes.Episode> episodes,
-                         List<ActivityLog.Entry> rows, List<ActivityLog.Entry> chat,
+                         List<ActivityEntry> rows, List<ActivityEntry> chat,
                          long from, long to, int online, boolean sendChat) {
         StringBuilder b = new StringBuilder(8192);
         b.append(scope.said()).append('\n');
@@ -592,7 +592,7 @@ public final class AiInsights {
             b.append("\nWhat people said:\n");
             int c = 0;
             for (int i = Math.max(0, chat.size() - MAX_CHAT); i < chat.size(); i++) {
-                ActivityLog.Entry e = chat.get(i);
+                ActivityEntry e = chat.get(i);
                 b.append("- ").append(e.player()).append(": ").append(e.detail()).append('\n');
                 if (++c >= MAX_CHAT) break;
             }
@@ -621,12 +621,12 @@ public final class AiInsights {
      * a rough centre — and it is the only view in the prompt from which a
      * rhythm is visible at all.
      */
-    static void timeline(StringBuilder b, List<ActivityLog.Entry> rows, long from, long to) {
+    static void timeline(StringBuilder b, List<ActivityEntry> rows, long from, long to) {
         if (rows == null || rows.isEmpty()) return;
         // player -> bucket -> counts
         Map<String, Map<Long, Map<String, Integer>>> grid = new java.util.TreeMap<>();
         Map<String, Map<Long, long[]>> where = new java.util.HashMap<>();
-        for (ActivityLog.Entry e : rows) {
+        for (ActivityEntry e : rows) {
             long bucket = e.at() / BUCKET_MS;
             grid.computeIfAbsent(e.player(), k -> new java.util.TreeMap<>())
                 .computeIfAbsent(bucket, k -> new java.util.LinkedHashMap<>())
@@ -903,7 +903,7 @@ public final class AiInsights {
      * they meant.
      */
     public static Lens look(String question, List<Episodes.Episode> episodes,
-                            List<ActivityLog.Entry> rows, long from, long to) {
+                            List<ActivityEntry> rows, long from, long to) {
         String q = question == null ? "" : question.trim();
         if (q.isEmpty()) return Lens.failed(q, "Say what you are looking for first.");
         if (q.length() > 400) q = q.substring(0, 400);
@@ -926,7 +926,7 @@ public final class AiInsights {
 
     /** The episodes, the vocabulary of the log, and the question. */
     static String lensPrompt(String question, List<Episodes.Episode> episodes,
-                             List<ActivityLog.Entry> rows, long from, long to) {
+                             List<ActivityEntry> rows, long from, long to) {
         StringBuilder b = new StringBuilder(4096);
         b.append("They are looking for: ").append(question).append("\n\n");
         b.append("Period: ").append(span(to - from)).append(", ending now.\n\n");
@@ -934,7 +934,7 @@ public final class AiInsights {
         java.util.TreeSet<String> players = new java.util.TreeSet<>();
         java.util.TreeSet<String> actions = new java.util.TreeSet<>();
         Map<String, Integer> things = new java.util.HashMap<>();
-        for (ActivityLog.Entry e : rows) {
+        for (ActivityEntry e : rows) {
             players.add(e.player());
             actions.add(e.action());
             if (e.detail() != null && !e.detail().isBlank() && e.detail().length() <= 40) {

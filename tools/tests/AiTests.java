@@ -94,7 +94,7 @@ public class AiTests {
         Method prompt = AI.getDeclaredMethod("prompt", scopeCls, List.class, List.class,
             List.class, long.class, long.class, int.class, boolean.class);
         prompt.setAccessible(true);
-        Class<?> entry = Class.forName("com.schecks.almin.ActivityLog$Entry");
+        Class<?> entry = Class.forName("com.schecks.almin.ActivityEntry");
         Object chat = entry.getConstructors()[0].newInstance(at, "Steve", "u", "chat",
             "meet me at spawn", "overworld", 1, 2, 3, 1);
         String withChat = (String) prompt.invoke(null, all, episodes, List.of(chat),

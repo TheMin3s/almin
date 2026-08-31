@@ -2277,7 +2277,7 @@ public final class WebUi {
     private String activityJson() {
         AlminConfig cfg = AlminConfig.get();
         JsonArray arr = new JsonArray();
-        for (ActivityLog.Entry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+        for (ActivityEntry e : ActivityLog.recent(ACTIVITY_ROWS)) {
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
@@ -2308,7 +2308,7 @@ public final class WebUi {
 
     /** Whether admins are recorded, and whether that came from the setting. */
     private static JsonObject adminPolicyJson() {
-        ActivityLog.AdminPolicy p = ActivityLog.adminPolicy();
+        ActivityAdminPolicy p = ActivityLog.adminPolicy();
         JsonObject o = new JsonObject();
         o.addProperty("ok", true);
         o.addProperty("includeAdmins", p.includeAdmins());
@@ -2357,7 +2357,7 @@ public final class WebUi {
             }
 
             JsonArray points = new JsonArray();
-            for (PlayerTracks.Point p : PlayerTracks.of(who)) {
+            for (PlayerTrackPoint p : PlayerTracks.of(who)) {
                 JsonObject o = new JsonObject();
                 o.addProperty("at", p.at());
                 o.addProperty("dim", p.dim());
@@ -2368,7 +2368,7 @@ public final class WebUi {
             }
 
             JsonArray actions = new JsonArray();
-            for (ActivityLog.Entry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+            for (ActivityEntry e : ActivityLog.recent(ACTIVITY_ROWS)) {
                 if (!e.player().equalsIgnoreCase(who)) continue;
                 if (e.dim() == null || e.dim().isEmpty()) continue;
                 JsonObject o = new JsonObject();
@@ -2411,7 +2411,7 @@ public final class WebUi {
         JsonObject tracks = new JsonObject();
         for (String name : PlayerTracks.tracked().keySet()) {
             JsonArray points = new JsonArray();
-            for (PlayerTracks.Point p : PlayerTracks.of(name)) {
+            for (PlayerTrackPoint p : PlayerTracks.of(name)) {
                 JsonObject o = new JsonObject();
                 o.addProperty("at", p.at());
                 o.addProperty("dim", p.dim());
@@ -2429,7 +2429,7 @@ public final class WebUi {
         }
 
         JsonArray actions = new JsonArray();
-        for (ActivityLog.Entry e : ActivityLog.recent(MAP_ROWS)) {
+        for (ActivityEntry e : ActivityLog.recent(MAP_ROWS)) {
             if (e.dim() == null || e.dim().isEmpty()) continue;
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
@@ -2502,7 +2502,7 @@ public final class WebUi {
             JsonObject body = run ? readBody(ex) : new JsonObject();
             AiInsights.Scope scope = scopeOf(ex, body);
 
-            List<ActivityLog.Entry> rows = ActivityLog.recent(MAP_ROWS);
+            List<ActivityEntry> rows = ActivityLog.recent(MAP_ROWS);
             List<Episodes.Episode> episodes = Episodes.of(rows);
             episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
 
@@ -2519,7 +2519,7 @@ public final class WebUi {
                     return;
                 }
                 long from = Long.MAX_VALUE, to = 0;
-                for (ActivityLog.Entry e : rows) {
+                for (ActivityEntry e : rows) {
                     from = Math.min(from, e.at());
                     to = Math.max(to, e.at());
                 }
@@ -2594,11 +2594,11 @@ public final class WebUi {
                 json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
                 return;
             }
-            List<ActivityLog.Entry> rows = ActivityLog.recent(MAP_ROWS);
+            List<ActivityEntry> rows = ActivityLog.recent(MAP_ROWS);
             List<Episodes.Episode> episodes = Episodes.of(rows);
             episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
             long from = Long.MAX_VALUE, to = 0;
-            for (ActivityLog.Entry e : rows) {
+            for (ActivityEntry e : rows) {
                 from = Math.min(from, e.at());
                 to = Math.max(to, e.at());
             }

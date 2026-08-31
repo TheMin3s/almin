@@ -46,6 +46,8 @@ public class ClientUpdateTests {
             av("almin-2.35.0-client.jar", "client", "2.36.4").equals("2.35.0"), "");
         ck("a server asset carries its own version",
             av("almin-2.36.4-server.jar", "server", "2.35.0").equals("2.36.4"), "");
+        ck("an admin asset carries its own version",
+            av("almin-2.39.0-admin.jar", "admin", "2.40.0").equals("2.39.0"), "");
         ck("a legacy jar keeps the release tag",
             av("almin-1.18.9.jar", "client", "1.18.9").equals("1.18.9"), "");
     }
@@ -110,16 +112,44 @@ public class ClientUpdateTests {
         ck("the check itself re-reads the switch",
             check.contains("ClientConfig.get().autoUpdate"), check);
         ck("...and only ever asks the hardcoded repo",
-            check.contains("REPO") && !check.contains("http"), check);
+            updater.contains("private static final String REPO = \"TheMin3s/almin\"")
+                && updater.contains("fetchLatestRelease(REPO, side)")
+                && !updater.contains("AlminConfig.get().updateRepo"), check);
+        ck("the admin extension is updated only when it is already installed",
+            check.contains("isModLoaded(ADMIN_MOD_ID)")
+                && check.contains("UpdateChecker.ADMIN_JAR"), check);
 
         String join = java.nio.file.Files.readString(
             java.nio.file.Path.of("src/main/java/com/schecks/almin/events/JoinHandler.java"));
         ck("the server advertises the required client build, not its own version",
             join.contains("new ServerVersionPayload(UpdateChecker.clientVersion())"), join);
+        ck("the server advertises admin versions only to the extension",
+            join.contains("canSend(player, AdminVersionPayload.TYPE)")
+                && join.contains("new AdminVersionPayload(UpdateChecker.adminVersion())"), join);
+
+        String admin = java.nio.file.Files.readString(
+            java.nio.file.Path.of("src/main/java/com/schecks/almin/client/AlminAdminClient.java"));
+        ck("the extension handles its independent update handshake",
+            admin.contains("registerGlobalReceiver(AdminVersionPayload.TYPE")
+                && admin.contains("ClientUpdater.onAdminServerVersion"), admin);
+
+        ck("the base client can migrate an authenticated admin to the extension",
+            client.contains("registerGlobalReceiver(AdminInstallPayload.TYPE")
+                && client.contains("ClientUpdater.onAdminInstall"), client);
+        ck("the server offers that migration only after its admin gate",
+            join.contains("TrustedOps.isAdminSource")
+                && join.contains("new AdminInstallPayload(UpdateChecker.adminVersion())")
+                && join.indexOf("TrustedOps.isAdminSource")
+                    < join.indexOf("new AdminInstallPayload(UpdateChecker.adminVersion())"), join);
 
         String release = java.nio.file.Files.readString(java.nio.file.Path.of("release.sh"));
         ck("server-only releases retain the prior client build",
             release.contains("CLIENT_VERSION=\"$CURRENT_CLIENT\"") &&
             release.contains("--client") && release.contains("client_version"), release);
+        ck("releases retain the prior admin build unless requested",
+            release.contains("ADMIN_VERSION=\"$CURRENT_ADMIN\"")
+                && release.contains("--admin") && release.contains("admin_version"), release);
+        ck("every release publishes all independently-versioned assets",
+            release.contains("\"$SERVER_JAR\" \"$CLIENT_JAR\" \"$ADMIN_JAR\""), release);
     }
 }

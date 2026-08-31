@@ -1,32 +1,25 @@
 package com.schecks.almin.client;
 
 import com.schecks.almin.AlminPayloads;
-import com.schecks.almin.ConsoleLinesPayload;
-import com.schecks.almin.ConsoleOpenPayload;
+import com.schecks.almin.AdminInstallPayload;
 import com.schecks.almin.DashboardPayload;
-import com.schecks.almin.DirListingPayload;
 import com.schecks.almin.FileTransferPayload;
 import com.schecks.almin.ModFilePayload;
 import com.schecks.almin.ModOfferPayload;
-import com.schecks.almin.NanoOpenPayload;
 import com.schecks.almin.ServerVersionPayload;
-import com.schecks.almin.ActivityPayload;
-import com.schecks.almin.PanelPayload;
-import com.schecks.almin.WebAdminPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 
 /**
- * Client-side half of Almin — the screens the server's admin tools open:
- *  - shared/offered file transfers, with a download confirmation;
- *  - the nano file editor and the directory browser;
- *  - the live console viewer;
- *  - the /almin dashboard;
+ * The lightweight, player-facing Almin client:
+ *  - suggested and server-hosted mod installation;
+ *  - client mod/runtime reporting;
+ *  - shared-file downloads and the ordinary dashboard;
  *  - the self-updater, driven by the server's version handshake.
  *
- * This class (and everything in the client package) is only loaded on a
- * physical client — the dedicated server never touches it.
+ * Server administration screens are deliberately registered by the separate
+ * {@link AlminAdminClient} entrypoint, shipped in the optional admin jar.
  */
 public class AlminClient implements ClientModInitializer {
 
@@ -49,16 +42,6 @@ public class AlminClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(DashboardPayload.TYPE, (payload, context) ->
             context.client().execute(() -> DashboardScreen.show(payload.rows(), payload.tiles(), payload.trusted())));
 
-        // Receive a nano editing session; open the editor on the main thread.
-        ClientPlayNetworking.registerGlobalReceiver(NanoOpenPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> context.client().setScreenAndShow(
-                new NanoEditorScreen(payload.path(), payload.content()))));
-
-        // Receive a directory listing; open/refresh the file browser.
-        ClientPlayNetworking.registerGlobalReceiver(DirListingPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> context.client().setScreenAndShow(
-                new DirBrowserScreen(payload.path(), payload.entries()))));
-
         // Receive the server's suggested mods and ask the player about them.
         ClientPlayNetworking.registerGlobalReceiver(ModOfferPayload.TYPE, (payload, context) ->
             context.client().execute(() ->
@@ -69,23 +52,14 @@ public class AlminClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(ModFilePayload.TYPE, (payload, context) ->
             ClientModInstaller.deliver(payload));
 
-        // Web panel status for the in-game Web tab.
-        ClientPlayNetworking.registerGlobalReceiver(WebAdminPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> WebPanelScreen.show(payload)));
-        ClientPlayNetworking.registerGlobalReceiver(ActivityPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> ActivityScreen.show(payload)));
-        ClientPlayNetworking.registerGlobalReceiver(PanelPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> PanelScreen.show(payload)));
-
         // Receive the server's Almin version; self-update if we're behind.
         ClientPlayNetworking.registerGlobalReceiver(ServerVersionPayload.TYPE, (payload, context) ->
             context.client().execute(() -> ClientUpdater.onServerVersion(payload.version())));
-
-        // Console viewer: server says "open it", and streams batches of lines.
-        ClientPlayNetworking.registerGlobalReceiver(ConsoleOpenPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> context.client().setScreenAndShow(new ConsoleScreen())));
-        ClientPlayNetworking.registerGlobalReceiver(ConsoleLinesPayload.TYPE, (payload, context) ->
-            context.client().execute(() -> ConsoleScreen.appendLines(payload.lines())));
+        // A server may offer the optional extension only after it has
+        // authenticated this player as an administrator. The client still
+        // downloads solely from Almin's hardcoded official repository.
+        ClientPlayNetworking.registerGlobalReceiver(AdminInstallPayload.TYPE, (payload, context) ->
+            context.client().execute(() -> ClientUpdater.onAdminInstall(payload.version())));
 
         // Drop cached state when we leave a server, so the next join is
         // evaluated fresh by ClientUpdater.

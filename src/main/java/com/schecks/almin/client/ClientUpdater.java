@@ -31,16 +31,19 @@ import java.util.concurrent.CompletableFuture;
 public final class ClientUpdater {
     /** Hardcoded on purpose: the server only ever supplies a version number. */
     private static final String REPO = "TheMin3s/almin";
+    public static final String ADMIN_MOD_ID = "almin_admin";
     private static final long MAX_BYTES = 64L * 1024 * 1024;
     private static final Logger LOG = LoggerFactory.getLogger("almin");
 
     private static volatile boolean handled = false;
+    private static volatile boolean adminHandled = false;
 
     /**
      * The newest version already sitting in {@code mods/} waiting for a
      * restart. Without it, every check would download the same jar again.
      */
     private static volatile String staged = "";
+    private static volatile String adminStaged = "";
 
     private static java.util.concurrent.ScheduledExecutorService checker;
 
@@ -99,20 +102,33 @@ public final class ClientUpdater {
     /** Asks GitHub what the newest release is, and takes it if it is newer. */
     private static void checkGitHub() {
         if (!ClientConfig.get().autoUpdate) return;
-        String current = UpdateChecker.currentVersion();
+        staged = checkArtifact(UpdateChecker.CLIENT_JAR, UpdateChecker.BASE_MOD_ID, "Almin", staged);
+        // Optional means optional: never install the admin suite for a player
+        // who did not choose it. Once present, it follows its own asset/version.
+        if (FabricLoader.getInstance().isModLoaded(ADMIN_MOD_ID)) {
+            adminStaged = checkArtifact(UpdateChecker.ADMIN_JAR, ADMIN_MOD_ID,
+                "Almin Admin Suite", adminStaged);
+        }
+    }
+
+    /** Returns the staged version after checking one independently-versioned jar. */
+    private static String checkArtifact(String side, String modId, String label,
+                                        String alreadyStaged) {
+        String current = UpdateChecker.modVersion(modId);
         UpdateChecker.Release latest;
         try {
-            latest = UpdateChecker.fetchLatestRelease(REPO, UpdateChecker.CLIENT_JAR);
+            latest = UpdateChecker.fetchLatestRelease(REPO, side);
         } catch (Exception e) {
-            LOG.info("[Almin] could not reach GitHub for an update check: {}", e.toString());
-            return;
+            LOG.info("[Almin] could not reach GitHub for the {} update check: {}",
+                label, e.toString());
+            return alreadyStaged;
         }
-        if (latest == null || !latest.hasJar()) return;
-        if (!worthInstalling(latest.version(), current, staged)) return;
+        if (latest == null || !latest.hasJar()) return alreadyStaged;
+        if (!worthInstalling(latest.version(), current, alreadyStaged)) return alreadyStaged;
 
-        LOG.info("[Almin] {} is newer than {} — downloading for the next launch",
-            latest.version(), current);
-        install(latest, current);
+        LOG.info("[Almin] {} {} is newer than {} — downloading for the next launch",
+            label, latest.version(), current);
+        return install(latest, current, modId, label) ? latest.version() : alreadyStaged;
     }
 
     /**
@@ -156,6 +172,7 @@ public final class ClientUpdater {
     /** Forget that we already prompted — so each new server is evaluated fresh. */
     public static void reset() {
         handled = false;
+        adminHandled = false;
     }
 
     private static void downloadAndSwap(String serverVersion, String clientVersion) {
@@ -166,9 +183,58 @@ public final class ClientUpdater {
                 LOG.warn("[Almin] client update: no jar asset for release {}", serverVersion);
                 return;
             }
-            install(release, clientVersion);
+            if (install(release, clientVersion, UpdateChecker.BASE_MOD_ID, "Almin")) {
+                staged = release.version();
+            }
         } catch (Exception e) {
             LOG.warn("[Almin] client update failed: {}", e.toString());
+        }
+    }
+
+    /** Called only by the optional admin entrypoint and its separate handshake. */
+    public static void onAdminServerVersion(String requiredVersion) {
+        if (adminHandled || requiredVersion == null || requiredVersion.isBlank()) return;
+        String current = UpdateChecker.modVersion(ADMIN_MOD_ID);
+        int cmp = UpdateChecker.compareVersions(requiredVersion, current);
+        if (cmp == 0) return;
+        adminHandled = true;
+        if (cmp > 0) {
+            LOG.info("[Almin] Admin Suite {} is behind server {} — fetching update",
+                current, requiredVersion);
+            CompletableFuture.runAsync(() -> downloadAdminAndSwap(requiredVersion, current));
+        } else {
+            LOG.info("[Almin] server expects Admin Suite {}, installed extension is {}",
+                requiredVersion, current);
+        }
+    }
+
+    /**
+     * Installs the optional extension for a player the connected server has
+     * authenticated as an administrator. This also migrates admins from the
+     * old all-in-one client without putting admin code in every player's jar.
+     */
+    public static void onAdminInstall(String requiredVersion) {
+        if (adminHandled || FabricLoader.getInstance().isModLoaded(ADMIN_MOD_ID)
+                || requiredVersion == null || requiredVersion.isBlank()) return;
+        adminHandled = true;
+        LOG.info("[Almin] this account has admin access — installing Admin Suite {}",
+            requiredVersion);
+        CompletableFuture.runAsync(() -> downloadAdminAndSwap(requiredVersion, "not installed"));
+    }
+
+    private static void downloadAdminAndSwap(String requiredVersion, String currentVersion) {
+        try {
+            UpdateChecker.Release release = UpdateChecker.fetchReleaseByTag(
+                REPO, requiredVersion, UpdateChecker.ADMIN_JAR);
+            if (release == null || !release.hasJar()) {
+                LOG.warn("[Almin] admin update: no admin jar asset for release {}", requiredVersion);
+                return;
+            }
+            if (install(release, currentVersion, ADMIN_MOD_ID, "Almin Admin Suite")) {
+                adminStaged = release.version();
+            }
+        } catch (Exception e) {
+            LOG.warn("[Almin] admin update failed: {}", e.toString());
         }
     }
 
@@ -180,7 +246,8 @@ public final class ClientUpdater {
      * download is verified to be a real mod jar before anything is replaced,
      * and a failure leaves the current install untouched.
      */
-    private static void install(UpdateChecker.Release release, String fromVersion) {
+    private static boolean install(UpdateChecker.Release release, String fromVersion,
+                                   String modId, String label) {
         Path tmp = null;
         try {
             Path modsDir = FabricLoader.getInstance().getGameDir().resolve("mods");
@@ -190,18 +257,22 @@ public final class ClientUpdater {
             if (!UpdateChecker.looksLikeValidMod(tmp)) {
                 LOG.warn("[Almin] client update: download is not a valid mod jar — aborting");
                 Files.deleteIfExists(tmp);
-                return;
+                return false;
             }
             Path target = modsDir.resolve(release.jarName());
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
             tmp = null;
-            String removal = UpdateChecker.removeOldJar(target);
-            staged = release.version();
-            LOG.info("[Almin] Almin {} is installed and will be used from the next launch {}",
-                release.version(), removal);
-            Minecraft.getInstance().execute(() -> announce(fromVersion, release.version()));
+            String removal = FabricLoader.getInstance().isModLoaded(modId)
+                ? UpdateChecker.removeOldJar(modId, target)
+                : "(new optional extension installed)";
+            LOG.info("[Almin] {} {} is installed and will be used from the next launch {}",
+                label, release.version(), removal);
+            Minecraft.getInstance().execute(() ->
+                announce(label, fromVersion, release.version()));
+            return true;
         } catch (Exception e) {
-            LOG.warn("[Almin] client update failed: {}", e.toString());
+            LOG.warn("[Almin] {} update failed: {}", label, e.toString());
+            return false;
         } finally {
             if (tmp != null) {
                 try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
@@ -216,15 +287,19 @@ public final class ClientUpdater {
      * the update applies at the next launch either way, and throwing a screen
      * in front of someone who just opened the game would be an ambush.
      */
-    private static void announce(String from, String to) {
+    private static void announce(String label, String from, String to) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        mc.setScreenAndShow(new UpdateAppliedScreen(from, to));
+        mc.setScreenAndShow(new UpdateAppliedScreen(label, from, to));
     }
 
     /** The version waiting for a restart, or "" when there is none. */
     public static String staged() {
         return staged;
+    }
+
+    public static String adminStaged() {
+        return adminStaged;
     }
 
     private static void download(String url, Path dest) throws IOException, InterruptedException {

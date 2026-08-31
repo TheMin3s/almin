@@ -1,6 +1,7 @@
 package com.schecks.almin.client;
 
 import com.schecks.almin.DashboardPayload;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -51,14 +52,17 @@ public final class DashboardScreen extends Screen {
         super(Component.literal("Almin — Dashboard"));
         this.rows = rows;
         this.tiles = tiles;
-        this.trusted = trusted;
+        // The base jar keeps the ordinary dashboard. Server-management buttons
+        // only appear when the optional suite that can answer them is present.
+        this.trusted = trusted && FabricLoader.getInstance().isModLoaded(ClientUpdater.ADMIN_MOD_ID);
     }
 
     /** Replaces the open dashboard, or opens one if the screen isn't up. */
     public static void show(List<DashboardPayload.Row> rows, DashboardPayload.Tiles tiles, boolean trusted) {
         // The other screens draw their tab strip from this, so it has to be
         // current before any of them can open.
-        AlminNav.setTrusted(trusted);
+        AlminNav.setTrusted(trusted
+            && FabricLoader.getInstance().isModLoaded(ClientUpdater.ADMIN_MOD_ID));
         Minecraft mc = Minecraft.getInstance();
         mc.setScreenAndShow(new DashboardScreen(rows, tiles, trusted));
     }

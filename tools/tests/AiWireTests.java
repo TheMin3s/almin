@@ -98,7 +98,7 @@ public class AiWireTests {
         check("no bearer header for a local model", auth.get().equals("null"));
         check("the answer came back", r.ok() && r.summary().equals("A quiet night."));
 
-        List<com.schecks.almin.ActivityLog.Entry> sceneRows = sceneRows();
+        List<com.schecks.almin.ActivityEntry> sceneRows = sceneRows();
         List<Episodes.Episode> sceneEpisodes = Episodes.of(sceneRows);
         AiInsights.Report pictured = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
             sceneRows, NOW - 60_000, NOW, 2, true);
@@ -419,15 +419,15 @@ public class AiWireTests {
 
     static List<Episodes.Episode> episodes() { return EPISODES; }
 
-    static com.schecks.almin.ActivityLog.Entry row(String who, String action, String detail) {
-        return new com.schecks.almin.ActivityLog.Entry(NOW - 30_000, who, "u", action, detail,
+    static com.schecks.almin.ActivityEntry row(String who, String action, String detail) {
+        return new com.schecks.almin.ActivityEntry(NOW - 30_000, who, "u", action, detail,
             "overworld", 10, 30, 20, 1);
     }
 
-    static List<com.schecks.almin.ActivityLog.Entry> sceneRows() {
-        List<com.schecks.almin.ActivityLog.Entry> out = new ArrayList<>();
+    static List<com.schecks.almin.ActivityEntry> sceneRows() {
+        List<com.schecks.almin.ActivityEntry> out = new ArrayList<>();
         for (int x = 0; x < 4; x++) for (int y = 0; y < 2; y++) {
-            out.add(new com.schecks.almin.ActivityLog.Entry(NOW - 30_000 + x * 10 + y,
+            out.add(new com.schecks.almin.ActivityEntry(NOW - 30_000 + x * 10 + y,
                 "Steve", "u", "place", "Oak Planks", "overworld",
                 10 + x, 64 + y, 20, 1));
         }

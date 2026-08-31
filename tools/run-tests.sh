@@ -33,7 +33,7 @@ java -cp "$CP:$OUT" BlueMapBridgeDump "$OUT/bluemap-bridge.js"
 node --check "$OUT/bluemap-bridge.js"
 
 bad=""
-for f in "$T"/*Tests.java; do
+for f in "$T"/*Tests.java "$T"/AssetPick.java "$T"/PayloadTypes.java; do
   t=$(basename "$f" .java)
   javac -cp "$CP" -d "$OUT" "$f" >/dev/null 2>&1 || { bad="$bad $t(compile)"; continue; }
   java -Dfixtures=tools/fixtures -Dharness=tools/harness -cp "$CP:$OUT" "$t" >/dev/null 2>&1 \

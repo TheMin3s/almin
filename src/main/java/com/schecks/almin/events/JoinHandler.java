@@ -4,10 +4,13 @@ import com.schecks.almin.ActivityLog;
 import com.schecks.almin.AlminConfig;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
+import com.schecks.almin.AdminVersionPayload;
+import com.schecks.almin.AdminInstallPayload;
 import com.schecks.almin.MaskConfig;
 import com.schecks.almin.ModNet;
 import com.schecks.almin.PlayerHistory;
 import com.schecks.almin.ServerVersionPayload;
+import com.schecks.almin.TrustedOps;
 import com.schecks.almin.UpdateChecker;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -47,6 +50,16 @@ public final class JoinHandler {
             if (hasClientMod) {
                 ServerPlayNetworking.send(player,
                     new ServerVersionPayload(UpdateChecker.clientVersion()));
+                if (ServerPlayNetworking.canSend(player, AdminVersionPayload.TYPE)) {
+                    ServerPlayNetworking.send(player,
+                        new AdminVersionPayload(UpdateChecker.adminVersion()));
+                } else if (TrustedOps.isAdminSource(player.createCommandSourceStack())
+                        && ServerPlayNetworking.canSend(player, AdminInstallPayload.TYPE)) {
+                    // First split-release migration: authenticated admins get
+                    // the optional official extension; ordinary players never do.
+                    ServerPlayNetworking.send(player,
+                        new AdminInstallPayload(UpdateChecker.adminVersion()));
+                }
                 ModNet.sendOffers(player);
             } else {
                 sendVanillaClientWarning(player);

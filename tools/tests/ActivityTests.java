@@ -1,6 +1,9 @@
 import com.schecks.almin.ActivityLog;
+import com.schecks.almin.ActivityAdminPolicy;
+import com.schecks.almin.ActivityEntry;
 import com.schecks.almin.ActivityPayload;
 import com.schecks.almin.AlminConfig;
+import com.schecks.almin.PlayerTrackPoint;
 import com.schecks.almin.PlayerTracks;
 import io.netty.buffer.Unpooled;
 import net.minecraft.network.RegistryFriendlyByteBuf;
@@ -113,7 +116,7 @@ public class ActivityTests {
     static void coordinates() throws Exception {
         reset();
         store.invoke(null, "Steve", "u", "break", "Stone", "the_nether", -1500, 31, 2400, false);
-        ActivityLog.Entry e = deque().peekLast();
+        ActivityEntry e = deque().peekLast();
         ck("coordinates survive as numbers",
             e.x() == -1500 && e.y() == 31 && e.z() == 2400, e.toString());
         ck("the dimension is kept", "the_nether".equals(e.dim()), e.dim());
@@ -130,7 +133,7 @@ public class ActivityTests {
         reset();
         load.invoke(null);
         ck("an old row still loads", deque().size() == 1, String.valueOf(deque().size()));
-        ActivityLog.Entry old = deque().peekFirst();
+        ActivityEntry old = deque().peekFirst();
         ck("...with its place read back out of the old string",
             old != null && old.x() == -12 && old.y() == 64 && old.z() == 300
                 && "overworld".equals(old.dim()),
@@ -145,8 +148,8 @@ public class ActivityTests {
         store.invoke(null, who, "uuid-" + who, action, detail, "overworld", 0, 64, 0, fold);
     }
     @SuppressWarnings("unchecked")
-    static Deque<ActivityLog.Entry> deque() throws Exception {
-        return (Deque<ActivityLog.Entry>) entriesF.get(null);
+    static Deque<ActivityEntry> deque() throws Exception {
+        return (Deque<ActivityEntry>) entriesF.get(null);
     }
     static void reset() throws Exception {
         deque().clear();
@@ -200,8 +203,8 @@ public class ActivityTests {
         reset();
         rec("Steve", "break", "Stone", true);
         // An old tail must not absorb a new event.
-        ActivityLog.Entry old = deque().pollLast();
-        deque().addLast(new ActivityLog.Entry(System.currentTimeMillis() - 120_000,
+        ActivityEntry old = deque().pollLast();
+        deque().addLast(new ActivityEntry(System.currentTimeMillis() - 120_000,
             old.player(), old.uuid(), old.action(), old.detail(),
             old.dim(), old.x(), old.y(), old.z(), old.count()));
         rec("Steve", "break", "Stone", true);
@@ -226,13 +229,13 @@ public class ActivityTests {
         reset();
         set("activityRetentionMinutes", 60);
         long now = System.currentTimeMillis();
-        deque().addLast(new ActivityLog.Entry(now - 120 * 60_000L, "Old", "u", "chat", "ancient", "overworld", 1, 2, 3, 1));
-        deque().addLast(new ActivityLog.Entry(now - 61 * 60_000L, "Old", "u", "chat", "just too old", "overworld", 1, 2, 3, 1));
-        deque().addLast(new ActivityLog.Entry(now - 59 * 60_000L, "New", "u", "chat", "still here", "overworld", 1, 2, 3, 1));
-        deque().addLast(new ActivityLog.Entry(now, "New", "u", "chat", "now", "overworld", 1, 2, 3, 1));
+        deque().addLast(new ActivityEntry(now - 120 * 60_000L, "Old", "u", "chat", "ancient", "overworld", 1, 2, 3, 1));
+        deque().addLast(new ActivityEntry(now - 61 * 60_000L, "Old", "u", "chat", "just too old", "overworld", 1, 2, 3, 1));
+        deque().addLast(new ActivityEntry(now - 59 * 60_000L, "New", "u", "chat", "still here", "overworld", 1, 2, 3, 1));
+        deque().addLast(new ActivityEntry(now, "New", "u", "chat", "now", "overworld", 1, 2, 3, 1));
 
         ck("size() drops what has expired", ActivityLog.size() == 2, String.valueOf(ActivityLog.size()));
-        List<ActivityLog.Entry> got = ActivityLog.recent(10);
+        List<ActivityEntry> got = ActivityLog.recent(10);
         ck("...and so does recent()", got.size() == 2, String.valueOf(got.size()));
         ck("the row just inside the window survives",
             got.stream().anyMatch(e -> e.detail().equals("still here")), got.toString());
@@ -280,9 +283,9 @@ public class ActivityTests {
         reset();
         long now = System.currentTimeMillis();
         // Older than the five-day window, whatever the window happens to be.
-        deque().addLast(new ActivityLog.Entry(now - ActivityLog.retentionMillis() - 60_000L,
+        deque().addLast(new ActivityEntry(now - ActivityLog.retentionMillis() - 60_000L,
             "Old", "u", "chat", "gone", "overworld", 1, 2, 3, 1));
-        deque().addLast(new ActivityLog.Entry(now, "New", "u", "chat", "kept", "overworld", 1, 2, 3, 1));
+        deque().addLast(new ActivityEntry(now, "New", "u", "chat", "kept", "overworld", 1, 2, 3, 1));
         prune.invoke(null);
         String after = Files.readString(f);
         ck("prune rewrites the file without expired rows",
@@ -295,19 +298,19 @@ public class ActivityTests {
 
     /** Thirteen-ish fields over the wire; hand-written codecs get order wrong. */
     static void codec() throws Exception {
-        List<ActivityLog.Entry> rows = List.of(
-            new ActivityLog.Entry(1234567890L, "Steve", "uuid-1", "break", "Stone",
+        List<ActivityEntry> rows = List.of(
+            new ActivityEntry(1234567890L, "Steve", "uuid-1", "break", "Stone",
                 "overworld", -1200, 64, 3400, 42),
-            new ActivityLog.Entry(1234567999L, "Alex", "uuid-2", "chat", "hi there",
+            new ActivityEntry(1234567999L, "Alex", "uuid-2", "chat", "hi there",
                 "the_nether", 4, -5, 6, 1));
         // Paths travel with the rows now, so the map can be drawn in game.
         List<ActivityPayload.Track> tracks = List.of(
             new ActivityPayload.Track("Steve", List.of(
-                new PlayerTracks.Point(1234567800L, "overworld", -1200, 64, 3400),
-                new PlayerTracks.Point(1234567850L, "overworld", -1150, 70, 3390))),
+                new PlayerTrackPoint(1234567800L, "overworld", -1200, 64, 3400),
+                new PlayerTrackPoint(1234567850L, "overworld", -1150, 70, 3390))),
             new ActivityPayload.Track("Alex", List.of(
-                new PlayerTracks.Point(1234567900L, "the_nether", 4, -5, 6))));
-        ActivityLog.AdminPolicy policy = new ActivityLog.AdminPolicy(true, true, false);
+                new PlayerTrackPoint(1234567900L, "the_nether", 4, -5, 6))));
+        ActivityAdminPolicy policy = new ActivityAdminPolicy(true, true, false);
         ActivityPayload sent = new ActivityPayload(rows, 99, 720, true, tracks, policy);
 
         Method w = ActivityPayload.class.getDeclaredMethod("write",
@@ -323,21 +326,21 @@ public class ActivityTests {
             buf.readableBytes() + " bytes left");
 
         // More rows than fit must be trimmed, not overflow the declared cap.
-        java.util.List<ActivityLog.Entry> many = new java.util.ArrayList<>();
+        java.util.List<ActivityEntry> many = new java.util.ArrayList<>();
         for (int i = 0; i < ActivityPayload.MAX_ROWS + 250; i++) {
-            many.add(new ActivityLog.Entry(i, "P", "u", "chat", "x".repeat(400), "overworld", 1, 2, 3, 1));
+            many.add(new ActivityEntry(i, "P", "u", "chat", "x".repeat(400), "overworld", 1, 2, 3, 1));
         }
         RegistryFriendlyByteBuf b2 = new RegistryFriendlyByteBuf(Unpooled.buffer(), null);
         java.util.List<ActivityPayload.Track> fatTracks = new java.util.ArrayList<>();
         for (int i = 0; i < 80; i++) {
-            java.util.List<PlayerTracks.Point> pts = new java.util.ArrayList<>();
+            java.util.List<PlayerTrackPoint> pts = new java.util.ArrayList<>();
             for (int j = 0; j < 400; j++) {
-                pts.add(new PlayerTracks.Point(j, "overworld", j, 64, j));
+                pts.add(new PlayerTrackPoint(j, "overworld", j, 64, j));
             }
             fatTracks.add(new ActivityPayload.Track("Player" + i, pts));
         }
         w.invoke(null, b2, new ActivityPayload(many, many.size(), 60, true,
-            fatTracks, new ActivityLog.AdminPolicy(false, false, false)));
+            fatTracks, new ActivityAdminPolicy(false, false, false)));
         int size = b2.readableBytes();
         ActivityPayload trimmed = (ActivityPayload) r.invoke(null, b2);
         ck("an over-long list is trimmed to MAX_ROWS",

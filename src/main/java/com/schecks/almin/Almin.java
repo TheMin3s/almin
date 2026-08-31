@@ -19,6 +19,7 @@ public class Almin implements ModInitializer {
         // Packet types first: both entrypoints need them declared before any
         // handler or receiver can be attached.
         AlminPayloads.registerTypes();
+        AdminPayloads.registerTypes();
         ModNet.register();
         WebAdminNet.register();
         ActivityNet.register();

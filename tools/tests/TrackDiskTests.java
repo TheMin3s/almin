@@ -1,3 +1,4 @@
+import com.schecks.almin.PlayerTrackPoint;
 import com.schecks.almin.PlayerTracks;
 
 import java.lang.reflect.*;
@@ -47,7 +48,7 @@ public class TrackDiskTests {
         load.invoke(null);
 
         check("both players come back", PlayerTracks.tracked().size() == 2);
-        List<PlayerTracks.Point> steve = PlayerTracks.of("Steve");
+        List<PlayerTrackPoint> steve = PlayerTracks.of("Steve");
         check("every point comes back", steve.size() == 30);
         check("in the order they were recorded",
             steve.get(0).at() < steve.get(29).at());
@@ -85,9 +86,9 @@ public class TrackDiskTests {
     static void record(UUID id, String name, long at, String dim, int x, int y, int z)
             throws Exception {
         Method m = PlayerTracks.class.getDeclaredMethod("record", UUID.class, String.class,
-            PlayerTracks.Point.class);
+            PlayerTrackPoint.class);
         m.setAccessible(true);
-        m.invoke(null, id, name, new PlayerTracks.Point(at, dim, x, y, z));
+        m.invoke(null, id, name, new PlayerTrackPoint(at, dim, x, y, z));
     }
 
     static void setFile(Path f) throws Exception {

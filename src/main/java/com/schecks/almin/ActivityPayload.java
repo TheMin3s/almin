@@ -18,13 +18,13 @@ import java.util.List;
  * <p>Hand-written codec: a list of seven-field rows is past what
  * {@code StreamCodec.composite} builds.
  */
-public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
+public record ActivityPayload(List<ActivityEntry> entries, int total,
                               int retentionMinutes, boolean enabled,
-                              List<Track> tracks, ActivityLog.AdminPolicy admins)
+                              List<Track> tracks, ActivityAdminPolicy admins)
         implements CustomPacketPayload {
 
     /** One player's path, thinned to fit. See {@link PlayerTracks#everyone}. */
-    public record Track(String player, List<PlayerTracks.Point> points) {}
+    public record Track(String player, List<PlayerTrackPoint> points) {}
 
     /** Rows in one packet. The screen scrolls; it does not need the whole log. */
     public static final int MAX_ROWS = 400;
@@ -54,11 +54,11 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
         StreamCodec.of(ActivityPayload::write, ActivityPayload::read);
 
     private static void write(RegistryFriendlyByteBuf buf, ActivityPayload p) {
-        List<ActivityLog.Entry> rows = p.entries;
+        List<ActivityEntry> rows = p.entries;
         int n = Math.min(rows.size(), MAX_ROWS);
         buf.writeVarInt(n);
         for (int i = 0; i < n; i++) {
-            ActivityLog.Entry e = rows.get(i);
+            ActivityEntry e = rows.get(i);
             buf.writeLong(e.at());
             buf.writeUtf(clip(e.player(), MAX_NAME), MAX_NAME);
             buf.writeUtf(clip(e.uuid(), MAX_UUID), MAX_UUID);
@@ -84,7 +84,7 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
             int points = Math.min(t.points().size(), Math.max(0, left));
             buf.writeVarInt(points);
             for (int j = 0; j < points; j++) {
-                PlayerTracks.Point pt = t.points().get(j);
+                PlayerTrackPoint pt = t.points().get(j);
                 buf.writeLong(pt.at());
                 buf.writeUtf(clip(pt.dim(), MAX_WHERE), MAX_WHERE);
                 buf.writeVarInt(pt.x());
@@ -94,8 +94,8 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
             left -= points;
         }
 
-        ActivityLog.AdminPolicy admins = p.admins == null
-            ? new ActivityLog.AdminPolicy(false, false, false) : p.admins;
+        ActivityAdminPolicy admins = p.admins == null
+            ? new ActivityAdminPolicy(false, false, false) : p.admins;
         buf.writeBoolean(admins.includeAdmins());
         buf.writeBoolean(admins.temporary());
         buf.writeBoolean(admins.configured());
@@ -103,9 +103,9 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
 
     private static ActivityPayload read(RegistryFriendlyByteBuf buf) {
         int n = Math.min(buf.readVarInt(), MAX_ROWS);
-        List<ActivityLog.Entry> rows = new ArrayList<>(n);
+        List<ActivityEntry> rows = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
-            rows.add(new ActivityLog.Entry(
+            rows.add(new ActivityEntry(
                 buf.readLong(),
                 buf.readUtf(MAX_NAME),
                 buf.readUtf(MAX_UUID),
@@ -127,9 +127,9 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
         for (int i = 0; i < players; i++) {
             String name = buf.readUtf(MAX_NAME);
             int count = Math.min(buf.readVarInt(), Math.max(0, left));
-            List<PlayerTracks.Point> points = new ArrayList<>(count);
+            List<PlayerTrackPoint> points = new ArrayList<>(count);
             for (int j = 0; j < count; j++) {
-                points.add(new PlayerTracks.Point(
+                points.add(new PlayerTrackPoint(
                     buf.readLong(), buf.readUtf(MAX_WHERE),
                     buf.readVarInt(), buf.readVarInt(), buf.readVarInt()));
             }
@@ -137,7 +137,7 @@ public record ActivityPayload(List<ActivityLog.Entry> entries, int total,
             tracks.add(new Track(name, points));
         }
 
-        ActivityLog.AdminPolicy admins = new ActivityLog.AdminPolicy(
+        ActivityAdminPolicy admins = new ActivityAdminPolicy(
             buf.readBoolean(), buf.readBoolean(), buf.readBoolean());
         return new ActivityPayload(rows, total, retention, enabled, tracks, admins);
     }

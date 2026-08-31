@@ -20,18 +20,18 @@ final class AiSceneImage {
      * red is broken. No font or client asset is needed, so this works on a
      * trimmed dedicated-server JRE.
      */
-    static byte[] render(List<Episodes.Episode> episodes, List<ActivityLog.Entry> rows) {
+    static byte[] render(List<Episodes.Episode> episodes, List<ActivityEntry> rows) {
         if (episodes == null || rows == null) return null;
-        List<List<ActivityLog.Entry>> panels = new ArrayList<>();
+        List<List<ActivityEntry>> panels = new ArrayList<>();
         for (Episodes.Episode episode : episodes) {
             if (!spatial(episode.kind())) continue;
-            List<ActivityLog.Entry> matching = new ArrayList<>();
-            for (ActivityLog.Entry row : rows) {
+            List<ActivityEntry> matching = new ArrayList<>();
+            for (ActivityEntry row : rows) {
                 if (!episode.player().equals(row.player()) || !episode.dim().equals(row.dim())) continue;
                 if (row.at() < episode.from() - 1000 || row.at() > episode.to() + 1000) continue;
                 if ("place".equals(row.action()) || "break".equals(row.action())) matching.add(row);
             }
-            List<ActivityLog.Entry> work = Episodes.mainWork(matching);
+            List<ActivityEntry> work = Episodes.mainWork(matching);
             if (work.size() >= 2) panels.add(work);
             if (panels.size() >= MAX_PANELS) break;
         }
@@ -57,7 +57,7 @@ final class AiSceneImage {
     }
 
     private static void drawPanel(int[] px, int ox, int oy, int w, int h,
-                                  List<ActivityLog.Entry> rows) {
+                                  List<ActivityEntry> rows) {
         fill(px, ox + 4, oy + 4, w - 8, h - 8, 0xFF121720);
         frame(px, ox + 4, oy + 4, w - 8, h - 8, 0xFF394454);
         int split = oy + (h * 3) / 4;
@@ -66,7 +66,7 @@ final class AiSceneImage {
         int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
         int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
         int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
-        for (ActivityLog.Entry e : rows) {
+        for (ActivityEntry e : rows) {
             minX = Math.min(minX, e.x()); maxX = Math.max(maxX, e.x());
             minY = Math.min(minY, e.y()); maxY = Math.max(maxY, e.y());
             minZ = Math.min(minZ, e.z()); maxZ = Math.max(maxZ, e.z());
@@ -89,7 +89,7 @@ final class AiSceneImage {
         int elevDot = clamp((int) Math.floor(Math.min(elevScaleX, elevScaleY) * .8), 2, 8);
 
         int shown = 0;
-        for (ActivityLog.Entry e : rows) {
+        for (ActivityEntry e : rows) {
             if (shown++ >= 2400) break;
             int colour = colour(e, minY, maxY);
             int x = (int) Math.round(left + (e.x() - minX + .5) * planScale - dot / 2.0);
@@ -105,7 +105,7 @@ final class AiSceneImage {
         }
     }
 
-    private static int colour(ActivityLog.Entry e, int minY, int maxY) {
+    private static int colour(ActivityEntry e, int minY, int maxY) {
         int base = "place".equals(e.action()) ? 0xFFD8A62E : 0xFFE64B55;
         double height = (e.y() - minY) / (double) Math.max(1, maxY - minY);
         double k = .72 + height * .38;

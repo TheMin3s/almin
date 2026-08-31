@@ -26,11 +26,15 @@ dependencies {
 processResources {
     inputs.property "version", project.version
     inputs.property "clientVersion", project.client_version
+    inputs.property "adminVersion", project.admin_version
     filesMatching("fabric.mod.json") {
         expand "version": project.version
     }
     filesMatching("almin-client-version.txt") {
         expand "client_version": project.client_version
+    }
+    filesMatching("almin-admin-version.txt") {
+        expand "admin_version": project.admin_version
     }
 }
 
@@ -52,26 +56,25 @@ jar {
 
 // ---- server / client distributions -------------------------------------------
 //
-// One codebase, two published jars. The universal `jar` above still builds and
-// runs on both sides; these are the artifacts a release ships, so an admin
-// downloads something that cannot start a web panel on a player's machine and a
-// player downloads something that carries no admin surface at all.
+// One codebase, three published jars. The universal `jar` above still builds and
+// runs on both sides; releases ship a server, a lightweight player client, and
+// an optional admin-client extension.
 //
 //  * server jar - everything except the `client` package (verified: no
 //    server-side class references it), main entrypoint, mixins applied.
-//  * client jar - the client entrypoint only, no mixins. It keeps the shared
-//    classes it links against rather than pruning to the minimum, because a
-//    missing class here would only surface as a crash on a player's machine.
+//  * client jar - dashboard, mod/file downloads, profile reporting and updater.
+//  * admin jar  - optional server-management screens; depends on the base jar.
 //
 // Each variant gets its own fabric.mod.json, generated below.
 
-def modJsonFor(String declaredVersion, String env, String entrypointsJson, String mixinsJson) {
+def modJsonFor(String declaredVersion, String env, String entrypointsJson, String mixinsJson,
+               String description = 'Server administration, client mod distribution, activity tools and self-update.') {
     return """{
   "schemaVersion": 1,
   "id": "almin",
   "version": "${declaredVersion}",
   "name": "Almin",
-  "description": "In-game server administration tools: console viewer, file browser and editor, downloads, display-name masks and self-update.",
+  "description": "${description}",
   "authors": ["schecks"],
   "license": "ARR",
   "contact": {
@@ -117,7 +120,45 @@ def clientModJson = tasks.register('clientModJson') {
         // No mixins: every mixin in this mod targets a server class.
         f.text = modJsonFor(project.client_version.toString(), 'client',
             '{\n    "client": ["com.schecks.almin.client.AlminClient"]\n  }',
-            '')
+            '',
+            'Player-facing Almin client for mod downloads, server mod reporting, shared files and self-update.')
+    }
+}
+
+def adminModJson = tasks.register('adminModJson') {
+    def out = layout.buildDirectory.file('dist/admin/fabric.mod.json')
+    inputs.property('version', project.admin_version)
+    inputs.property('baseVersion', project.admin_base_version)
+    outputs.file(out)
+    doLast {
+        def f = out.get().asFile
+        f.parentFile.mkdirs()
+        f.text = """{
+  "schemaVersion": 1,
+  "id": "almin_admin",
+  "version": "${project.admin_version}",
+  "name": "Almin Admin Suite",
+  "description": "Optional in-game server administration screens for Almin.",
+  "authors": ["schecks"],
+  "license": "ARR",
+  "contact": {
+    "homepage": "https://github.com/TheMin3s/almin",
+    "sources": "https://github.com/TheMin3s/almin",
+    "issues": "https://github.com/TheMin3s/almin/issues"
+  },
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.schecks.almin.client.AlminAdminClient"]
+  },
+  "depends": {
+    "almin": ">=${project.admin_base_version}",
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
+"""
     }
 }
 
@@ -141,11 +182,79 @@ def clientJar = tasks.register('clientJar', Jar) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(clientModJson)
     from(sourceSets.main.output) {
-        exclude 'fabric.mod.json'
+        include(
+            'com/schecks/almin/AlminPayloads*.class',
+            'com/schecks/almin/UpdateChecker*.class',
+            'com/schecks/almin/ServerVersionPayload*.class',
+            'com/schecks/almin/AdminInstallPayload*.class',
+            'com/schecks/almin/DashboardPayload*.class',
+            'com/schecks/almin/ModOfferPayload*.class',
+            'com/schecks/almin/ModFilePayload*.class',
+            'com/schecks/almin/ModFileRequestPayload*.class',
+            'com/schecks/almin/ModResponsePayload*.class',
+            'com/schecks/almin/ClientProfilePayload*.class',
+            'com/schecks/almin/FileTransferPayload*.class',
+            'com/schecks/almin/client/AlminClient*.class',
+            'com/schecks/almin/client/AlminNav*.class',
+            'com/schecks/almin/client/ClientConfig*.class',
+            'com/schecks/almin/client/ClientModInstaller*.class',
+            'com/schecks/almin/client/ClientProfileReport*.class',
+            'com/schecks/almin/client/ClientUpdater*.class',
+            'com/schecks/almin/client/DashboardScreen*.class',
+            'com/schecks/almin/client/FileDownloadHandler*.class',
+            'com/schecks/almin/client/ModOfferResultScreen*.class',
+            'com/schecks/almin/client/ModOfferScreen*.class',
+            'com/schecks/almin/client/ServerOutdatedScreen*.class',
+            'com/schecks/almin/client/Text*.class',
+            'com/schecks/almin/client/UpdateAppliedScreen*.class',
+            'com/schecks/almin/client/UpdateRefuseConfirmScreen*.class'
+        )
     }
     from('LICENSE') { rename { "${it}_almin" } }
 }
 
+def adminJar = tasks.register('adminJar', Jar) {
+    dependsOn adminModJson
+    archiveClassifier = 'admin'
+    archiveVersion = project.admin_version
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(adminModJson)
+    from(sourceSets.main.output) {
+        include(
+            'com/schecks/almin/AdminPayloads*.class',
+            'com/schecks/almin/AdminVersionPayload*.class',
+            'com/schecks/almin/DirListingPayload*.class',
+            'com/schecks/almin/ConsoleOpenPayload*.class',
+            'com/schecks/almin/WebAdminPayload*.class',
+            'com/schecks/almin/NanoOpenPayload*.class',
+            'com/schecks/almin/ConsoleLinesPayload*.class',
+            'com/schecks/almin/ActivityPayload*.class',
+            'com/schecks/almin/PanelPayload*.class',
+            'com/schecks/almin/DirRequestPayload*.class',
+            'com/schecks/almin/ConsoleSubscribePayload*.class',
+            'com/schecks/almin/WebAdminRequestPayload*.class',
+            'com/schecks/almin/WebPasswordPayload*.class',
+            'com/schecks/almin/WebControlPayload*.class',
+            'com/schecks/almin/ActivityRequestPayload*.class',
+            'com/schecks/almin/NanoSavePayload*.class',
+            'com/schecks/almin/FileUploadPayload*.class',
+            'com/schecks/almin/ActivityEntry.class',
+            'com/schecks/almin/ActivityAdminPolicy.class',
+            'com/schecks/almin/PlayerTrackPoint.class',
+            'com/schecks/almin/client/AlminAdminClient*.class',
+            'com/schecks/almin/client/ActivityScreen*.class',
+            'com/schecks/almin/client/ConsoleScreen*.class',
+            'com/schecks/almin/client/DirBrowserScreen*.class',
+            'com/schecks/almin/client/EntryContextScreen*.class',
+            'com/schecks/almin/client/NanoEditorScreen*.class',
+            'com/schecks/almin/client/PanelScreen*.class',
+            'com/schecks/almin/client/RenameFileScreen*.class',
+            'com/schecks/almin/client/WebPanelScreen*.class'
+        )
+    }
+    from('LICENSE') { rename { "${it}_almin_admin" } }
+}
+
 tasks.named('build') {
-    dependsOn serverJar, clientJar
+    dependsOn serverJar, clientJar, adminJar
 }

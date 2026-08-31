@@ -14,7 +14,10 @@
   "environment": "*",
   "entrypoints": {
     "main": ["com.schecks.almin.Almin"],
-    "client": ["com.schecks.almin.client.AlminClient"]
+    "client": [
+      "com.schecks.almin.client.AlminClient",
+      "com.schecks.almin.client.AlminAdminClient"
+    ]
   },
   "mixins": [
     "almin.mixins.json"

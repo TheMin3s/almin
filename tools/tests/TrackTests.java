@@ -1,4 +1,5 @@
 import com.schecks.almin.AlminConfig;
+import com.schecks.almin.PlayerTrackPoint;
 import com.schecks.almin.PlayerTracks;
 
 import java.lang.reflect.*;
@@ -28,7 +29,7 @@ public class TrackTests {
         inst.setAccessible(true); inst.set(null, cc.newInstance());
 
         record = PlayerTracks.class.getDeclaredMethod("record",
-            UUID.class, String.class, PlayerTracks.Point.class);
+            UUID.class, String.class, PlayerTrackPoint.class);
         record.setAccessible(true);
         expire = PlayerTracks.class.getDeclaredMethod("expire", long.class);
         expire.setAccessible(true);
@@ -47,7 +48,7 @@ public class TrackTests {
     }
 
     static void put(UUID id, String name, long at, String dim, int x, int z) throws Exception {
-        record.invoke(null, id, name, new PlayerTracks.Point(at, dim, x, 64, z));
+        record.invoke(null, id, name, new PlayerTrackPoint(at, dim, x, 64, z));
     }
 
     static void sampling() throws Exception {
@@ -56,7 +57,7 @@ public class TrackTests {
         put(steve, "Steve", t, "overworld", 0, 0);
         put(steve, "Steve", t + 1000, "overworld", 100, 0);
         put(steve, "Steve", t + 2000, "overworld", 200, 0);
-        List<PlayerTracks.Point> track = PlayerTracks.of(steve);
+        List<PlayerTrackPoint> track = PlayerTracks.of(steve);
         ck("moving is recorded", track.size() == 3, String.valueOf(track.size()));
         ck("...oldest first", track.get(0).x() == 0 && track.get(2).x() == 200,
             track.get(0).x() + ".." + track.get(2).x());
@@ -115,7 +116,7 @@ public class TrackTests {
         put(steve, "Steve", now - 3_600_000, "overworld", 500, 0);
         put(steve, "Steve", now, "overworld", 1000, 0);
         expire.invoke(null, now - 5_400_000);
-        List<PlayerTracks.Point> left = PlayerTracks.of(steve);
+        List<PlayerTrackPoint> left = PlayerTracks.of(steve);
         ck("old points are dropped", left.size() == 2, String.valueOf(left.size()));
         ck("...the oldest first", left.get(0).x() == 500, String.valueOf(left.get(0).x()));
 
@@ -159,15 +160,15 @@ public class TrackTests {
         for (int i = 0; i < 900; i++) put(steve, "Steve", t + i * 1000L, "overworld", i * 20, 0);
         for (int i = 0; i < 900; i++) put(alex, "Alex", t + i * 1000L, "overworld", 0, i * 20);
 
-        Map<String, List<PlayerTracks.Point>> all = PlayerTracks.everyone(200);
+        Map<String, List<PlayerTrackPoint>> all = PlayerTracks.everyone(200);
         ck("everyone is included", all.size() == 2, all.keySet().toString());
         int total = 0;
-        for (List<PlayerTracks.Point> pts : all.values()) total += pts.size();
+        for (List<PlayerTrackPoint> pts : all.values()) total += pts.size();
         ck("the budget is respected", total <= 200 + all.size(), String.valueOf(total));
         ck("...and it is not simply empty", total > 100, String.valueOf(total));
 
-        List<PlayerTracks.Point> thin = all.get("Steve");
-        List<PlayerTracks.Point> full = PlayerTracks.of("Steve");
+        List<PlayerTrackPoint> thin = all.get("Steve");
+        List<PlayerTrackPoint> full = PlayerTracks.of("Steve");
         ck("the path still spans the whole period, not just the end",
             thin.get(0).at() == full.get(0).at(), thin.get(0).at() + " vs " + full.get(0).at());
         ck("...and still ends where the player actually is",
@@ -175,7 +176,7 @@ public class TrackTests {
             thin.get(thin.size() - 1).x() + " vs " + full.get(full.size() - 1).x());
 
         // A budget larger than the data must not invent or drop anything.
-        Map<String, List<PlayerTracks.Point>> whole = PlayerTracks.everyone(100000);
+        Map<String, List<PlayerTrackPoint>> whole = PlayerTracks.everyone(100000);
         ck("a generous budget returns the lot",
             whole.get("Steve").size() == full.size(),
             whole.get("Steve").size() + " vs " + full.size());

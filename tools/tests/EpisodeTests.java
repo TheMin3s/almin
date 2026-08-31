@@ -1,5 +1,7 @@
 import com.schecks.almin.ActivityLog;
+import com.schecks.almin.ActivityEntry;
 import com.schecks.almin.Episodes;
+import com.schecks.almin.PlayerTrackPoint;
 import com.schecks.almin.PlayerTracks;
 
 import java.util.*;
@@ -22,19 +24,19 @@ public class EpisodeTests {
         if (!ok) failures++;
     }
 
-    static ActivityLog.Entry row(String who, String action, String detail,
+    static ActivityEntry row(String who, String action, String detail,
                                  int x, int y, int z, int count) {
         clock += 1500;
-        return new ActivityLog.Entry(clock, who, "uuid-" + who, action, detail,
+        return new ActivityEntry(clock, who, "uuid-" + who, action, detail,
             "overworld", x, y, z, count);
     }
 
-    static Episodes.Episode only(List<ActivityLog.Entry> rows) {
+    static Episodes.Episode only(List<ActivityEntry> rows) {
         List<Episodes.Episode> out = Episodes.of(rows);
         return out.isEmpty() ? null : out.get(0);
     }
 
-    static Episodes.Episode of(List<ActivityLog.Entry> rows, String kind) {
+    static Episodes.Episode of(List<ActivityEntry> rows, String kind) {
         for (Episodes.Episode e : Episodes.of(rows)) if (e.kind().equals(kind)) return e;
         return null;
     }
@@ -42,7 +44,7 @@ public class EpisodeTests {
     public static void main(String[] a) {
         // ---- a tree ----
         clock = T;
-        List<ActivityLog.Entry> tree = new ArrayList<>();
+        List<ActivityEntry> tree = new ArrayList<>();
         for (int y = 64; y < 71; y++) tree.add(row("Steve", "break", "Oak Log", 100, y, 200, 1));
         for (int i = 0; i < 6; i++) tree.add(row("Steve", "break", "Oak Leaves", 101, 71, 201, 1));
         Episodes.Episode e = only(tree);
@@ -52,7 +54,7 @@ public class EpisodeTests {
 
         // ---- a shaft ----
         clock = T;
-        List<ActivityLog.Entry> shaft = new ArrayList<>();
+        List<ActivityEntry> shaft = new ArrayList<>();
         for (int y = 64; y > 20; y--) shaft.add(row("Steve", "break", "Stone", 50, y, 50, 1));
         e = only(shaft);
         check("one column going down is a shaft", e != null && e.kind().equals("shaft"));
@@ -61,7 +63,7 @@ public class EpisodeTests {
 
         // ---- a tunnel ----
         clock = T;
-        List<ActivityLog.Entry> tunnel = new ArrayList<>();
+        List<ActivityEntry> tunnel = new ArrayList<>();
         for (int x = 0; x < 60; x++) {
             tunnel.add(row("Steve", "break", "Deepslate", x, 11, 300, 1));
             tunnel.add(row("Steve", "break", "Deepslate", x, 12, 300, 1));
@@ -73,7 +75,7 @@ public class EpisodeTests {
 
         // ---- a build ----
         clock = T;
-        List<ActivityLog.Entry> build = new ArrayList<>();
+        List<ActivityEntry> build = new ArrayList<>();
         for (int y = 64; y < 71; y++)
             for (int x = 0; x < 6; x++)
                 build.add(row("Alex", "place", "Oak Planks", 400 + x, y, 400, 1));
@@ -86,7 +88,7 @@ public class EpisodeTests {
         // part of the build's box, turning this 4x2 wall into "45 across and
         // 120 high". Only the connected block heap is work geometry.
         clock = T;
-        List<ActivityLog.Entry> small = new ArrayList<>();
+        List<ActivityEntry> small = new ArrayList<>();
         for (int y = 64; y <= 65; y++)
             for (int x = 100; x < 104; x++)
                 small.add(row("Alex", "place", "Oak Planks", x, y, 100, 1));
@@ -105,7 +107,7 @@ public class EpisodeTests {
         // Twenty by twenty at one height. It used to be twenty by one, which
         // is not a floor at all — it is a path, and is now classified as one.
         clock = T;
-        List<ActivityLog.Entry> floor = new ArrayList<>();
+        List<ActivityEntry> floor = new ArrayList<>();
         for (int x = 0; x < 20; x++)
             for (int z = 0; z < 20; z++)
                 floor.add(row("Alex", "place", "Stone Bricks", 500 + x, 64, 500 + z, 1));
@@ -115,7 +117,7 @@ public class EpisodeTests {
 
         // ---- a death wins over everything else in the run ----
         clock = T;
-        List<ActivityLog.Entry> died = new ArrayList<>();
+        List<ActivityEntry> died = new ArrayList<>();
         for (int i = 0; i < 12; i++) died.add(row("Steve", "break", "Stone", 60, 30, 60, 1));
         died.add(row("Steve", "death", "Steve was blown up by a Creeper", 60, 30, 60, 1));
         e = only(died);
@@ -125,7 +127,7 @@ public class EpisodeTests {
 
         // ---- a fight with a mob is not player-versus-player ----
         clock = T;
-        List<ActivityLog.Entry> fight = new ArrayList<>();
+        List<ActivityEntry> fight = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             fight.add(row("Steve", "attack", "Zombie", 70, 64, 70, 1));
             fight.add(row("Steve", "hurt", "Zombie  3 damage", 70, 64, 70, 1));
@@ -136,21 +138,21 @@ public class EpisodeTests {
 
         // ---- runs are cut by time and by distance ----
         clock = T;
-        List<ActivityLog.Entry> two = new ArrayList<>();
+        List<ActivityEntry> two = new ArrayList<>();
         for (int i = 0; i < 8; i++) two.add(row("Steve", "break", "Stone", 10, 40, 10, 1));
         clock += 20 * 60_000L;                       // twenty minutes later
         for (int i = 0; i < 8; i++) two.add(row("Steve", "break", "Stone", 12, 40, 12, 1));
         check("a long pause starts a new episode", Episodes.of(two).size() == 2);
 
         clock = T;
-        List<ActivityLog.Entry> apart = new ArrayList<>();
+        List<ActivityEntry> apart = new ArrayList<>();
         for (int i = 0; i < 8; i++) apart.add(row("Steve", "break", "Stone", 10, 40, 10, 1));
         for (int i = 0; i < 8; i++) apart.add(row("Steve", "break", "Stone", 900, 40, 900, 1));
         check("somewhere else starts a new episode", Episodes.of(apart).size() == 2);
 
         // ---- folded rows count as their count ----
         clock = T;
-        List<ActivityLog.Entry> folded = new ArrayList<>();
+        List<ActivityEntry> folded = new ArrayList<>();
         folded.add(row("Steve", "break", "Stone", 10, 12, 10, 30));
         folded.add(row("Steve", "break", "Stone", 11, 12, 11, 30));
         folded.add(row("Steve", "break", "Stone", 12, 12, 12, 30));
@@ -167,15 +169,15 @@ public class EpisodeTests {
 
         // ---- movement ----
         long m = T;
-        List<PlayerTracks.Point> walk = new ArrayList<>();
-        for (int i = 0; i <= 30; i++) walk.add(new PlayerTracks.Point(m + i * 5000L,
+        List<PlayerTrackPoint> walk = new ArrayList<>();
+        for (int i = 0; i <= 30; i++) walk.add(new PlayerTrackPoint(m + i * 5000L,
             "overworld", i * 30, 64, 0));
         List<Episodes.Episode> moves = Episodes.ofMovement(Map.of("Steve", walk));
         check("a long straight walk is travel",
             moves.stream().anyMatch(x -> x.kind().equals("travel")));
 
-        List<PlayerTracks.Point> pacing = new ArrayList<>();
-        for (int i = 0; i <= 60; i++) pacing.add(new PlayerTracks.Point(m + i * 5000L,
+        List<PlayerTrackPoint> pacing = new ArrayList<>();
+        for (int i = 0; i <= 60; i++) pacing.add(new PlayerTrackPoint(m + i * 5000L,
             "overworld", (i % 2 == 0) ? 0 : 20, 64, 0));
         moves = Episodes.ofMovement(Map.of("Alex", pacing));
         check("walking a long way without getting anywhere is pacing",
@@ -186,7 +188,7 @@ public class EpisodeTests {
 
         // ---- the new shapes ----
         clock = T;
-        List<ActivityLog.Entry> lava = new ArrayList<>();
+        List<ActivityEntry> lava = new ArrayList<>();
         for (int i = 0; i < 4; i++) lava.add(row("Alex", "place", "Lava", 300, 64, 300, 1));
         e = only(lava);
         check("lava going down is called out on its own", e != null && e.kind().equals("hazard"));
@@ -195,14 +197,14 @@ public class EpisodeTests {
 
         // Even with a death in the same run, which otherwise wins.
         clock = T;
-        List<ActivityLog.Entry> both = new ArrayList<>(lava);
+        List<ActivityEntry> both = new ArrayList<>(lava);
         both.add(row("Alex", "death", "Alex burned to death", 300, 64, 300, 1));
         check("  and still wins when somebody also died",
             only(both) != null && only(both).kind().equals("hazard"));
 
         // A lava bucket lands as a 'use', not a 'place'.
         clock = T;
-        List<ActivityLog.Entry> bucket = new ArrayList<>();
+        List<ActivityEntry> bucket = new ArrayList<>();
         for (int i = 0; i < 5; i++)
             bucket.add(row("Alex", "use", "Stone with Lava Bucket", 300, 64, 300, 1));
         check("  including lava poured from a bucket",
@@ -210,13 +212,13 @@ public class EpisodeTests {
 
         // A campfire is not an alarm.
         clock = T;
-        List<ActivityLog.Entry> camp = new ArrayList<>();
+        List<ActivityEntry> camp = new ArrayList<>();
         for (int i = 0; i < 12; i++) camp.add(row("Alex", "place", "Campfire", 300 + i, 64, 300, 1));
         check("  but a campfire is not one",
             only(camp) != null && !only(camp).kind().equals("hazard"));
 
         clock = T;
-        List<ActivityLog.Entry> farm = new ArrayList<>();
+        List<ActivityEntry> farm = new ArrayList<>();
         for (int i = 0; i < 20; i++) farm.add(row("Steve", "kill", "Zombie", 400, 30, 400, 1));
         e = only(farm);
         check("twenty mobs killed in one spot is a grinder",
@@ -225,7 +227,7 @@ public class EpisodeTests {
             e != null && e.headline().contains("Zombie"));
 
         clock = T;
-        List<ActivityLog.Entry> tower = new ArrayList<>();
+        List<ActivityEntry> tower = new ArrayList<>();
         for (int y = 64; y < 80; y++) tower.add(row("Steve", "place", "Dirt", 500, y, 500, 1));
         e = only(tower);
         check("one column going up is a tower", e != null && e.kind().equals("tower"));
@@ -233,31 +235,31 @@ public class EpisodeTests {
             e != null && e.headline().contains("y 64") && e.headline().contains("y 79"));
 
         clock = T;
-        List<ActivityLog.Entry> bridge = new ArrayList<>();
+        List<ActivityEntry> bridge = new ArrayList<>();
         for (int x = 0; x < 30; x++) bridge.add(row("Steve", "place", "Stone", 600 + x, 70, 600, 1));
         e = only(bridge);
         check("a line of placed blocks is a path", e != null && e.kind().equals("bridge"));
 
         clock = T;
-        List<ActivityLog.Entry> wire = new ArrayList<>();
+        List<ActivityEntry> wire = new ArrayList<>();
         for (int i = 0; i < 5; i++) wire.add(row("Steve", "place", "Redstone Dust", 700 + i, 64, 700, 1));
         for (int i = 0; i < 4; i++) wire.add(row("Steve", "place", "Repeater", 700 + i, 64, 701, 1));
         e = only(wire);
         check("redstone parts are wiring, not building", e != null && e.kind().equals("redstone"));
 
         clock = T;
-        List<ActivityLog.Entry> made = new ArrayList<>();
+        List<ActivityEntry> made = new ArrayList<>();
         for (int i = 0; i < 10; i++) made.add(row("Steve", "craft", "Stick", 800, 64, 800, 1));
         check("crafting is its own stretch",
             only(made) != null && only(made).kind().equals("craft"));
 
         clock = T;
-        List<ActivityLog.Entry> traded = new ArrayList<>();
+        List<ActivityEntry> traded = new ArrayList<>();
         for (int i = 0; i < 6; i++) traded.add(row("Steve", "trade", "Emerald", 810, 64, 810, 1));
         check("trading is too", only(traded) != null && only(traded).kind().equals("trade"));
 
         clock = T;
-        List<ActivityLog.Entry> wrote = new ArrayList<>();
+        List<ActivityEntry> wrote = new ArrayList<>();
         wrote.add(row("Steve", "sign", "keep out / this means you", 820, 64, 820, 1));
         for (int i = 0; i < 4; i++) wrote.add(row("Steve", "place", "Oak Sign", 820, 64, 820, 1));
         e = only(wrote);
@@ -266,14 +268,14 @@ public class EpisodeTests {
             e != null && e.headline().contains("keep out"));
 
         clock = T;
-        List<ActivityLog.Entry> slept = new ArrayList<>();
+        List<ActivityEntry> slept = new ArrayList<>();
         slept.add(row("Steve", "sleep", "went to bed", 830, 64, 830, 1));
         for (int i = 0; i < 4; i++) slept.add(row("Steve", "interact", "Bed", 830, 64, 830, 1));
         check("sleeping says where home is",
             of(slept, "camp") != null || (only(slept) != null && only(slept).kind().equals("camp")));
 
         clock = T;
-        List<ActivityLog.Entry> dumped = new ArrayList<>();
+        List<ActivityEntry> dumped = new ArrayList<>();
         for (int i = 0; i < 8; i++) dumped.add(row("Steve", "drop", "64× Cobblestone", 840, 64, 840, 1));
         e = only(dumped);
         check("an inventory on the floor is a stretch of its own",
@@ -281,20 +283,20 @@ public class EpisodeTests {
 
         // ---- movement the rules did not have before ----
         long m2 = T;
-        List<PlayerTracks.Point> flying = new ArrayList<>();
+        List<PlayerTrackPoint> flying = new ArrayList<>();
         for (int i = 0; i <= 40; i++) {
-            flying.add(new PlayerTracks.Point(m2 + i * 1000L, "overworld", i * 30, 120, 0));
+            flying.add(new PlayerTrackPoint(m2 + i * 1000L, "overworld", i * 30, 120, 0));
         }
         List<Episodes.Episode> fast = Episodes.ofMovement(Map.of("Alex", flying));
         check("moving faster than anyone runs is called out",
             fast.stream().anyMatch(x -> x.kind().equals("flight")));
 
-        List<PlayerTracks.Point> wandering = new ArrayList<>();
+        List<PlayerTrackPoint> wandering = new ArrayList<>();
         for (int i = 0; i <= 80; i++) {
             // A wide loop that comes back: far from home, not far from where
             // it started.
             double turn = i * Math.PI / 20;
-            wandering.add(new PlayerTracks.Point(m2 + i * 20_000L, "overworld",
+            wandering.add(new PlayerTrackPoint(m2 + i * 20_000L, "overworld",
                 (int) Math.round(Math.cos(turn) * 140), 64,
                 (int) Math.round(Math.sin(turn) * 140)));
         }
@@ -307,7 +309,7 @@ public class EpisodeTests {
 
         // ---- the most notable comes first ----
         clock = T;
-        List<ActivityLog.Entry> mixed = new ArrayList<>(died);
+        List<ActivityEntry> mixed = new ArrayList<>(died);
         clock = T;
         for (int i = 0; i < 10; i++) mixed.add(row("Alex", "item", "Bread", 800, 64, 800, 1));
         List<Episodes.Episode> ordered = Episodes.of(mixed);

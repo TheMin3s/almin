@@ -1,9 +1,10 @@
 package com.schecks.almin.client;
 
-import com.schecks.almin.ActivityLog;
+import com.schecks.almin.ActivityAdminPolicy;
+import com.schecks.almin.ActivityEntry;
 import com.schecks.almin.ActivityPayload;
 import com.schecks.almin.ActivityRequestPayload;
-import com.schecks.almin.PlayerTracks;
+import com.schecks.almin.PlayerTrackPoint;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -172,7 +173,7 @@ public final class ActivityScreen extends Screen {
      * and a cycle would hide which one you just made.
      */
     private void addAdminButtons(int cx) {
-        ActivityLog.AdminPolicy p = state == null ? null : state.admins();
+        ActivityAdminPolicy p = state == null ? null : state.admins();
         boolean on = p != null && p.includeAdmins();
         boolean saved = p != null && p.configured();
         boolean temp = p != null && p.temporary();
@@ -209,14 +210,14 @@ public final class ActivityScreen extends Screen {
         list.clear();
         if (state == null) return;
         String q = filter == null ? "" : filter.getValue().trim().toLowerCase(Locale.ROOT);
-        for (ActivityLog.Entry e : visible(state.entries(), q)) list.add(new RowEntry(e));
+        for (ActivityEntry e : visible(state.entries(), q)) list.add(new RowEntry(e));
     }
 
     /** Rows matching {@code q} in any of the fields a person would search. */
-    static List<ActivityLog.Entry> visible(List<ActivityLog.Entry> all, String q) {
+    static List<ActivityEntry> visible(List<ActivityEntry> all, String q) {
         if (q == null || q.isEmpty()) return all;
-        List<ActivityLog.Entry> out = new ArrayList<>();
-        for (ActivityLog.Entry e : all) {
+        List<ActivityEntry> out = new ArrayList<>();
+        for (ActivityEntry e : all) {
             if (e.player().toLowerCase(Locale.ROOT).contains(q)
                 || e.action().toLowerCase(Locale.ROOT).contains(q)
                 || e.detail().toLowerCase(Locale.ROOT).contains(q)
@@ -289,16 +290,16 @@ public final class ActivityScreen extends Screen {
         g.outline(mapX, mapY, mapW, MAP_H, MAP_EDGE);
 
         List<ActivityPayload.Track> tracks = state.tracks() == null ? List.of() : state.tracks();
-        List<ActivityLog.Entry> acts = new ArrayList<>();
-        for (ActivityLog.Entry e : state.entries()) {
+        List<ActivityEntry> acts = new ArrayList<>();
+        for (ActivityEntry e : state.entries()) {
             if (e.dim() != null && !e.dim().isEmpty()) acts.add(e);
         }
 
         Set<String> dims = new LinkedHashSet<>();
         for (ActivityPayload.Track t : tracks) {
-            for (PlayerTracks.Point pt : t.points()) if (!pt.dim().isEmpty()) dims.add(pt.dim());
+            for (PlayerTrackPoint pt : t.points()) if (!pt.dim().isEmpty()) dims.add(pt.dim());
         }
-        for (ActivityLog.Entry e : acts) dims.add(e.dim());
+        for (ActivityEntry e : acts) dims.add(e.dim());
         if (dims.isEmpty()) {
             g.centeredText(this.font, Component.literal("No positions recorded yet."),
                 mapX + mapW / 2, mapY + MAP_H / 2 - 4, NOTE);
@@ -308,11 +309,11 @@ public final class ActivityScreen extends Screen {
 
         long from = Long.MAX_VALUE, to = 0;
         for (ActivityPayload.Track t : tracks) {
-            for (PlayerTracks.Point pt : t.points()) {
+            for (PlayerTrackPoint pt : t.points()) {
                 from = Math.min(from, pt.at()); to = Math.max(to, pt.at());
             }
         }
-        for (ActivityLog.Entry e : acts) { from = Math.min(from, e.at()); to = Math.max(to, e.at()); }
+        for (ActivityEntry e : acts) { from = Math.min(from, e.at()); to = Math.max(to, e.at()); }
         if (from == Long.MAX_VALUE) from = to;
         long at = from + (long) ((to - from) * cursor);
 
@@ -321,13 +322,13 @@ public final class ActivityScreen extends Screen {
         int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
         int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
         for (ActivityPayload.Track t : tracks) {
-            for (PlayerTracks.Point pt : t.points()) {
+            for (PlayerTrackPoint pt : t.points()) {
                 if (!mapDim.equals(pt.dim())) continue;
                 minX = Math.min(minX, pt.x()); maxX = Math.max(maxX, pt.x());
                 minZ = Math.min(minZ, pt.z()); maxZ = Math.max(maxZ, pt.z());
             }
         }
-        for (ActivityLog.Entry e : acts) {
+        for (ActivityEntry e : acts) {
             if (!mapDim.equals(e.dim())) continue;
             minX = Math.min(minX, e.x()); maxX = Math.max(maxX, e.x());
             minZ = Math.min(minZ, e.z()); maxZ = Math.max(maxZ, e.z());
@@ -354,7 +355,7 @@ public final class ActivityScreen extends Screen {
             int color = playerColor(t.player());
             int px = Integer.MIN_VALUE, py = 0, lastX = 0, lastY = 0;
             boolean any = false;
-            for (PlayerTracks.Point pt : t.points()) {
+            for (PlayerTrackPoint pt : t.points()) {
                 if (!mapDim.equals(pt.dim()) || pt.at() > at) continue;
                 int sx = innerX + (int) ((pt.x() - cxW) / span * innerW + innerW / 2.0);
                 int sy = innerY + (int) ((pt.z() - czW) / span * innerH + innerH / 2.0);
@@ -373,7 +374,7 @@ public final class ActivityScreen extends Screen {
         // Everything that had happened by the cursor, not only the last moment
         // of it: a narrow window looks tidy and is useless, because scrubbing
         // to a quiet minute empties the map of the marks it exists to show.
-        for (ActivityLog.Entry e : acts) {
+        for (ActivityEntry e : acts) {
             if (!mapDim.equals(e.dim()) || e.at() > at) continue;
             int sx = innerX + (int) ((e.x() - cxW) / span * innerW + innerW / 2.0);
             int sy = innerY + (int) ((e.z() - czW) / span * innerH + innerH / 2.0);
@@ -413,10 +414,10 @@ public final class ActivityScreen extends Screen {
         Set<String> dims = new LinkedHashSet<>();
         if (state.tracks() != null) {
             for (ActivityPayload.Track t : state.tracks()) {
-                for (PlayerTracks.Point pt : t.points()) if (!pt.dim().isEmpty()) dims.add(pt.dim());
+                for (PlayerTrackPoint pt : t.points()) if (!pt.dim().isEmpty()) dims.add(pt.dim());
             }
         }
-        for (ActivityLog.Entry e : state.entries()) {
+        for (ActivityEntry e : state.entries()) {
             if (e.dim() != null && !e.dim().isEmpty()) dims.add(e.dim());
         }
         if (dims.size() < 2) return;
@@ -543,7 +544,7 @@ public final class ActivityScreen extends Screen {
         private String backLabel() {
             if (state == null) return "";
             long from = Long.MAX_VALUE, to = 0;
-            for (ActivityLog.Entry e : state.entries()) {
+            for (ActivityEntry e : state.entries()) {
                 from = Math.min(from, e.at()); to = Math.max(to, e.at());
             }
             if (from == Long.MAX_VALUE) return "";
@@ -602,9 +603,9 @@ public final class ActivityScreen extends Screen {
     }
 
     private static final class RowEntry extends ObjectSelectionList.Entry<RowEntry> {
-        private final ActivityLog.Entry row;
+        private final ActivityEntry row;
 
-        RowEntry(ActivityLog.Entry row) { this.row = row; }
+        RowEntry(ActivityEntry row) { this.row = row; }
 
         @Override
         public void extractContent(GuiGraphicsExtractor g, int mouseX, int mouseY,

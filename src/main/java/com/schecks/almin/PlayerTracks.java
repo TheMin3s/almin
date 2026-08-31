@@ -38,16 +38,13 @@ import java.util.UUID;
  * Everything touching the map is synchronized on the class.
  */
 public final class PlayerTracks {
-    /** One sampled position. */
-    public record Point(long at, String dim, int x, int y, int z) {}
-
     /** Points kept per player. Twenty players at this size is a few MB. */
     private static final int MAX_POINTS = 2000;
 
     /** Below this many blocks moved, a sample is not worth keeping. */
     private static final int MIN_MOVE = 6;
 
-    private static final Map<UUID, Deque<Point>> tracks = new LinkedHashMap<>();
+    private static final Map<UUID, Deque<PlayerTrackPoint>> tracks = new LinkedHashMap<>();
     private static final Map<UUID, String> names = new LinkedHashMap<>();
 
     private static int tickCounter = 0;
@@ -77,13 +74,13 @@ public final class PlayerTracks {
         try {
             java.nio.file.Files.createDirectories(f.getParent());
             com.google.gson.JsonObject root = new com.google.gson.JsonObject();
-            for (Map.Entry<UUID, Deque<Point>> e : tracks.entrySet()) {
+            for (Map.Entry<UUID, Deque<PlayerTrackPoint>> e : tracks.entrySet()) {
                 String name = names.get(e.getKey());
                 if (name == null) continue;
                 com.google.gson.JsonObject who = new com.google.gson.JsonObject();
                 who.addProperty("name", name);
                 com.google.gson.JsonArray pts = new com.google.gson.JsonArray();
-                for (Point p : e.getValue()) {
+                for (PlayerTrackPoint p : e.getValue()) {
                     // One array per point rather than an object: this is the
                     // largest file Almin writes and the keys would be most of
                     // it. Order is at, dim, x, y, z.
@@ -124,11 +121,11 @@ public final class PlayerTracks {
                 com.google.gson.JsonObject who = root.getAsJsonObject(key);
                 String name = who.has("name") ? who.get("name").getAsString() : "";
                 if (name.isEmpty()) continue;
-                Deque<Point> track = new ArrayDeque<>();
+                Deque<PlayerTrackPoint> track = new ArrayDeque<>();
                 for (var el : who.getAsJsonArray("points")) {
                     var a = el.getAsJsonArray();
                     if (a.size() < 5) continue;
-                    track.addLast(new Point(a.get(0).getAsLong(), a.get(1).getAsString(),
+                    track.addLast(new PlayerTrackPoint(a.get(0).getAsLong(), a.get(1).getAsString(),
                         a.get(2).getAsInt(), a.get(3).getAsInt(), a.get(4).getAsInt()));
                     if (track.size() > MAX_POINTS) track.pollFirst();
                 }
@@ -158,7 +155,7 @@ public final class PlayerTracks {
         long now = System.currentTimeMillis();
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
             if (!ActivityLog.watched(p)) continue;
-            record(p.getUUID(), p.getGameProfile().name(), new Point(now,
+            record(p.getUUID(), p.getGameProfile().name(), new PlayerTrackPoint(now,
                 ActivityLog.dimensionOf(p),
                 p.getBlockX(), p.getBlockY(), p.getBlockZ()));
         }
@@ -169,10 +166,10 @@ public final class PlayerTracks {
         }
     }
 
-    private static synchronized void record(UUID id, String name, Point point) {
+    private static synchronized void record(UUID id, String name, PlayerTrackPoint point) {
         names.put(id, name);
-        Deque<Point> track = tracks.computeIfAbsent(id, k -> new ArrayDeque<>());
-        Point last = track.peekLast();
+        Deque<PlayerTrackPoint> track = tracks.computeIfAbsent(id, k -> new ArrayDeque<>());
+        PlayerTrackPoint last = track.peekLast();
         if (last != null && last.dim().equals(point.dim()) && distance(last, point) < MIN_MOVE) {
             return;
         }
@@ -182,7 +179,7 @@ public final class PlayerTracks {
     }
 
     /** Blocks between two points, on the flat — height changes alone aren't travel. */
-    private static double distance(Point a, Point b) {
+    private static double distance(PlayerTrackPoint a, PlayerTrackPoint b) {
         double dx = a.x() - b.x();
         double dz = a.z() - b.z();
         return Math.sqrt(dx * dx + dz * dz);
@@ -199,13 +196,13 @@ public final class PlayerTracks {
     }
 
     /** The path for one player, oldest first. */
-    public static synchronized List<Point> of(UUID id) {
-        Deque<Point> track = tracks.get(id);
+    public static synchronized List<PlayerTrackPoint> of(UUID id) {
+        Deque<PlayerTrackPoint> track = tracks.get(id);
         return track == null ? List.of() : new ArrayList<>(track);
     }
 
     /** The path for one player by name, case-insensitively. */
-    public static synchronized List<Point> of(String name) {
+    public static synchronized List<PlayerTrackPoint> of(String name) {
         for (Map.Entry<UUID, String> e : names.entrySet()) {
             if (e.getValue().equalsIgnoreCase(name)) return of(e.getKey());
         }
@@ -223,7 +220,7 @@ public final class PlayerTracks {
     /** Everyone with a path, name to point count. */
     public static synchronized Map<String, Integer> tracked() {
         Map<String, Integer> out = new LinkedHashMap<>();
-        for (Map.Entry<UUID, Deque<Point>> e : tracks.entrySet()) {
+        for (Map.Entry<UUID, Deque<PlayerTrackPoint>> e : tracks.entrySet()) {
             String name = names.get(e.getKey());
             if (name != null) out.put(name, e.getValue().size());
         }
@@ -243,16 +240,16 @@ public final class PlayerTracks {
      *
      * @param budget total points across all players
      */
-    public static synchronized Map<String, List<Point>> everyone(int budget) {
-        Map<String, List<Point>> out = new LinkedHashMap<>();
+    public static synchronized Map<String, List<PlayerTrackPoint>> everyone(int budget) {
+        Map<String, List<PlayerTrackPoint>> out = new LinkedHashMap<>();
         Map<String, Integer> sizes = tracked();
         int total = 0;
         for (int n : sizes.values()) total += n;
         if (total == 0) return out;
         int stride = Math.max(1, (int) Math.ceil(total / (double) Math.max(1, budget)));
         for (String name : sizes.keySet()) {
-            List<Point> full = of(name);
-            List<Point> thin = new ArrayList<>(full.size() / stride + 2);
+            List<PlayerTrackPoint> full = of(name);
+            List<PlayerTrackPoint> thin = new ArrayList<>(full.size() / stride + 2);
             for (int i = 0; i < full.size(); i += stride) thin.add(full.get(i));
             // The last point is where they are now; never drop it.
             if (!full.isEmpty() && thin.get(thin.size() - 1) != full.get(full.size() - 1)) {

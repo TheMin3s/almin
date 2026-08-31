@@ -35,6 +35,8 @@ import java.util.zip.ZipFile;
  */
 public final class UpdateChecker {
     private static final Logger LOGGER = LoggerFactory.getLogger("almin");
+    /** Kept here so the lightweight client jar never has to load the server entrypoint. */
+    public static final String BASE_MOD_ID = "almin";
 
     public record Release(String version, String jarUrl, String jarName) {
         public boolean hasJar() { return jarUrl != null && jarName != null; }
@@ -50,15 +52,29 @@ public final class UpdateChecker {
 
     /** The running mod version (Loom-expanded mod_version), e.g. "1.0.0". */
     public static String currentVersion() {
+        return modVersion(BASE_MOD_ID);
+    }
+
+    /** Version of one installed Almin artifact, or 0.0.0 when it is absent. */
+    public static String modVersion(String modId) {
         return FabricLoader.getInstance()
-            .getModContainer(Almin.MOD_ID)
+            .getModContainer(modId)
             .map(c -> c.getMetadata().getVersion().getFriendlyString())
             .orElse("0.0.0");
     }
 
     /** Client build this server expects; independent from server-only releases. */
     public static String clientVersion() {
-        try (var in = UpdateChecker.class.getResourceAsStream("/almin-client-version.txt")) {
+        return declaredVersion("/almin-client-version.txt");
+    }
+
+    /** Optional admin-suite build this server expects. */
+    public static String adminVersion() {
+        return declaredVersion("/almin-admin-version.txt");
+    }
+
+    private static String declaredVersion(String resource) {
+        try (var in = UpdateChecker.class.getResourceAsStream(resource)) {
             if (in != null) {
                 String version = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
                 if (!version.isBlank()) return version;
@@ -98,6 +114,7 @@ public final class UpdateChecker {
      */
     public static final String SERVER_JAR = "server";
     public static final String CLIENT_JAR = "client";
+    public static final String ADMIN_JAR = "admin";
 
     private static Release fetchLatestRelease(String repo) throws IOException, InterruptedException {
         return fetchLatestRelease(repo, SERVER_JAR);
@@ -145,7 +162,12 @@ public final class UpdateChecker {
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IOException("GitHub API HTTP " + resp.statusCode());
         }
-        JsonObject obj = JsonParser.parseString(resp.body()).getAsJsonObject();
+        return releaseFromJson(resp.body(), want);
+    }
+
+    /** Parses a GitHub release response; kept separate so asset selection is testable offline. */
+    static Release releaseFromJson(String json, String want) {
+        JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
         if (!obj.has("tag_name")) return null;
         String tag = obj.get("tag_name").getAsString();
         String tagVersion = (tag.startsWith("v") || tag.startsWith("V")) ? tag.substring(1) : tag;
@@ -164,7 +186,8 @@ public final class UpdateChecker {
                 if (!name.toLowerCase().endsWith(".jar") || !a.has("browser_download_url")) continue;
                 String url = a.get("browser_download_url").getAsString();
                 String lower = name.toLowerCase();
-                if (lower.endsWith("-server.jar") || lower.endsWith("-client.jar")) splitRelease = true;
+                if (lower.endsWith("-server.jar") || lower.endsWith("-client.jar")
+                        || lower.endsWith("-admin.jar")) splitRelease = true;
                 if (want != null && name.toLowerCase().contains(want)) {
                     jarName = name;
                     jarUrl = url;
@@ -186,7 +209,7 @@ public final class UpdateChecker {
         return new Release(selectedVersion, jarUrl, jarName);
     }
 
-    /** Version encoded in almin-VERSION-client.jar / -server.jar. */
+    /** Version encoded in almin-VERSION-client.jar / -admin.jar / -server.jar. */
     static String assetVersion(String name, String side, String fallback) {
         if (name == null || side == null) return fallback;
         String lower = name.toLowerCase();
@@ -219,7 +242,12 @@ public final class UpdateChecker {
 
     /** Path of this mod's own jar on disk, or null if it can't be resolved (e.g. dev env). */
     public static Path ownJarPath() {
-        Optional<ModContainer> mc = FabricLoader.getInstance().getModContainer(Almin.MOD_ID);
+        return ownJarPath(BASE_MOD_ID);
+    }
+
+    /** Path of one installed Almin artifact, or null when it cannot be resolved. */
+    public static Path ownJarPath(String modId) {
+        Optional<ModContainer> mc = FabricLoader.getInstance().getModContainer(modId);
         if (mc.isEmpty()) return null;
         ModOrigin origin = mc.get().getOrigin();
         if (origin.getKind() != ModOrigin.Kind.PATH) return null;
@@ -234,7 +262,12 @@ public final class UpdateChecker {
      * Returns a human-readable status string describing what happened.
      */
     public static String removeOldJar(Path newJarPath) {
-        Path old = ownJarPath();
+        return removeOldJar(BASE_MOD_ID, newJarPath);
+    }
+
+    /** Removes the running jar belonging to {@code modId}, not another Almin artifact. */
+    public static String removeOldJar(String modId, Path newJarPath) {
+        Path old = ownJarPath(modId);
         if (old == null) {
             return "(could not locate the old jar — if a duplicate appears, remove it manually before restart)";
         }

@@ -7,6 +7,8 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.schecks.almin.ActivityLog;
+import com.schecks.almin.ActivityAdminPolicy;
+import com.schecks.almin.ActivityEntry;
 import com.schecks.almin.ActivityNet;
 import com.schecks.almin.ActivityPayload;
 import com.schecks.almin.ConsoleOpenPayload;
@@ -1014,7 +1016,7 @@ public final class AlminCommand {
             return 1;
         }
         AlminConfig cfg = AlminConfig.get();
-        List<ActivityLog.Entry> rows = ActivityLog.recent(20);
+        List<ActivityEntry> rows = ActivityLog.recent(20);
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "Player activity: " + ActivityLog.size() + " row(s), kept "
                     + cfg.activityRetentionMinutes + " min"
@@ -1027,7 +1029,7 @@ public final class AlminCommand {
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)), false);
             return 1;
         }
-        for (ActivityLog.Entry e : rows) {
+        for (ActivityEntry e : rows) {
             String line = e.player() + " " + e.action()
                 + (e.count() > 1 ? " x" + e.count() : "")
                 + (e.detail().isEmpty() ? "" : ": " + e.detail());
@@ -1068,7 +1070,7 @@ public final class AlminCommand {
     }
 
     private static void report(CommandContext<CommandSourceStack> ctx) {
-        ActivityLog.AdminPolicy p = ActivityLog.adminPolicy();
+        ActivityAdminPolicy p = ActivityLog.adminPolicy();
         String line = p.includeAdmins()
             ? "Admins ARE being recorded in the activity log."
             : "Admins are not recorded — only ordinary players.";

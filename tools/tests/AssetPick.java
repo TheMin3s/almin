@@ -1,57 +1,65 @@
 import com.schecks.almin.UpdateChecker;
-import com.sun.net.httpserver.HttpServer;
-import java.lang.reflect.*;
-import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
+import java.lang.reflect.Method;
 
-/** Serves a fake GitHub release payload and checks each side picks its own jar. */
+/** Checks all three updater artifacts select only themselves from one release. */
 public class AssetPick {
-    static int fail=0;
-    static void ck(String w, boolean ok, String d){ System.out.println((ok?"  PASS  ":"  FAIL  ")+w+(ok?"":"  -> "+d)); if(!ok) fail++; }
+    static int fail = 0;
+    static Method parse;
 
-    static String body(String assets){
-        return "{\"tag_name\":\"v2.0.0\",\"assets\":[" + assets + "]}";
-    }
-    static String asset(String name){
-        return "{\"name\":\""+name+"\",\"browser_download_url\":\"https://example.invalid/"+name+"\"}";
-    }
-
-    public static void main(String[] a) throws Exception {
-        // Two-jar release, server listed first.
-        String twoJars = body(asset("almin-2.0.0-server.jar")+","+asset("almin-2.0.0-client.jar"));
-        // Two-jar release, client listed first (upload order must not matter).
-        String reversed = body(asset("almin-2.0.0-client.jar")+","+asset("almin-2.0.0-server.jar"));
-        // Legacy single-jar release, from before the split.
-        String legacy   = body(asset("almin-1.18.9.jar"));
-
-        ck("server picks server jar (server first)", pick(twoJars,"server").endsWith("-server.jar"), pick(twoJars,"server"));
-        ck("client picks client jar (server first)", pick(twoJars,"client").endsWith("-client.jar"), pick(twoJars,"client"));
-        ck("server picks server jar (client first)", pick(reversed,"server").endsWith("-server.jar"), pick(reversed,"server"));
-        ck("client picks client jar (client first)", pick(reversed,"client").endsWith("-client.jar"), pick(reversed,"client"));
-        ck("legacy single jar still resolves for server", pick(legacy,"server").equals("almin-1.18.9.jar"), pick(legacy,"server"));
-        ck("legacy single jar still resolves for client", pick(legacy,"client").equals("almin-1.18.9.jar"), pick(legacy,"client"));
-
-        System.out.println(fail==0?"\nASSET-PICK TESTS PASSED":"\n"+fail+" FAILED");
-        System.exit(fail==0?0:1);
+    static void ck(String what, boolean ok, String detail) {
+        System.out.println((ok ? "  PASS  " : "  FAIL  ") + what
+            + (ok ? "" : "  -> " + detail));
+        if (!ok) fail++;
     }
 
-    /** Spins a one-shot server returning `json`, and asks UpdateChecker to parse it. */
+    static String body(String assets) {
+        return "{\"tag_name\":\"v2.40.0\",\"assets\":[" + assets + "]}";
+    }
+    static String asset(String name) {
+        return "{\"name\":\"" + name
+            + "\",\"browser_download_url\":\"https://example.invalid/" + name + "\"}";
+    }
+
+    public static void main(String[] args) throws Exception {
+        parse = UpdateChecker.class.getDeclaredMethod(
+            "releaseFromJson", String.class, String.class);
+        parse.setAccessible(true);
+
+        String three = body(
+            asset("almin-2.40.0-server.jar") + ","
+                + asset("almin-2.37.0-client.jar") + ","
+                + asset("almin-2.39.0-admin.jar"));
+        String reversed = body(
+            asset("almin-2.39.0-admin.jar") + ","
+                + asset("almin-2.37.0-client.jar") + ","
+                + asset("almin-2.40.0-server.jar"));
+        String missingAdmin = body(
+            asset("almin-2.40.0-server.jar") + ","
+                + asset("almin-2.37.0-client.jar"));
+        String legacy = body(asset("almin-1.18.9.jar"));
+
+        ck("server picks the server jar", pick(three, "server").endsWith("-server.jar"),
+            pick(three, "server"));
+        ck("base client picks the client jar", pick(three, "client").endsWith("-client.jar"),
+            pick(three, "client"));
+        ck("admin extension picks the admin jar", pick(three, "admin").endsWith("-admin.jar"),
+            pick(three, "admin"));
+        ck("upload order does not affect admin selection",
+            pick(reversed, "admin").equals("almin-2.39.0-admin.jar"),
+            pick(reversed, "admin"));
+        ck("a split release never falls back to another artifact",
+            pick(missingAdmin, "admin").equals("null"), pick(missingAdmin, "admin"));
+        ck("a pre-split universal jar remains a base/server fallback",
+            pick(legacy, "client").equals("almin-1.18.9.jar"), pick(legacy, "client"));
+
+        System.out.println(fail == 0 ? "\nASSET-PICK TESTS PASSED"
+            : "\n" + fail + " FAILED");
+        System.exit(fail == 0 ? 0 : 1);
+    }
+
     static String pick(String json, String want) throws Exception {
-        HttpServer h = HttpServer.create(new InetSocketAddress("127.0.0.1",0),4);
-        h.createContext("/", ex -> {
-            byte[] b = json.getBytes(StandardCharsets.UTF_8);
-            ex.getResponseHeaders().set("Content-Type","application/json");
-            ex.sendResponseHeaders(200,b.length);
-            ex.getResponseBody().write(b); ex.close();
-        });
-        h.setExecutor(java.util.concurrent.Executors.newSingleThreadExecutor());
-        h.start();
-        try {
-            Method m = UpdateChecker.class.getDeclaredMethod("fetchReleaseFrom", java.net.URI.class, String.class);
-            m.setAccessible(true);
-            Object rel = m.invoke(null, java.net.URI.create("http://127.0.0.1:"+h.getAddress().getPort()+"/"), want);
-            Method jarName = rel.getClass().getDeclaredMethod("jarName");
-            return String.valueOf(jarName.invoke(rel));
-        } finally { h.stop(0); }
+        Object release = parse.invoke(null, json, want);
+        Method jarName = release.getClass().getDeclaredMethod("jarName");
+        return String.valueOf(jarName.invoke(release));
     }
 }

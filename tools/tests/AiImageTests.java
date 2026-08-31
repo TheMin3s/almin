@@ -1,4 +1,5 @@
 import com.schecks.almin.ActivityLog;
+import com.schecks.almin.ActivityEntry;
 import com.schecks.almin.Episodes;
 
 import java.lang.reflect.Method;
@@ -16,14 +17,14 @@ public class AiImageTests {
 
     public static void main(String[] args) throws Exception {
         long now = System.currentTimeMillis();
-        List<ActivityLog.Entry> rows = new ArrayList<>();
+        List<ActivityEntry> rows = new ArrayList<>();
         for (int x = 0; x < 8; x++) {
-            rows.add(new ActivityLog.Entry(now + x, "Alex", "u", "place", "Oak Planks",
+            rows.add(new ActivityEntry(now + x, "Alex", "u", "place", "Oak Planks",
                 "overworld", 100 + x, 64 + (x % 2), 200, 1));
         }
-        rows.add(new ActivityLog.Entry(now + 20, "Alex", "u", "break", "Stone",
+        rows.add(new ActivityEntry(now + 20, "Alex", "u", "break", "Stone",
             "overworld", 103, 64, 201, 1));
-        rows.add(new ActivityLog.Entry(now + 21, "Alex", "u", "break", "Stone",
+        rows.add(new ActivityEntry(now + 21, "Alex", "u", "break", "Stone",
             "overworld", 104, 64, 201, 1));
         Episodes.Episode episode = new Episodes.Episode("build", "Built something", "Alex", "u",
             "overworld", now - 1, now + 100, 103, 64, 200, 7, 1, 10, 60, "hammer");

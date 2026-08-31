@@ -70,27 +70,11 @@ public final class ActivityLog {
     /** Hard ceiling on one field, so a crafted name or sign can't bloat a row. */
     private static final int MAX_FIELD = 160;
 
-    /**
-     * One thing a player did. {@code count} is 1 unless rows were folded.
-     *
-     * <p>The place is kept as numbers rather than a formatted string so it can
-     * be drawn on a map as well as read in a list.
-     */
-    public record Entry(long at, String player, String uuid, String action,
-                        String detail, String dim, int x, int y, int z, int count) {
-
-        /** "overworld 1,2,3", for anywhere that shows a line rather than a map. */
-        public String where() {
-            if (dim == null || dim.isEmpty()) return "";
-            return dim + " " + x + "," + y + "," + z;
-        }
-    }
-
     /** Rows allowed to wait for the writer before the oldest are dropped. */
     private static final int MAX_PENDING = 50_000;
 
-    private static final Deque<Entry> entries = new ArrayDeque<>();
-    private static final ConcurrentLinkedQueue<Entry> pending = new ConcurrentLinkedQueue<>();
+    private static final Deque<ActivityEntry> entries = new ArrayDeque<>();
+    private static final ConcurrentLinkedQueue<ActivityEntry> pending = new ConcurrentLinkedQueue<>();
     /** ConcurrentLinkedQueue.size() walks the list; this does not. */
     private static final java.util.concurrent.atomic.AtomicInteger pendingCount =
         new java.util.concurrent.atomic.AtomicInteger();
@@ -186,14 +170,12 @@ public final class ActivityLog {
      * <p>{@code temporary} is true when the answer comes from the run-only
      * override rather than the saved setting.
      */
-    public record AdminPolicy(boolean includeAdmins, boolean temporary, boolean configured) {}
-
-    public static AdminPolicy adminPolicy() {
+    public static ActivityAdminPolicy adminPolicy() {
         Boolean t = temporaryIncludeAdmins;
         boolean configured = AlminConfig.get().activityIncludeAdmins;
         return t == null
-            ? new AdminPolicy(configured, false, configured)
-            : new AdminPolicy(t, true, configured);
+            ? new ActivityAdminPolicy(configured, false, configured)
+            : new ActivityAdminPolicy(t, true, configured);
     }
 
     /** Whether admins are recorded right now, however that was decided. */
@@ -347,23 +329,23 @@ public final class ActivityLog {
         long now = System.currentTimeMillis();
         if (foldable) {
             synchronized (ActivityLog.class) {
-                Entry last = entries.peekLast();
+                ActivityEntry last = entries.peekLast();
                 if (last != null && last.action().equals(action) && last.player().equals(name)
                         && last.detail().equals(detail) && now - last.at() < COALESCE_MS) {
                     // Replace the tail with a bumped count, moved to where it
                     // last happened. The copy already queued for disk is
                     // superseded at the next prune, which rewrites from memory.
                     entries.pollLast();
-                    entries.addLast(new Entry(now, name, last.uuid(), action, detail,
+                    entries.addLast(new ActivityEntry(now, name, last.uuid(), action, detail,
                         dim, x, y, z, last.count() + 1));
                     return;
                 }
             }
         }
-        add(new Entry(now, name, uuid, action, detail, dim, x, y, z, 1));
+        add(new ActivityEntry(now, name, uuid, action, detail, dim, x, y, z, 1));
     }
 
-    private static void add(Entry e) {
+    private static void add(ActivityEntry e) {
         synchronized (ActivityLog.class) {
             entries.addLast(e);
             int max = AlminConfig.get().activityMaxEntries;
@@ -399,10 +381,10 @@ public final class ActivityLog {
     // ---------- reading ----------
 
     /** The newest {@code max} rows, newest first. */
-    public static synchronized List<Entry> recent(int max) {
+    public static synchronized List<ActivityEntry> recent(int max) {
         dropExpired();
-        List<Entry> out = new ArrayList<>(Math.min(max, entries.size()));
-        Iterator<Entry> it = entries.descendingIterator();
+        List<ActivityEntry> out = new ArrayList<>(Math.min(max, entries.size()));
+        Iterator<ActivityEntry> it = entries.descendingIterator();
         while (it.hasNext() && out.size() < max) out.add(it.next());
         return out;
     }
@@ -465,7 +447,7 @@ public final class ActivityLog {
             Files.createDirectories(f.getParent());
             try (BufferedWriter w = Files.newBufferedWriter(f, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-                Entry e;
+                ActivityEntry e;
                 while ((e = pending.poll()) != null) {
                     pendingCount.decrementAndGet();
                     w.write(toJson(e).toString());
@@ -485,7 +467,7 @@ public final class ActivityLog {
      */
     private static void prune() {
         flush();
-        List<Entry> keep;
+        List<ActivityEntry> keep;
         synchronized (ActivityLog.class) {
             dropExpired();
             keep = new ArrayList<>(entries);
@@ -496,7 +478,7 @@ public final class ActivityLog {
             Files.createDirectories(f.getParent());
             Path tmp = Files.createTempFile(f.getParent(), ".activity-", ".tmp");
             try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
-                for (Entry e : keep) {
+                for (ActivityEntry e : keep) {
                     w.write(toJson(e).toString());
                     w.newLine();
                 }
@@ -515,7 +497,7 @@ public final class ActivityLog {
         int max = AlminConfig.get().activityMaxEntries;
         try (var lines = Files.lines(f, StandardCharsets.UTF_8)) {
             lines.forEach(line -> {
-                Entry e = fromJson(line);
+                ActivityEntry e = fromJson(line);
                 if (e == null || e.at() < cutoff) return;
                 entries.addLast(e);
                 while (entries.size() > max) entries.pollFirst();
@@ -527,7 +509,7 @@ public final class ActivityLog {
         }
     }
 
-    private static JsonObject toJson(Entry e) {
+    private static JsonObject toJson(ActivityEntry e) {
         JsonObject o = new JsonObject();
         o.addProperty("at", e.at());
         o.addProperty("player", e.player());
@@ -542,7 +524,7 @@ public final class ActivityLog {
         return o;
     }
 
-    private static Entry fromJson(String line) {
+    private static ActivityEntry fromJson(String line) {
         try {
             JsonObject o = JsonParser.parseString(line).getAsJsonObject();
             // Rows written before the place became numbers carry a "where"
@@ -561,7 +543,7 @@ public final class ActivityLog {
                     }
                 }
             }
-            return new Entry(
+            return new ActivityEntry(
                 o.get("at").getAsLong(),
                 str(o, "player"), str(o, "uuid"), str(o, "action"), str(o, "detail"),
                 dim, x, y, z,

@@ -11,11 +11,17 @@ import net.minecraft.network.chat.Component;
  * sure the player sees that a restart is needed to actually load it.
  */
 public final class UpdateAppliedScreen extends Screen {
+    private final String label;
     private final String fromVersion;
     private final String toVersion;
 
     public UpdateAppliedScreen(String fromVersion, String toVersion) {
-        super(Component.literal("Almin Updated"));
+        this("Almin", fromVersion, toVersion);
+    }
+
+    public UpdateAppliedScreen(String label, String fromVersion, String toVersion) {
+        super(Component.literal(label + " Updated"));
+        this.label = label;
         this.fromVersion = fromVersion;
         this.toVersion = toVersion;
     }
@@ -62,7 +68,7 @@ public final class UpdateAppliedScreen extends Screen {
         int cy = this.height / 2;
         g.centeredText(this.font, this.title, cx, cy - 50, 0xFFFFE17B);
         g.centeredText(this.font,
-            Component.literal("Updated to v" + toVersion + " to match this server"),
+            Component.literal(label + " updated to v" + toVersion + " to match this server"),
             cx, cy - 24, 0xFFFFFFFF);
         g.centeredText(this.font,
             Component.literal("(previously v" + fromVersion + ")"),

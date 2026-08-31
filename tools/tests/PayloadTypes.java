@@ -1,69 +1,102 @@
-import com.schecks.almin.*;
-import java.lang.reflect.*;
-import java.util.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
- * Regression for the client-jar startup crash: the client entrypoint registered
- * receivers for payload types that only the main entrypoint declared, so a
- * client-only jar threw "no payload type has been registered".
- *
- * Fabric's registry needs a game context, so instead of calling it we assert the
- * contract statically: every payload type the client touches must be declared in
- * AlminPayloads, and registerTypes() must be safe to call twice.
+ * Static contract for the two client entrypoints and their independent packet
+ * registries. Fabric's live registry needs a game context, but all of the
+ * startup-crash conditions can be proven directly from the sources.
  */
 public class PayloadTypes {
     static int fail = 0;
-    static void ck(String w, boolean ok, String d) {
-        System.out.println((ok ? "  PASS  " : "  FAIL  ") + w + (ok ? "" : "  -> " + d));
+    static void ck(String what, boolean ok, String detail) {
+        System.out.println((ok ? "  PASS  " : "  FAIL  ") + what
+            + (ok ? "" : "  -> " + detail));
         if (!ok) fail++;
     }
 
-    public static void main(String[] a) throws Exception {
-        String src = new String(java.nio.file.Files.readAllBytes(
-            java.nio.file.Path.of("src/main/java/com/schecks/almin/AlminPayloads.java")));
-        String client = new String(java.nio.file.Files.readAllBytes(
-            java.nio.file.Path.of("src/main/java/com/schecks/almin/client/AlminClient.java")));
-        String installer = new String(java.nio.file.Files.readAllBytes(
-            java.nio.file.Path.of("src/main/java/com/schecks/almin/client/ClientModInstaller.java")));
+    static String read(String path) throws Exception {
+        return Files.readString(Path.of(path));
+    }
 
-        // Everything the client receives must be declared.
-        for (String t : new String[]{"FileTransferPayload","DashboardPayload","NanoOpenPayload",
-                "DirListingPayload","ModOfferPayload","ModFilePayload","ServerVersionPayload",
-                "ConsoleOpenPayload","ConsoleLinesPayload","WebAdminPayload","ActivityPayload","PanelPayload"}) {
-            boolean received = client.contains("registerGlobalReceiver(" + t + ".TYPE");
-            ck(t + " received by client is declared", !received || src.contains(t + ".TYPE"),
-                "client receives it but AlminPayloads does not declare it");
+    public static void main(String[] args) throws Exception {
+        String baseRegistry = read("src/main/java/com/schecks/almin/AlminPayloads.java");
+        String adminRegistry = read("src/main/java/com/schecks/almin/AdminPayloads.java");
+        String baseClient = read("src/main/java/com/schecks/almin/client/AlminClient.java");
+        String adminClient = read("src/main/java/com/schecks/almin/client/AlminAdminClient.java");
+        String installer = read("src/main/java/com/schecks/almin/client/ClientModInstaller.java");
+        String profile = read("src/main/java/com/schecks/almin/client/ClientProfileReport.java");
+
+        String[] baseReceived = {
+            "FileTransferPayload", "DashboardPayload", "ModOfferPayload",
+            "ModFilePayload", "ServerVersionPayload", "AdminInstallPayload"
+        };
+        String[] adminReceived = {
+            "NanoOpenPayload", "DirListingPayload", "ConsoleOpenPayload",
+            "ConsoleLinesPayload", "WebAdminPayload", "ActivityPayload",
+            "PanelPayload", "AdminVersionPayload"
+        };
+        for (String type : baseReceived) {
+            ck(type + " is declared by the base registry",
+                baseClient.contains("registerGlobalReceiver(" + type + ".TYPE")
+                    && baseRegistry.contains(type + ".TYPE"),
+                "receiver and registry disagree");
+            ck(type + " is absent from the admin entrypoint",
+                !adminClient.contains("registerGlobalReceiver(" + type + ".TYPE"), type);
         }
-        // Everything the client sends must be declared too.
-        for (String t : new String[]{"DirRequestPayload","FileUploadPayload","NanoSavePayload",
-                "ConsoleSubscribePayload","ModResponsePayload","ModFileRequestPayload",
-                "WebAdminRequestPayload","WebPasswordPayload","WebControlPayload","ActivityRequestPayload"}) {
-            ck(t + " sent by client is declared", src.contains(t + ".TYPE"), "missing from AlminPayloads");
+        for (String type : adminReceived) {
+            ck(type + " is declared by the admin registry",
+                adminClient.contains("registerGlobalReceiver(" + type + ".TYPE")
+                    && adminRegistry.contains(type + ".TYPE"),
+                "receiver and registry disagree");
+            ck(type + " is absent from the base entrypoint",
+                !baseClient.contains("registerGlobalReceiver(" + type + ".TYPE"), type);
         }
-        ck("ModFileRequestPayload actually sent by installer",
+
+        for (String type : new String[]{
+                "ModResponsePayload", "ModFileRequestPayload", "ClientProfilePayload"}) {
+            ck(type + " sent by the base client is declared",
+                baseRegistry.contains(type + ".TYPE"), "missing from AlminPayloads");
+        }
+        for (String type : new String[]{
+                "DirRequestPayload", "FileUploadPayload", "NanoSavePayload",
+                "ConsoleSubscribePayload", "WebAdminRequestPayload",
+                "WebPasswordPayload", "WebControlPayload", "ActivityRequestPayload"}) {
+            ck(type + " sent by the admin extension is declared",
+                adminRegistry.contains(type + ".TYPE"), "missing from AdminPayloads");
+        }
+        ck("the mod installer sends its declared request",
             installer.contains("new ModFileRequestPayload"), "");
+        ck("profile reporting sends its declared payload",
+            profile.contains("new ClientProfilePayload"), "");
 
-        // The client entrypoint must declare types before attaching receivers.
-        int decl = client.indexOf("AlminPayloads.registerTypes()");
-        int first = client.indexOf("registerGlobalReceiver");
-        ck("client declares types before registering receivers", decl >= 0 && decl < first,
-            "declare=" + decl + " firstReceiver=" + first);
+        int baseTypes = baseClient.indexOf("AlminPayloads.registerTypes()");
+        int baseReceiver = baseClient.indexOf("registerGlobalReceiver");
+        ck("base types are declared before base receivers",
+            baseTypes >= 0 && baseTypes < baseReceiver,
+            "types=" + baseTypes + " receiver=" + baseReceiver);
+        int adminTypes = adminClient.indexOf("AdminPayloads.registerTypes()");
+        int adminReceiver = adminClient.indexOf("registerGlobalReceiver");
+        ck("admin types are declared before admin receivers",
+            adminTypes >= 0 && adminTypes < adminReceiver,
+            "types=" + adminTypes + " receiver=" + adminReceiver);
 
-        // Idempotency: a universal jar runs both entrypoints.
-        ck("registerTypes is guarded against double registration",
-            src.contains("if (registered) return;"), "no guard — universal jar would throw");
-        ck("registerTypes is synchronized", src.contains("synchronized void registerTypes"), "");
-
-        // No stragglers left behind the main entrypoint.
-        for (String f : new String[]{"ConsoleNet","DirNet","NanoNet","UploadNet","ModNet",
-                                     "FileShare","Dashboard","UpdateChecker"}) {
-            String body = new String(java.nio.file.Files.readAllBytes(
-                java.nio.file.Path.of("src/main/java/com/schecks/almin/" + f + ".java")));
-            ck(f + " no longer registers types itself", !body.contains("PayloadTypeRegistry"),
-                "still registers a type behind the main entrypoint");
+        for (String registry : new String[]{baseRegistry, adminRegistry}) {
+            ck("registry is idempotent", registry.contains("if (registered) return;"), "");
+            ck("registry registration is synchronized",
+                registry.contains("synchronized void registerTypes"), "");
         }
 
-        System.out.println(fail == 0 ? "\nPAYLOAD-TYPE TESTS PASSED" : "\n" + fail + " FAILED");
+        // No subsystem should hide a packet registration behind a server-only
+        // initializer again.
+        for (String file : new String[]{"ConsoleNet", "DirNet", "NanoNet", "UploadNet",
+                "ModNet", "FileShare", "Dashboard", "UpdateChecker"}) {
+            String body = read("src/main/java/com/schecks/almin/" + file + ".java");
+            ck(file + " does not register payload types itself",
+                !body.contains("PayloadTypeRegistry"), "stray registration");
+        }
+
+        System.out.println(fail == 0 ? "\nPAYLOAD-TYPE TESTS PASSED"
+            : "\n" + fail + " FAILED");
         System.exit(fail == 0 ? 0 : 1);
     }
 }
