@@ -212,7 +212,10 @@ final class WebPage {
           .mapopts{position:absolute;right:50px;top:12px;width:236px;z-index:4;
                    background:rgba(11,13,17,.96);border:1px solid var(--line);
                    border-radius:10px;padding:11px 12px;font-size:12.5px;
-                   box-shadow:0 12px 32px rgba(0,0,0,.5)}
+                   box-shadow:0 12px 32px rgba(0,0,0,.5);
+                   max-height:calc(min(60vh,560px) - 24px);overflow-y:auto;
+                   overscroll-behavior:contain;scrollbar-gutter:stable}
+          .bluemapwrap .mapopts{max-height:calc(min(66vh,620px) - 24px)}
           .mapopts h4{margin:0 0 9px;font-size:10.5px;text-transform:uppercase;
                       letter-spacing:.9px;color:var(--brand)}
           .mapopts label{display:flex;align-items:center;gap:10px;margin:8px 0;color:var(--dim)}
@@ -231,6 +234,13 @@ final class WebPage {
                                  color:var(--dim);border-radius:999px;padding:2px 9px;
                                  font:inherit;font-size:11px;cursor:pointer}
           .mapopts .chips button.on{border-color:var(--brand);color:var(--brand)}
+          .mapopts .layers{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:3px 0 8px}
+          .mapopts .layers button{min-width:0;background:var(--card2);border:1px solid var(--line);
+                                  color:var(--mute);border-radius:7px;padding:6px 7px;
+                                  font:600 11px/1.2 inherit;cursor:pointer;text-align:left}
+          .mapopts .layers button.on{border-color:var(--good);color:#a8e6a8;
+                                     background:rgba(45,112,59,.18)}
+          .mapopts .layers button.on::before{content:'✓ ';color:var(--good)}
           .mapopts .row{display:flex;gap:6px;margin-top:10px}
           .mapopts .row .btn{flex:1;padding:4px 8px;font-size:12px}
           /* What a crowd of marks turns into when the map is zoomed out. */
@@ -280,6 +290,7 @@ final class WebPage {
           .fullmap #t-map .mapwrap{border:0;border-radius:0;padding:0;height:100vh}
           .fullmap #t-map .mapwrap > svg{height:100vh;max-height:100vh}
           .fullmap #t-map .bluemapwrap iframe{height:100vh;max-height:100vh}
+          .fullmap .mapopts{max-height:calc(100vh - 24px)}
           .fullmap .bluepicked{bottom:150px}
           .fullmap .timeline{position:absolute;left:14px;right:14px;bottom:60px;margin:0}
           .fullmap .timeline svg{height:70px;opacity:.94;
@@ -2173,7 +2184,9 @@ final class WebPage {
          * dark the ground should be.
          */
         const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.0, colour:'action',
-                            faces:true, paths:true, cluster:true, overlays:true,
+                            faces:true, actions:true, blocks:true, blockMinutes:30,
+                            paths:true, players:true,
+                            cluster:true, overlays:true,
                             sequences:true, refresh:10, v:3, sceneGround:true,
                             sceneGrid:true, sceneEvents:false, grid:true,
                             // Off by default: the map's job is to show what
@@ -2293,6 +2306,12 @@ final class WebPage {
           }
           const k=Math.min(1,age/Math.max(1,windowMs));
           return Math.max(0.55,0.98-k*0.43);
+        }
+
+        /** Recent block outlines deliberately have their own, always-on clock. */
+        function blockChangeOpacity(age){
+          const limit=Math.max(1,+mapOpts.blockMinutes||30)*60000;
+          return Math.max(0,Math.min(1,1-Math.max(0,age)/limit));
         }
 
         // A single SVG or BlueMap line has one opacity, so split a travelled
@@ -3202,6 +3221,7 @@ final class WebPage {
                   Math.min(.98,r.opacity).toFixed(2)+'" stroke-linejoin="round" '+
                   'stroke-linecap="round"/>').join('');
               }
+              if(!mapOpts.players) return out;
               // Where they were at the cursor, drawn as their own face —
               // square, because a Minecraft head is. The player's colour is
               // the frame around it, and stays visible if the face never
@@ -3296,8 +3316,9 @@ final class WebPage {
             : [];
           const collapsedPlaces=mapOpts.sceneEvents?[]:scenePlaces;
           const hiddenPlaces=new Set(collapsedPlaces);
-          const markActs=hiddenPlaces.size
-            ? shownActs.filter(a=>!hiddenPlaces.has(a)) : shownActs;
+          const markActs=mapOpts.actions
+            ? (hiddenPlaces.size ? shownActs.filter(a=>!hiddenPlaces.has(a)) : shownActs)
+            : [];
 
           // Marks that land on the same patch of screen become one box with a
           // number on it. Binning is in screen pixels rather than in blocks,
@@ -3384,7 +3405,7 @@ final class WebPage {
               '<button id="t-home" title="Fit everything in view">⌂</button>'+
               '<button id="t-full" title="'+(fullMap?'Leave fullscreen (Esc)':'Fullscreen')+
               '">'+(fullMap?'⤡':'⤢')+'</button>'+
-              '<button id="t-cog" title="How the map looks">'+ICON.cog+'</button>'+
+              '<button id="t-cog" title="Map layers and appearance">'+ICON.cog+'</button>'+
             '</div>'+
             (optsOpen?mapOptionsHtml():'')+
             '</div>';
@@ -3430,8 +3451,22 @@ final class WebPage {
           const check=(id,label,on)=>
             '<label><span>'+label+'</span><input type="checkbox" id="'+id+'"'+
             (on?' checked':'')+'></label>';
+          const layer=(id,label,on)=>'<button id="'+id+'" class="'+(on?'on':'')+
+            '" aria-pressed="'+(on?'true':'false')+'">'+label+'</button>';
+          const blue=usingBlueMap();
           return '<div class="mapopts" id="t-opts">'+
-            '<h4>How the map looks</h4>'+
+            '<h4>Show on the map</h4><div class="layers">'+
+              layer('o-actions','Activity markers',mapOpts.actions)+
+              (blue?layer('o-blocks','Block changes',mapOpts.blocks):'')+
+              layer('o-paths','Player paths',mapOpts.paths)+
+              layer('o-players','Players',mapOpts.players)+
+              layer('o-seq','3D events',mapOpts.sequences)+
+              layer('o-grid','Coordinate grid',mapOpts.grid)+
+            '</div>'+(blue
+              ? '<div class="onote">Placed blocks are green; broken blocks are red.</div>'+
+                range('o-blockmins','Block outlines last',5,1440,5,mapOpts.blockMinutes)+
+                '<div class="onote" id="o-blocknote"></div>'
+              : '')+'<hr><h4>Appearance</h4>'+
             range('o-dim','Ground darkness',0,80,1,Math.round(mapOpts.dim*100))+
             range('o-path','Path width',1,7,0.5,mapOpts.path)+
             range('o-mark','Marker size',1,4,0.1,mapOpts.mark)+
@@ -3443,10 +3478,7 @@ final class WebPage {
               '>who did it</option>'+
             '</select></label>'+
             check('o-faces','Player faces',mapOpts.faces)+
-            check('o-paths','Paths',mapOpts.paths)+
             check('o-cluster','Group crowded marks',mapOpts.cluster)+
-            check('o-seq','Sequence badges',mapOpts.sequences)+
-            check('o-grid','Coordinate grid',mapOpts.grid)+
             check('o-overlays','Side panel and player bar',mapOpts.overlays)+
             '<hr>'+
             '<label><span>Refresh every</span><input type="range" id="o-refresh" min="2" '+
@@ -3491,13 +3523,16 @@ final class WebPage {
           set('o-head','oninput',el=>mapOpts.head=+el.value);
           set('o-colour','onchange',el=>mapOpts.colour=el.value);
           set('o-faces','onchange',el=>mapOpts.faces=el.checked);
-          set('o-paths','onchange',el=>mapOpts.paths=el.checked);
           set('o-cluster','onchange',el=>mapOpts.cluster=el.checked);
-          set('o-seq','onchange',el=>mapOpts.sequences=el.checked);
-          set('o-grid','onchange',el=>mapOpts.grid=el.checked);
           set('o-overlays','onchange',el=>mapOpts.overlays=el.checked);
           set('o-refresh','oninput',el=>mapOpts.refresh=+el.value);
+          set('o-blockmins','oninput',el=>mapOpts.blockMinutes=+el.value);
           set('o-fademins','oninput',el=>mapOpts.fade.minutes=+el.value);
+          for(const [id,key] of [['o-actions','actions'],['o-blocks','blocks'],['o-paths','paths'],
+                 ['o-players','players'],['o-seq','sequences'],['o-grid','grid']]){
+            const button=$(id);
+            if(button) button.onclick=()=>{ mapOpts[key]=!mapOpts[key]; saveMapOpts(); paintAll(); };
+          }
           // Turning it on or off changes which controls are there, so this one
           // redraws the panel rather than only the map.
           const fadeBox=$('o-fade');
@@ -3514,6 +3549,8 @@ final class WebPage {
           });
           const rn=$('o-refreshnote');
           if(rn) rn.textContent='every '+(mapOpts.refresh||10)+' seconds';
+          const bn=$('o-blocknote');
+          if(bn) bn.textContent='fade out after '+humanMins(mapOpts.blockMinutes);
           const fn=$('o-fadenote');
           if(fn) fn.textContent='gone after '+humanMins(mapOpts.fade.minutes);
           const reset=$('o-reset');
@@ -5889,7 +5926,7 @@ final class WebPage {
                 '<button id="t-blue-scene-close" title="Close the selected 3D event">×</button>'+
                 '<button id="t-full" title="'+(fullMap?'Leave fullscreen (Esc)':'Fullscreen')+
                   '">'+(fullMap?'⤡':'⤢')+'</button>'+
-                '<button id="t-cog" title="How the map looks">'+ICON.cog+'</button>'+
+                '<button id="t-cog" title="Map layers and appearance">'+ICON.cog+'</button>'+
               '</div><div id="t-blue-opts"></div></div>';
             blueFrameBox=box;
             frame=$('t-blue-frame');
@@ -5950,7 +5987,8 @@ final class WebPage {
           const opacity=a=>ageOpacity(ACT_CATEGORY[a.action]||'things',
                                       d.cursor-a.at,d.windowMs);
           const hidden=new Set(mapOpts.sceneEvents?[]:scenePlaces);
-          const actions=d.shownActs.filter(a=>!hidden.has(a)&&nearby(a)&&opacity(a)>0);
+          const actions=mapOpts.actions
+            ? d.shownActs.filter(a=>!hidden.has(a)&&nearby(a)&&opacity(a)>0) : [];
           const cell=mapOpts.cluster?Math.max(1,Math.round(distance/32)):1;
           const bins=new Map();
           for(const a of actions){
@@ -6002,7 +6040,7 @@ final class WebPage {
                   opacity:Math.min(.98,run.opacity)});
               }
             }
-            if(!upto.length) continue;
+            if(!upto.length || !mapOpts.players) continue;
             const last=upto[upto.length-1], id='p-'+who;
             const gone=!!(d.away[who]&&d.away[who].gone&&d.away[who].at>=last.at-1000);
             const stillFor=d.cursor-last.at;
@@ -6029,14 +6067,35 @@ final class WebPage {
           }
 
           const cubeKeys=new Set();
-          const putCube=c=>{
+          const putCube=(c,opts)=>{
+            opts=opts||{};
             const key=c.wx+','+c.y+','+c.wz+','+c.put; if(cubeKeys.has(key)) return;
             cubeKeys.add(key); if(cubeKeys.size>3000) return;
-            scenes.push({id:'b'+cubeKeys.size,type:'box',kind:'block',x:c.wx,y:c.y,z:c.wz,
-              color:c.put?'#ffd34d':'#ff5a5a',fill:c.put?.30:.13,
+            scenes.push({id:(opts.recent?'recent-block-':'b')+cubeKeys.size,
+              type:'box',kind:opts.recent?'block-change':'block',x:c.wx,y:c.y,z:c.wz,
+              color:c.put?'#48df6b':'#ff565d',fill:c.put?.16:.12,
+              opacity:opts.opacity==null?1:opts.opacity,
               label:c.put?'Placed block':'Broken block',detail:(c.put?'Placed ':'Broke ')+
                 (c.what||'block')+' at '+c.wx+','+c.y+','+c.wz});
           };
+          // BlueMap's world coordinates let individual edits be useful without
+          // opening a generated event first. Keep only the newest edit at a
+          // coordinate, so place-then-break reads as the red break it now is.
+          if(mapOpts.blocks){
+            const recent=new Map();
+            for(const a of d.shownActs){
+              if((a.action!=='place'&&a.action!=='break')||!nearby(a)) continue;
+              const fade=blockChangeOpacity(d.cursor-a.at); if(!(fade>0)) continue;
+              const key=a.x+','+a.y+','+a.z, was=recent.get(key);
+              if(!was||a.at>=was.a.at) recent.set(key,{a:a,fade:fade});
+            }
+            for(const q of recent.values()){
+              const a=q.a;
+              putCube({wx:a.x,y:a.y,wz:a.z,put:a.action==='place',what:a.detail},
+                {recent:true,opacity:q.fade});
+              if(cubeKeys.size>3000) break;
+            }
+          }
           if(mapOpts.sceneEvents){
             for(const e of buildScenes.filter(nearby)){
               const built=sceneOf(e); if(!built) continue;
@@ -6054,8 +6113,9 @@ final class WebPage {
                 color:'#ff3d6e',size:1,title:m.kind+(m.what?' · '+m.what:'')+' · X '+m.wx+
                   ' / Y '+m.y+' / Z '+m.wz});
               q=0;
-              for(const p of (built.players||[]).filter(p=>Math.abs(p.x)<=built.radius&&
-                    Math.abs(p.z)<=built.radius).slice(-180)){
+              for(const p of (mapOpts.players?built.players||[]:[])
+                    .filter(p=>Math.abs(p.x)<=built.radius&&Math.abs(p.z)<=built.radius)
+                    .slice(-180)){
                 const id='near'+(q++);
                 scenes.push({id:id,type:'marker',kind:'scene-player',shape:'cluster',
                   text:p.player.charAt(0),x:p.wx+.5,y:p.y+1.9,z:p.wz+.5,

@@ -1122,6 +1122,10 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     if (!html.includes('o-dim') || !html.includes('o-path') || !html.includes('o-mark')) {
       return 'the panel is missing the fine adjustments';
     }
+    const layers = sandbox.mapOptionsHtml();
+    for (const id of ['o-actions', 'o-paths', 'o-players', 'o-seq', 'o-grid']) {
+      if (!layers.includes('<button id="' + id + '"')) return id + ' is not a layer button';
+    }
     return back.includes('id="t-opts"') ? 'it would not close' : true;
   });
 
@@ -2992,6 +2996,47 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((pathFades ? '  PASS  ' : '  FAIL  ') +
       'BlueMap player tracks carry age-banded opacity');
     if (!pathFades) failures.push('BlueMap paths did not fade by segment age');
+
+    const blueLayers=sandbox.mapOptionsHtml();
+    const blueBlockControls=blueLayers.includes('<button id="o-blocks"') &&
+      blueLayers.includes('id="o-blockmins"');
+    console.log((blueBlockControls ? '  PASS  ' : '  FAIL  ') +
+      'BlueMap gives recent block outlines their own layer button and timer');
+    if (!blueBlockControls) failures.push('BlueMap recent block controls are missing');
+
+    const recentBlocks=(payload.scenes||[]).filter(m=>m.kind==='block-change');
+    const automaticBlocks=recentBlocks.some(m=>m.color==='#48df6b') &&
+      recentBlocks.some(m=>m.color==='#ff565d') &&
+      recentBlocks.every(m=>m.opacity>0&&m.opacity<=1);
+    console.log((automaticBlocks ? '  PASS  ' : '  FAIL  ') +
+      'recent placed and broken blocks appear automatically and carry fade opacity');
+    if (!automaticBlocks) failures.push('automatic BlueMap block outlines are missing or unfaded');
+
+    const oldBlockMinutes=sandbox.mapOpts.blockMinutes;
+    sandbox.mapOpts.blockMinutes=10;
+    const blockClock=sandbox.blockChangeOpacity(0)===1 &&
+      Math.abs(sandbox.blockChangeOpacity(5*60000)-.5)<.001 &&
+      sandbox.blockChangeOpacity(10*60000)===0;
+    sandbox.mapOpts.blockMinutes=oldBlockMinutes;
+    console.log((blockClock ? '  PASS  ' : '  FAIL  ') +
+      'block outlines use their own adjustable fade timer');
+    if (!blockClock) failures.push('recent block clock is not independent and linear');
+
+    const oldLayers = { actions: sandbox.mapOpts.actions, paths: sandbox.mapOpts.paths,
+      blocks: sandbox.mapOpts.blocks, players: sandbox.mapOpts.players,
+      sequences: sandbox.mapOpts.sequences,
+      grid: sandbox.mapOpts.grid };
+    Object.assign(sandbox.mapOpts, { actions: false, blocks: false, paths: false, players: false,
+      sequences: false, grid: false });
+    sandbox.paintAll();
+    const filtered = sandbox.bluePendingState || {};
+    const layersOff = ['markers', 'lines', 'players', 'scenes', 'grid']
+      .every((key) => !(filtered[key] || []).length);
+    console.log((layersOff ? '  PASS  ' : '  FAIL  ') +
+      'BlueMap layer buttons can hide activity, blocks, paths, players, events and the grid');
+    if (!layersOff) failures.push('a disabled BlueMap layer remained in the payload');
+    Object.assign(sandbox.mapOpts, oldLayers);
+    sandbox.paintAll();
 
     const build = sandbox.episodes.find((e) => sandbox.sceneKind(e) === 'build');
     if (build) {

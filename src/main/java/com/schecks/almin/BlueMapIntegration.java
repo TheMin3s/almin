@@ -440,11 +440,13 @@ final class BlueMapIntegration {
           }
           function boxData(m){
             const c=rgb(m.color), x=m.x, z=m.z;
+            const opacity=Math.max(0,Math.min(1,m.opacity==null?1:m.opacity));
             return {type:'extrude',position:{x:x+.5,y:m.y,z:z+.5},label:m.label||'',
               detail:m.detail||'',listed:false,shape:[{x:x+.02,z:z+.02},{x:x+.98,z:z+.02},
               {x:x+.98,z:z+.98},{x:x+.02,z:z+.98}],holes:[],shapeMinY:m.y+.02,
               shapeMaxY:m.y+.98,depthTest:false,lineWidth:2,
-              lineColor:{...c,a:.95},fillColor:{...c,a:m.fill==null?.34:m.fill},
+              lineColor:{...c,a:.95*opacity},
+              fillColor:{...c,a:(m.fill==null?.34:m.fill)*opacity},
               minDistance:0,maxDistance:Number.MAX_VALUE};
           }
           function htmlData(m,html){

@@ -118,6 +118,18 @@ public class BlueMapTests {
                     && page.contains("function inspectBlueWorld")
                     && page.contains("Legacy 2D")
                     && page.contains("mapOpts.sceneEvents"), "browser feature bridge incomplete");
+            check("the activity settings stay scrollable inside the BlueMap frame",
+                page.contains(".bluemapwrap .mapopts{max-height")
+                    && page.contains("overflow-y:auto")
+                    && page.contains("class=\"layers\"")
+                    && page.contains("o-blockmins"),
+                "the settings card can still be clipped by the map");
+            check("recent BlueMap block edits are automatic and independently timed",
+                page.contains("function blockChangeOpacity")
+                    && page.contains("kind:opts.recent?'block-change':'block'")
+                    && page.contains("'#48df6b':'#ff565d'")
+                    && integration.contains(".95*opacity"),
+                "recent block outline fading is incomplete");
             check("BlueMap messages are accepted only from Almin's own iframe",
                 page.contains("e.source!==f.contentWindow")
                     && page.contains("e.origin!==location.origin"),
