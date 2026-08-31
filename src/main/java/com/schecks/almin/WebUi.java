@@ -9,9 +9,11 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -101,9 +103,6 @@ public final class WebUi {
      */
     private static final org.slf4j.Logger CONSOLE = org.slf4j.LoggerFactory.getLogger("almin");
 
-    /** Ports tried before giving up, when the configured one is already taken. */
-    private static final int PORT_ATTEMPTS = 12;
-
     /**
      * Returned by {@link #tryPreferred} for a failure that has already been
      * reported and that no other port would fix. Identity-compared, never
@@ -186,14 +185,14 @@ public final class WebUi {
     }
 
     /**
-     * Binds and starts serving, trying nearby ports when the configured one is
-     * taken.
+     * Binds and starts serving on the configured port.
      *
-     * <p>The panel picks its port at random on first run, so two Minecraft
-     * instances on one host can land on the same number; before this, the
-     * second one simply never came up and said so only in a log file nobody
-     * was looking at. A port that works is written back to the config, so
-     * bookmarks and the next boot agree with reality.
+     * <p>The public address is normally a proxy, tunnel, firewall rule or
+     * bookmark aimed at this exact port. Moving to a nearby port is therefore
+     * not a recovery: it creates a listener nobody can reach and then falsely
+     * announces that the website is up. A proven leftover Almin process is
+     * still cleared below, but an unrelated owner of the configured port is a
+     * real startup failure and is reported as one.
      */
     private static void listen(MinecraftServer server, AlminConfig cfg) {
         hookShutdown();
@@ -217,31 +216,9 @@ public final class WebUi {
             first = again;
         }
 
-        // Still taken. Fall back so the panel is at least reachable, but do NOT
-        // write the fallback to the config: the configured port is the operator's
-        // intent, and persisting each fallback is what made the address crawl
-        // upwards every restart.
-        for (int step = 1; step < PORT_ATTEMPTS; step++) {
-            int port = nextPort(wanted, step);
-            try {
-                bindOnOwnThread(server, cfg, bind, port);
-                CONSOLE.warn("[almin] web panel port {} is still held by something "
-                    + "(a previous instance?) — running on {} for now, "
-                    + "config keeps {}", wanted, port, wanted);
-                AlminLog.warn("[almin] port {} taken, using {} for this run only", wanted, port);
-                return;
-            } catch (java.net.BindException ignored) {
-                // try the next one
-            } catch (IOException e) {
-                fail("could not bind " + bind + ":" + port, e.getMessage());
-                return;
-            } catch (RuntimeException e) {
-                fail("failed to start", e.toString());
-                return;
-            }
-        }
-        fail("could not bind " + bind + ":" + wanted + " (or the " + (PORT_ATTEMPTS - 1)
-            + " ports after it)", first == null ? "" : first.getMessage());
+        fail("could not bind the configured address " + bind + ":" + wanted
+            + "; the website was NOT moved to another port because its proxy/tunnel "
+            + "would still point here", first == null ? "address already in use" : first.getMessage());
     }
 
     /**
@@ -292,11 +269,6 @@ public final class WebUi {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    private static int nextPort(int wanted, int step) {
-        int p = wanted + step;
-        return p > 65535 ? 8100 + step : p;
     }
 
     /** Records a start failure everywhere someone might look for it. */
@@ -373,6 +345,19 @@ public final class WebUi {
         http.setExecutor(pool);
         http.start();
         ui.serverRunning = serverUp;
+
+        // A bound socket is not yet a website. Exercise the real root handler
+        // over loopback before publishing this instance or printing the success
+        // line. This catches page initialisation faults, dead worker pools and
+        // listeners that accept a connection but never answer it.
+        try {
+            verifyLocalRoot(bind, port);
+        } catch (IOException e) {
+            try { http.stop(0); } catch (RuntimeException ignored) { }
+            pool.shutdownNow();
+            throw new IOException("listener bound, but GET / did not work: " + e.getMessage(), e);
+        }
+
         instance = ui;
         lastError = "";
         try {
@@ -391,12 +376,54 @@ public final class WebUi {
             AlminLog.warn("[almin] web panel is up, but post-start setup failed: {}", e.toString());
         }
         boolean pw = cfg.webAdminPasswordHash != null && !cfg.webAdminPasswordHash.isBlank();
-        AlminLog.info("[almin] web panel on http://{}:{} (public metrics {}, admin login {})",
+        AlminLog.info("[almin] web panel verified with GET / on http://{}:{} "
+                + "(public metrics {}, admin login {})",
             bind, port, cfg.webPublicMetrics ? "on" : "off",
             pw ? "ready" : "NO PASSWORD SET — run /almin op web password <pw>");
-        CONSOLE.info("[almin] web panel on {}  ({})", browsableUrl(),
+        CONSOLE.info("[almin] web panel verified locally on {}  ({})", browsableUrl(),
             pw ? "log in with your admin password"
                : "no password set yet — /almin op web password <pw>");
+    }
+
+    /**
+     * Makes a complete HTTP request to the listener we just started.
+     *
+     * <p>A raw socket deliberately avoids system HTTP proxy settings. Reading
+     * through EOF also proves the full embedded page can be written, rather
+     * than accepting a TCP connection and failing halfway through the body.
+     */
+    private static void verifyLocalRoot(String bind, int port) throws IOException {
+        String host;
+        try {
+            InetAddress address = InetAddress.getByName(bind);
+            if (address.isAnyLocalAddress()) {
+                host = bind != null && bind.contains(":") ? "::1" : "127.0.0.1";
+            } else {
+                host = address.getHostAddress();
+            }
+        } catch (RuntimeException e) {
+            host = "127.0.0.1";
+        }
+
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), 2500);
+            socket.setSoTimeout(5000);
+            socket.getOutputStream().write((
+                "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            byte[] response;
+            try (InputStream in = socket.getInputStream()) {
+                response = in.readAllBytes();
+            }
+            String text = new String(response, StandardCharsets.UTF_8);
+            int lineEnd = text.indexOf("\r\n");
+            String status = lineEnd < 0 ? text : text.substring(0, lineEnd);
+            if (!status.contains(" 200 ")) throw new IOException("root answered " + status);
+            if (!text.contains("<title>Almin</title>")) {
+                throw new IOException("root returned an incomplete or unexpected page");
+            }
+        }
     }
 
     /**
@@ -3606,7 +3633,10 @@ public final class WebUi {
         try {
             Path dir = server.getServerDirectory().resolve("config").resolve("almin");
             Path file = dir.resolve("Caddyfile");
-            if (Files.exists(file)) return;
+            if (Files.exists(file)) {
+                warnIfCaddyTargetDiffers(file);
+                return;
+            }
             Files.createDirectories(dir);
             String data = dir.resolve("caddy-data").toAbsolutePath().toString();
             String text = """
@@ -3648,6 +3678,31 @@ public final class WebUi {
             AlminLog.info("[almin] wrote a starter Caddyfile to {}", file);
         } catch (IOException e) {
             AlminLog.warn("[almin] could not write Caddyfile: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Calls out the other way a local success can look like a dead website:
+     * an older generated proxy file still forwarding to a port Almin used in
+     * a previous run. The file is explicitly user-editable, so this diagnoses
+     * the mismatch without rewriting or reloading somebody's proxy for them.
+     */
+    private void warnIfCaddyTargetDiffers(Path file) {
+        try {
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            java.util.regex.Matcher target = java.util.regex.Pattern.compile(
+                "(?m)^\\s*reverse_proxy\\s+127\\.0\\.0\\.1:(\\d+)\\s*$").matcher(text);
+            if (!target.find()) return;
+            int configured = Integer.parseInt(target.group(1));
+            if (configured == port) return;
+            String message = "config/almin/Caddyfile forwards to 127.0.0.1:" + configured
+                + " but the verified panel is on 127.0.0.1:" + port
+                + "; its public HTTPS address will stay unavailable until that target is "
+                + "changed and Caddy is reloaded";
+            AlminLog.warn("[almin] {}", message);
+            CONSOLE.warn("[almin] {}", message);
+        } catch (IOException | RuntimeException e) {
+            AlminLog.warn("[almin] could not check the existing Caddy target: {}", e.toString());
         }
     }
 

@@ -105,21 +105,17 @@ public class PortLeakTests {
         set("webSupervisor", false);
     }
 
-    /**
-     * The second half of the report: because each fallback was written back to
-     * the config, the address crawled upwards on every restart.
-     */
+    /** A fixed proxy target must not silently turn into a listener elsewhere. */
     static void noPortDrift() throws Exception {
         int wanted = freePort();
         set("webUiPort", wanted);
         try (ServerSocket squatter = new ServerSocket(wanted, 8, InetAddress.getByName("127.0.0.1"))) {
             listen.invoke(null, null, cfg);
-            ck("it still comes up when the port is held", WebUi.running(), WebUi.lastError());
-            ck("...on a different port", WebUi.port() != wanted, "port=" + WebUi.port());
-            ck("...WITHOUT rewriting the configured port",
+            ck("it refuses to announce a website on the wrong port", !WebUi.running(),
+                "port=" + WebUi.port());
+            ck("...without rewriting the configured port",
                 (Integer) get("webUiPort") == wanted,
                 "config drifted to " + get("webUiPort"));
-            WebUi.stopNow();
         }
 
         // Once the squatter is gone, the next start returns to the real port.

@@ -9,8 +9,8 @@ import java.lang.reflect.*;
 import java.net.*;
 
 /**
- * The web panel's on/off controls, the port fallback that stops a taken port
- * from silently killing the panel, and the allowlist behind the in-game tab.
+ * The web panel's on/off controls, fixed public port, and the allowlist behind
+ * the in-game tab.
  */
 public class WebControlTests {
     static int fail = 0;
@@ -39,7 +39,7 @@ public class WebControlTests {
         mApply = WebAdminNet.class.getDeclaredMethod("apply", String.class, String.class, String.class);
         mApply.setAccessible(true);
 
-        portFallback();
+        fixedPublicPort();
         startStop();
         allowlist();
         codec();
@@ -66,34 +66,26 @@ public class WebControlTests {
         Field x = AlminConfig.class.getDeclaredField(n); x.setAccessible(true); return x;
     }
 
-    /** A port already in use must not take the panel down with it. */
-    static void portFallback() throws Exception {
+    /** A public panel must never claim success on a port its proxy does not use. */
+    static void fixedPublicPort() throws Exception {
         try (ServerSocket squatter = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))) {
             int taken = squatter.getLocalPort();
             fBind.set(cfg, "127.0.0.1");
             fPort.setInt(cfg, taken);
             mListen.invoke(null, null, cfg);
 
-            ck("panel comes up even though its port was taken", WebUi.running(),
-                "not running: " + WebUi.lastError());
-            ck("it moved to a different port", WebUi.port() != taken && WebUi.port() > 0,
-                "port=" + WebUi.port());
-            // Deliberately NOT written back: persisting each fallback is what
-            // made the address crawl upwards on every restart. The configured
-            // port is the operator's intent; a fallback lasts one run.
+            ck("a taken public port is reported as a failure", !WebUi.running(),
+                "running on " + WebUi.port());
+            ck("the failure says the panel was not moved", WebUi.lastError().contains("NOT moved"),
+                WebUi.lastError());
             ck("the configured port is left alone", fPort.getInt(cfg) == taken,
                 "config drifted to " + fPort.getInt(cfg));
-            ck("no error is recorded on success", WebUi.lastError().isEmpty(), WebUi.lastError());
-
-            // ...and it is really listening there.
-            try (Socket s = new Socket()) {
-                s.connect(new InetSocketAddress("127.0.0.1", WebUi.port()), 2000);
-                ck("the new port actually accepts connections", true, "");
-            } catch (Exception e) {
-                ck("the new port actually accepts connections", false, e.toString());
-            }
-            WebUi.stopNow();
         }
+
+        mListen.invoke(null, null, cfg);
+        ck("the panel returns to the configured port once it is free",
+            WebUi.running() && WebUi.port() == fPort.getInt(cfg), WebUi.lastError());
+        WebUi.stopNow();
     }
 
     static void startStop() throws Exception {
