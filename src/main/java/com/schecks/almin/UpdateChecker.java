@@ -18,6 +18,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -53,6 +54,19 @@ public final class UpdateChecker {
             .getModContainer(Almin.MOD_ID)
             .map(c -> c.getMetadata().getVersion().getFriendlyString())
             .orElse("0.0.0");
+    }
+
+    /** Client build this server expects; independent from server-only releases. */
+    public static String clientVersion() {
+        try (var in = UpdateChecker.class.getResourceAsStream("/almin-client-version.txt")) {
+            if (in != null) {
+                String version = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (!version.isBlank()) return version;
+            }
+        } catch (IOException ignored) {
+            // A development classpath may not have processed resources yet.
+        }
+        return currentVersion();
     }
 
     public static CompletableFuture<CheckResult> checkAsync() {
@@ -134,12 +148,14 @@ public final class UpdateChecker {
         JsonObject obj = JsonParser.parseString(resp.body()).getAsJsonObject();
         if (!obj.has("tag_name")) return null;
         String tag = obj.get("tag_name").getAsString();
-        String version = (tag.startsWith("v") || tag.startsWith("V")) ? tag.substring(1) : tag;
+        String tagVersion = (tag.startsWith("v") || tag.startsWith("V")) ? tag.substring(1) : tag;
 
         // Prefer the jar for this side; fall back to any jar, so the single-jar
         // releases published before the server/client split still resolve.
         String jarUrl = null, jarName = null;
         String fallbackUrl = null, fallbackName = null;
+        String selectedVersion = tagVersion;
+        boolean splitRelease = false;
         if (obj.has("assets") && obj.get("assets").isJsonArray()) {
             JsonArray assets = obj.getAsJsonArray("assets");
             for (var el : assets) {
@@ -147,9 +163,12 @@ public final class UpdateChecker {
                 String name = a.has("name") ? a.get("name").getAsString() : "";
                 if (!name.toLowerCase().endsWith(".jar") || !a.has("browser_download_url")) continue;
                 String url = a.get("browser_download_url").getAsString();
+                String lower = name.toLowerCase();
+                if (lower.endsWith("-server.jar") || lower.endsWith("-client.jar")) splitRelease = true;
                 if (want != null && name.toLowerCase().contains(want)) {
                     jarName = name;
                     jarUrl = url;
+                    selectedVersion = assetVersion(name, want, tagVersion);
                     break;
                 }
                 if (fallbackName == null) {
@@ -158,11 +177,23 @@ public final class UpdateChecker {
                 }
             }
         }
-        if (jarName == null) {
+        // A split release missing this side's jar is not permission to install
+        // the other side. The fallback exists only for old universal releases.
+        if (jarName == null && !splitRelease) {
             jarName = fallbackName;
             jarUrl = fallbackUrl;
         }
-        return new Release(version, jarUrl, jarName);
+        return new Release(selectedVersion, jarUrl, jarName);
+    }
+
+    /** Version encoded in almin-VERSION-client.jar / -server.jar. */
+    static String assetVersion(String name, String side, String fallback) {
+        if (name == null || side == null) return fallback;
+        String lower = name.toLowerCase();
+        String suffix = "-" + side.toLowerCase() + ".jar";
+        if (!lower.startsWith("almin-") || !lower.endsWith(suffix)) return fallback;
+        String version = name.substring("almin-".length(), name.length() - suffix.length());
+        return version.isBlank() ? fallback : version;
     }
 
     /**

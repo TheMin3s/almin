@@ -22,7 +22,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Keeps the client mod in sync with the server's Almin version.
  *
- * When the server reports its version (ServerVersionPayload) and the client is
+ * When the server reports its required client version (ServerVersionPayload) and the client is
  * behind, the matching release is downloaded from the FIXED official repo —
  * never a URL chosen by the server — verified to be a real mod jar, and
  * swapped into mods/. It takes effect the next time Minecraft is launched, so
@@ -132,24 +132,24 @@ public final class ClientUpdater {
     }
 
     /** Called on the client thread when the server reports its Almin version. */
-    public static void onServerVersion(String serverVersion) {
-        if (handled || serverVersion == null || serverVersion.isBlank()) return;
+    public static void onServerVersion(String requiredVersion) {
+        if (handled || requiredVersion == null || requiredVersion.isBlank()) return;
         String clientVersion = UpdateChecker.currentVersion();
-        int cmp = UpdateChecker.compareVersions(serverVersion, clientVersion);
+        int cmp = UpdateChecker.compareVersions(requiredVersion, clientVersion);
         if (cmp == 0) return;                  // versions match — nothing to do
         handled = true;
         if (cmp > 0) {
             // Server newer than client — auto-update to match.
             LOG.info("[Almin] client {} is behind server {} — fetching update",
-                clientVersion, serverVersion);
-            CompletableFuture.runAsync(() -> downloadAndSwap(serverVersion, clientVersion));
+                clientVersion, requiredVersion);
+            CompletableFuture.runAsync(() -> downloadAndSwap(requiredVersion, clientVersion));
         } else {
             // Server older than client — warn the player to nag the owner.
             LOG.info("[Almin] server {} is older than client {} — showing warning",
-                serverVersion, clientVersion);
+                requiredVersion, clientVersion);
             Minecraft.getInstance().execute(() ->
                 Minecraft.getInstance().setScreenAndShow(
-                    new ServerOutdatedScreen(serverVersion, clientVersion)));
+                    new ServerOutdatedScreen(requiredVersion, clientVersion)));
         }
     }
 

@@ -18,18 +18,36 @@ public class ClientUpdateTests {
     }
 
     static Method worth;
+    static Method assetVersion;
 
     public static void main(String[] a) throws Exception {
         Class<?> updater = Class.forName("com.schecks.almin.client.ClientUpdater");
         worth = updater.getDeclaredMethod("worthInstalling", String.class, String.class, String.class);
         worth.setAccessible(true);
+        assetVersion = Class.forName("com.schecks.almin.UpdateChecker")
+            .getDeclaredMethod("assetVersion", String.class, String.class, String.class);
+        assetVersion.setAccessible(true);
 
         decisions();
+        versions();
         config();
         wiring();
 
         System.out.println(fail == 0 ? "\nCLIENT-UPDATE TESTS PASSED" : "\n" + fail + " FAILED");
         System.exit(fail == 0 ? 0 : 1);
+    }
+
+    static String av(String name, String side, String fallback) throws Exception {
+        return (String) assetVersion.invoke(null, name, side, fallback);
+    }
+
+    static void versions() throws Exception {
+        ck("a client asset carries its own version",
+            av("almin-2.35.0-client.jar", "client", "2.36.4").equals("2.35.0"), "");
+        ck("a server asset carries its own version",
+            av("almin-2.36.4-server.jar", "server", "2.35.0").equals("2.36.4"), "");
+        ck("a legacy jar keeps the release tag",
+            av("almin-1.18.9.jar", "client", "1.18.9").equals("1.18.9"), "");
     }
 
     static boolean w(String candidate, String current, String staged) throws Exception {
@@ -93,5 +111,15 @@ public class ClientUpdateTests {
             check.contains("ClientConfig.get().autoUpdate"), check);
         ck("...and only ever asks the hardcoded repo",
             check.contains("REPO") && !check.contains("http"), check);
+
+        String join = java.nio.file.Files.readString(
+            java.nio.file.Path.of("src/main/java/com/schecks/almin/events/JoinHandler.java"));
+        ck("the server advertises the required client build, not its own version",
+            join.contains("new ServerVersionPayload(UpdateChecker.clientVersion())"), join);
+
+        String release = java.nio.file.Files.readString(java.nio.file.Path.of("release.sh"));
+        ck("server-only releases retain the prior client build",
+            release.contains("CLIENT_VERSION=\"$CURRENT_CLIENT\"") &&
+            release.contains("--client") && release.contains("client_version"), release);
     }
 }

@@ -25,8 +25,12 @@ dependencies {
 
 processResources {
     inputs.property "version", project.version
+    inputs.property "clientVersion", project.client_version
     filesMatching("fabric.mod.json") {
         expand "version": project.version
+    }
+    filesMatching("almin-client-version.txt") {
+        expand "client_version": project.client_version
     }
 }
 
@@ -61,11 +65,11 @@ jar {
 //
 // Each variant gets its own fabric.mod.json, generated below.
 
-def modJsonFor(String env, String entrypointsJson, String mixinsJson) {
+def modJsonFor(String declaredVersion, String env, String entrypointsJson, String mixinsJson) {
     return """{
   "schemaVersion": 1,
   "id": "almin",
-  "version": "${project.version}",
+  "version": "${declaredVersion}",
   "name": "Almin",
   "description": "In-game server administration tools: console viewer, file browser and editor, downloads, display-name masks and self-update.",
   "authors": ["schecks"],
@@ -97,7 +101,7 @@ def serverModJson = tasks.register('serverModJson') {
     doLast {
         def f = out.get().asFile
         f.parentFile.mkdirs()
-        f.text = modJsonFor('server',
+        f.text = modJsonFor(project.version.toString(), 'server',
             '{\n    "main": ["com.schecks.almin.Almin"]\n  }',
             '"mixins": [\n    "almin.mixins.json"\n  ],\n  ')
     }
@@ -105,13 +109,13 @@ def serverModJson = tasks.register('serverModJson') {
 
 def clientModJson = tasks.register('clientModJson') {
     def out = layout.buildDirectory.file('dist/client/fabric.mod.json')
-    inputs.property('version', project.version)
+    inputs.property('version', project.client_version)
     outputs.file(out)
     doLast {
         def f = out.get().asFile
         f.parentFile.mkdirs()
         // No mixins: every mixin in this mod targets a server class.
-        f.text = modJsonFor('client',
+        f.text = modJsonFor(project.client_version.toString(), 'client',
             '{\n    "client": ["com.schecks.almin.client.AlminClient"]\n  }',
             '')
     }
@@ -133,6 +137,7 @@ def serverJar = tasks.register('serverJar', Jar) {
 def clientJar = tasks.register('clientJar', Jar) {
     dependsOn clientModJson
     archiveClassifier = 'client'
+    archiveVersion = project.client_version
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(clientModJson)
     from(sourceSets.main.output) {

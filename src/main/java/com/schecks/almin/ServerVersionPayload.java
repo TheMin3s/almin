@@ -7,8 +7,9 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 /**
- * Server -&gt; client: the Almin version the server runs, sent once when a
- * modded client joins. The client uses it to self-sync (see ClientUpdater).
+ * Server -&gt; client: the client build this server expects, sent once when a
+ * modded client joins. A server-only release keeps this value unchanged, so
+ * players are not asked to replace an identical client mod.
  *
  * It carries only a version <em>number</em> — never a download URL or repo.
  * The client downloads strictly from its own hardcoded official repo, so a

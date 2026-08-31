@@ -2,7 +2,7 @@
 #
 # release.sh - cut a new Almin release in one command.
 #
-#   ./release.sh <version>        e.g.  ./release.sh 1.1.0
+#   ./release.sh <version> [--client]   e.g.  ./release.sh 1.1.0 --client
 #
 # What it does:
 #   1. Bumps mod_version in gradle.properties
@@ -22,11 +22,14 @@ JAVA_HOME_DIR="${JAVA_HOME:-/opt/homebrew/opt/openjdk}"
 cd "$(dirname "$0")"
 
 # --- args -------------------------------------------------------------------
-if [ $# -ne 1 ]; then
-  echo "Usage: ./release.sh <version>   (e.g. ./release.sh 1.1.0)" >&2
+if [ $# -lt 1 ] || [ $# -gt 2 ] || { [ $# -eq 2 ] && [ "$2" != "--client" ]; }; then
+  echo "Usage: ./release.sh <version> [--client]" >&2
+  echo "       --client bumps the client build too; omit it for server-only changes." >&2
   exit 1
 fi
 VERSION="$1"
+CLIENT_RELEASE=0
+[ "${2:-}" = "--client" ] && CLIENT_RELEASE=1
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Error: version '$VERSION' must be X.Y.Z (e.g. 1.1.0)." >&2
   exit 1
@@ -45,6 +48,10 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 CURRENT="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+CURRENT_CLIENT="$(grep '^client_version=' gradle.properties | cut -d= -f2)"
+[ -n "$CURRENT_CLIENT" ] || CURRENT_CLIENT="$CURRENT"
+CLIENT_VERSION="$CURRENT_CLIENT"
+[ "$CLIENT_RELEASE" -eq 1 ] && CLIENT_VERSION="$VERSION"
 if [ "$VERSION" = "$CURRENT" ]; then
   echo "Error: $VERSION is already the current mod_version." >&2
   exit 1
@@ -54,7 +61,30 @@ if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   exit 1
 fi
 
+# A forgotten --client is worse than an unnecessary prompt: servers could
+# start speaking a packet shape the old client cannot decode. Compare against
+# the release that introduced the currently declared client build and stop if
+# client/runtime inputs changed without being acknowledged.
+CLIENT_BASE_TAG="v$CURRENT_CLIENT"
+CLIENT_BASE="$(git rev-parse -q --verify "refs/tags/$CLIENT_BASE_TAG^{commit}" 2>/dev/null || true)"
+if [ -z "$CLIENT_BASE" ]; then
+  CLIENT_BASE="$(gh release view "$CLIENT_BASE_TAG" --repo "$REPO" \
+    --json targetCommitish --jq .targetCommitish 2>/dev/null || true)"
+fi
+if [ "$CLIENT_RELEASE" -eq 0 ] && [ -n "$CLIENT_BASE" ] && \
+   git cat-file -e "$CLIENT_BASE^{commit}" 2>/dev/null; then
+  CLIENT_CHANGES="$(git diff --name-only "$CLIENT_BASE"..HEAD | \
+    rg '^src/main/java/com/schecks/almin/client/|^src/main/java/com/schecks/almin/(AlminPayloads|.*Payload)\.java$|^src/main/java/com/schecks/almin/UpdateChecker\.java$|^build\.gradle$' || true)"
+  if [ -n "$CLIENT_CHANGES" ]; then
+    echo "Error: client-facing files changed since $CLIENT_BASE_TAG:" >&2
+    echo "$CLIENT_CHANGES" >&2
+    echo "Rerun with --client if clients need this release." >&2
+    exit 1
+  fi
+fi
+
 echo "Releasing $CURRENT -> $VERSION"
+echo "Client build: $CURRENT_CLIENT -> $CLIENT_VERSION"
 
 # --- revert the version bump if anything fails before the commit ------------
 COMMITTED=0
@@ -69,6 +99,7 @@ trap cleanup EXIT
 
 # --- bump version -----------------------------------------------------------
 sed -i '' "s/^mod_version=.*/mod_version=$VERSION/" gradle.properties
+sed -i '' "s/^client_version=.*/client_version=$CLIENT_VERSION/" gradle.properties
 echo "Bumped mod_version: $CURRENT -> $VERSION"
 
 # --- build ------------------------------------------------------------------
@@ -81,20 +112,23 @@ echo "Building..."
 # in the filename, so these names are load-bearing — don't rename them without
 # changing UpdateChecker.SERVER_JAR / CLIENT_JAR too.
 SERVER_JAR="build/libs/almin-$VERSION-server.jar"
-CLIENT_JAR="build/libs/almin-$VERSION-client.jar"
-for j in "$SERVER_JAR" "$CLIENT_JAR"; do
+CLIENT_JAR="build/libs/almin-$CLIENT_VERSION-client.jar"
+verify_jar() {
+  local j="$1" expected="$2"
   [ -f "$j" ] || { echo "Error: built jar not found at $j" >&2; exit 1; }
   # The filename is not proof of the contents. A jar whose fabric.mod.json
   # disagrees with the tag makes the mod report the wrong version, which sends
   # the auto-updater into a loop: update, restart, still look outdated, repeat.
   DECLARED="$(unzip -p "$j" fabric.mod.json | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1)"
-  if [ "$DECLARED" != "$VERSION" ]; then
-    echo "Error: $j declares version '$DECLARED' but this release is $VERSION." >&2
+  if [ "$DECLARED" != "$expected" ]; then
+    echo "Error: $j declares version '$DECLARED' but expected $expected." >&2
     echo "       Refusing to publish a jar that misreports its own version." >&2
     exit 1
   fi
   echo "Built $j (declares $DECLARED)"
-done
+}
+verify_jar "$SERVER_JAR" "$VERSION"
+verify_jar "$CLIENT_JAR" "$CLIENT_VERSION"
 
 # --- commit + push ----------------------------------------------------------
 git add gradle.properties

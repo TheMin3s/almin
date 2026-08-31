@@ -46,7 +46,7 @@ public final class JoinHandler {
             // Modded clients self-sync; vanilla clients get a chat warning.
             if (hasClientMod) {
                 ServerPlayNetworking.send(player,
-                    new ServerVersionPayload(UpdateChecker.currentVersion()));
+                    new ServerVersionPayload(UpdateChecker.clientVersion()));
                 ModNet.sendOffers(player);
             } else {
                 sendVanillaClientWarning(player);
