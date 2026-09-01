@@ -150,7 +150,7 @@ public final class DirBrowserScreen extends Screen {
         if (e == null || this.minecraft == null) return;
         String full = path.isEmpty() ? e.name() : path + "/" + e.name();
         String confirm = e.directory()
-            ? "Delete folder \"" + full + "\"? (must be empty)"
+            ? "Permanently delete folder \"" + full + "\" and everything inside it?"
             : "Delete file \"" + full + "\"?";
         this.minecraft.setScreenAndShow(new ConfirmScreen(
             accepted -> {

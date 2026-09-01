@@ -34,6 +34,7 @@ import com.schecks.almin.ServerRelaunch;
 import com.schecks.almin.UpdateChecker;
 import com.schecks.almin.WebAdminNet;
 import com.schecks.almin.WebAdminPayload;
+import com.schecks.almin.WebFiles;
 import com.schecks.almin.WebUi;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.ChatFormatting;
@@ -938,7 +939,7 @@ public final class AlminCommand {
             .append(cmd("/almin op nano save",                   "Vanilla book mode — save: hold any nano book in main hand")).append("\n")
             .append(cmd("(or sign any nano book)",               "Signing a nano book also saves it")).append("\n")
             .append(cmd("/almin op get <path>",                  "Download any file/folder under the server root")).append("\n")
-            .append(cmd("/almin op delete <path>",               "Delete a file in mods/config/datapacks/resourcepacks/shared")).append("\n")
+            .append(cmd("/almin op delete <path>",               "Delete a file or folder tree in mods/config/datapacks/resourcepacks/shared")).append("\n")
             .append(cmd("/almin op rename <path> <newname>",     "Rename a file in those same folders")).append("\n")
             .append(cmd("/almin op console",                     "Open a live server-console viewer")).append("\n")
             .append(cmd("/almin op web",                         "Show the web panel's address and login status")).append("\n")
@@ -1768,14 +1769,14 @@ public final class AlminCommand {
     }
 
     /**
-     * /almin op delete &lt;path&gt; — removes a single file, or an empty
-     * directory, under the server's install folders.
+     * /almin op delete &lt;path&gt; — removes a file or complete directory
+     * tree under the server's install folders.
      *
      * Restricted on purpose: the target must sit under mods/, config/,
      * resourcepacks/, shared/ or a &lt;level&gt;/datapacks/ folder, so world
      * data, the server's logs and core server files (server.properties, the
-     * ban lists, ...) cannot be deleted. Non-empty directories and the running
-     * Almin jar are refused too.
+     * ban lists, ...) cannot be deleted. A tree containing the running Almin
+     * jar or a protected Almin credential is refused before anything is removed.
      */
     private static int opDelete(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
         ServerPlayer self = ctx.getSource().getPlayerOrException();
@@ -1783,54 +1784,15 @@ public final class AlminCommand {
         if (server == null) return 0;
         String relPath = StringArgumentType.getString(ctx, "path");
 
-        Path root = server.getServerDirectory().toAbsolutePath().normalize();
-        Path target = root.resolve(relPath).toAbsolutePath().normalize();
-        if (!target.startsWith(root) || target.equals(root)) {
-            ctx.getSource().sendFailure(Component.literal("Path escapes the server directory."));
+        WebFiles.Result result = WebFiles.delete(server, relPath);
+        if (!result.ok()) {
+            ctx.getSource().sendFailure(Component.literal(result.message()));
             return 0;
         }
-
-        Path rel = root.relativize(target);
-        boolean underDatapacks = rel.getNameCount() >= 3
-            && rel.getName(1).toString().equals("datapacks");
-        AlminConfig cfg = AlminConfig.get();
-        if (!cfg.dirWritableRootsAsSet().contains(rel.getName(0).toString()) && !underDatapacks) {
-            ctx.getSource().sendFailure(Component.literal(
-                "Delete is limited to: " + cfg.dirWritableRoots
-                + " or <level>/datapacks/ — change with /almin config dir-writable-roots."));
-            return 0;
-        }
-        if (!Files.exists(target)) {
-            ctx.getSource().sendFailure(Component.literal("No such file or directory: " + relPath));
-            return 0;
-        }
-        Path ownJar = UpdateChecker.ownJarPath();
-        if (ownJar != null && ownJar.toAbsolutePath().normalize().equals(target)) {
-            ctx.getSource().sendFailure(Component.literal("Refusing to delete Almin's own jar."));
-            return 0;
-        }
-        if (Files.isDirectory(target)) {
-            try (Stream<Path> s = Files.list(target)) {
-                if (s.findAny().isPresent()) {
-                    ctx.getSource().sendFailure(Component.literal(
-                        "Directory is not empty — only files and empty directories can be deleted."));
-                    return 0;
-                }
-            } catch (IOException e) {
-                ctx.getSource().sendFailure(Component.literal("Could not read directory: " + e.getMessage()));
-                return 0;
-            }
-        }
-        try {
-            Files.delete(target);
-        } catch (IOException e) {
-            ctx.getSource().sendFailure(Component.literal("Delete failed: " + e.getMessage()));
-            return 0;
-        }
-        AlminLog.info("[almin] {} deleted {}", self.getGameProfile().name(), rel);
+        AlminLog.info("[almin] {} recursively deleted {}", self.getGameProfile().name(), relPath);
         ctx.getSource().sendSuccess(() ->
             Component.literal("Deleted ").setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN))
-                .append(Component.literal(rel.toString()).setStyle(Style.EMPTY.withColor(ChatFormatting.AQUA))),
+                .append(Component.literal(relPath).setStyle(Style.EMPTY.withColor(ChatFormatting.AQUA))),
             false);
         return 1;
     }

@@ -1397,7 +1397,7 @@ final class WebPage {
         function deleteDialog(path,entry){
           modal('Delete',(body,close)=>{
             const warn = entry && entry.directory
-              ? 'Folders are only deleted when they are already empty.'
+              ? 'This permanently deletes the folder and everything inside it.'
               : 'This cannot be undone.';
             body.innerHTML='<p>Delete <code>/'+esc(path)+'</code>?</p>'+
               '<p class="muted">'+esc(warn)+'</p>'+

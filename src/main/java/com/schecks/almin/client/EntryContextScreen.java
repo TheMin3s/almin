@@ -72,7 +72,7 @@ public final class EntryContextScreen extends Screen {
             case "rename" -> mc.setScreenAndShow(new RenameFileScreen(parentPath, entry.name()));
             case "delete" -> {
                 String confirmText = entry.directory()
-                    ? "Delete folder \"" + full + "\"? (must be empty)"
+                    ? "Permanently delete folder \"" + full + "\" and everything inside it?"
                     : "Delete file \"" + full + "\"?";
                 mc.setScreenAndShow(new ConfirmScreen(
                     accepted -> {

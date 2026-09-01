@@ -6,8 +6,12 @@ import net.minecraft.world.level.storage.LevelResource;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -125,7 +129,7 @@ public final class WebFiles {
         if (AlminConfig.get().dirWritableRootsAsSet().contains(top)) return true;
         // Any world's datapacks dir, e.g. world/datapacks.
         Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR).toAbsolutePath().normalize();
-        return target.startsWith(datapacks.getParent());
+        return target.startsWith(datapacks);
     }
 
     private static boolean isOwnJar(Path target) {
@@ -212,7 +216,14 @@ public final class WebFiles {
         }
     }
 
-    /** Deletes a file (not a non-empty directory) under a writable root. */
+    /**
+     * Deletes a file or a complete folder tree under a writable root.
+     *
+     * <p>The running Almin jar and the private AI credential are checked
+     * before the first child is removed. A directory containing either is
+     * refused as a whole, so recursive deletion cannot partially empty a
+     * protected installation and fail only when it reaches the protected file.
+     */
     public static Result delete(MinecraftServer server, String rel) {
         Path target = resolveSafe(server, rel);
         if (target == null) return Result.fail("Path escapes server directory");
@@ -222,15 +233,59 @@ public final class WebFiles {
                 + " (or a world's datapacks/)");
         }
         if (!Files.exists(target)) return Result.fail("No such file: " + rel);
-        try {
-            if (Files.isDirectory(target)) {
-                try (Stream<Path> s = Files.list(target)) {
-                    if (s.findAny().isPresent()) return Result.fail("Directory is not empty");
+        Path base = root(server);
+        List<Path> protectedPaths = new ArrayList<>();
+        Path own = UpdateChecker.ownJarPath();
+        if (own != null) protectedPaths.add(own);
+        protectedPaths.add(base.resolve("config").resolve("almin")
+            .resolve(AiInsights.keyFileName()));
+        return deleteTree(target, protectedPaths);
+    }
+
+    /**
+     * Recursively removes {@code target} without following symbolic links.
+     * Public for the disk-backed regression harness; callers must apply their
+     * own writable-root policy before invoking it.
+     */
+    public static Result deleteTree(Path target, List<Path> protectedPaths) {
+        Path base = target.toAbsolutePath().normalize();
+        if (!Files.exists(base, LinkOption.NOFOLLOW_LINKS)) {
+            return Result.fail("No such file or directory: " + target);
+        }
+        if (protectedPaths != null) {
+            for (Path protectedPath : protectedPaths) {
+                if (protectedPath == null) continue;
+                Path protectedAbs = protectedPath.toAbsolutePath().normalize();
+                if (Files.exists(protectedAbs, LinkOption.NOFOLLOW_LINKS)
+                        && (protectedAbs.equals(base) || protectedAbs.startsWith(base))) {
+                    return Result.fail("Folder contains a protected Almin file: "
+                        + protectedAbs.getFileName());
                 }
             }
-            Files.delete(target);
+        }
+        try {
+            if (!Files.isDirectory(base, LinkOption.NOFOLLOW_LINKS)) {
+                Files.delete(base);
+                return Result.pass();
+            }
+            Files.walkFileTree(base, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
+                        throws IOException {
+                    Files.delete(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException failure)
+                        throws IOException {
+                    if (failure != null) throw failure;
+                    Files.delete(dir);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
             return Result.pass();
-        } catch (IOException e) {
+        } catch (IOException | SecurityException e) {
             return Result.fail("Delete failed: " + e.getMessage());
         }
     }
@@ -255,7 +310,7 @@ public final class WebFiles {
     /** Applies the write rules to {@code rel} without touching its contents. */
     public static Target uploadTarget(MinecraftServer server, String rel) {
         Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR)
-            .toAbsolutePath().normalize().getParent();
+            .toAbsolutePath().normalize();
         return uploadTarget(root(server), AlminConfig.get().dirWritableRootsAsSet(),
             datapacks, rel);
     }
@@ -270,7 +325,7 @@ public final class WebFiles {
      * real, against a real directory, which is how the rules are checked.
      */
     public static Target uploadTarget(Path root, java.util.Set<String> writableRoots,
-                                      Path datapacksParent, String rel) {
+                                      Path datapacksRoot, String rel) {
         Path target = resolveUnder(root, rel);
         if (target == null) return new Target(null, "Path escapes the server directory");
         if (isOwnJar(target)) return new Target(null, "Refusing to overwrite Almin's own jar");
@@ -281,7 +336,7 @@ public final class WebFiles {
         if (relative.getNameCount() == 0) return new Target(null, "No filename given");
         String top = relative.getName(0).toString();
         boolean allowed = writableRoots.contains(top)
-            || (datapacksParent != null && target.startsWith(datapacksParent));
+            || (datapacksRoot != null && target.startsWith(datapacksRoot));
         if (!allowed) {
             return new Target(null, "Uploads are limited to " + String.join(", ", writableRoots)
                 + " (or a world's datapacks folder) — " + top + " is not one of them");
@@ -330,7 +385,7 @@ public final class WebFiles {
      */
     public static Result mkdir(MinecraftServer server, String parentRel, String name) {
         Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR)
-            .toAbsolutePath().normalize().getParent();
+            .toAbsolutePath().normalize();
         return mkdir(root(server), AlminConfig.get().dirWritableRootsAsSet(),
             datapacks, parentRel, name);
     }
@@ -342,7 +397,7 @@ public final class WebFiles {
      * can be exercised against a real directory instead of described.
      */
     public static Result mkdir(Path root, java.util.Set<String> writableRoots,
-                               Path datapacksParent, String parentRel, String name) {
+                               Path datapacksRoot, String parentRel, String name) {
         if (name == null || name.isBlank() || name.contains("/") || name.contains("\\")
                 || name.contains("..")) {
             return Result.fail("Invalid folder name: " + name);
@@ -356,7 +411,7 @@ public final class WebFiles {
         Path relative = base.relativize(target);
         boolean allowed = relative.getNameCount() > 0
             && (writableRoots.contains(relative.getName(0).toString())
-                || (datapacksParent != null && target.startsWith(datapacksParent)));
+                || (datapacksRoot != null && target.startsWith(datapacksRoot)));
         if (!allowed) {
             return Result.fail("New folders are limited to: " + String.join(", ", writableRoots)
                 + " (or a world's datapacks/)");
