@@ -338,8 +338,9 @@ Almin can do the second half itself, and **you do not have to configure how**.
 This JVM already knows the command line it was launched with, so running that
 again is a faithful restart: same java binary, same heap flags, same jar, same
 arguments, same environment, same working directory. The panel's Settings tab
-shows the exact command it would run. This is opt-in because most hosted,
-container, and NAS installs already have a process supervisor.
+shows the exact command it would run. Self-relaunch is on by default so a
+directly launched server actually comes back; hosted or container installs
+whose own supervisor handles restarts should switch it off.
 
 This is what **Restart** and **Start** in the panel do, what `/almin op restart`
 does, and how an auto-update applies itself. The order matters and is deliberate:
@@ -350,13 +351,19 @@ server that is down with nothing left to bring it back.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `web-restart-relaunch` | `false` | start the server again from here after an Almin restart |
+| `web-supervisor` | `false` | keep the website available while stopped; also handle Almin restarts and updates |
+| `web-restart-relaunch` | `true` | handle Almin restarts here without keeping a stopped-server website permanently |
 | `web-start-command` | *(blank)* | run this instead of re-running this server's own command line |
 
-**Only turn `web-restart-relaunch` on when no wrapper, container policy, host
-panel, or service restarts this server.** Otherwise both will start one, and
-the second to reach the world loses to Minecraft's own `session.lock`. Existing
-installs using the former `true` default are migrated to `false` once.
+**Turn `web-restart-relaunch` off when a wrapper, container policy, host panel,
+or service already restarts this server.** Otherwise both can start one, and
+the second to reach the world loses to Minecraft's own `session.lock`.
+
+`web-supervisor` already means Almin owns the stopped server, so it implies
+self-relaunch; a second toggle is no longer required. Even with supervisor mode
+off, pressing **Stop server** on the website keeps a temporary launcher panel
+for one hour so **Start server** remains usable. The old panel releases its web
+port before spawning a replacement, avoiding a fast-start handoff collision.
 
 Only a stop Almin was *asked* for becomes a restart. An ordinary `/stop`, a
 crash, or the machine shutting down are not restarts and are never turned into

@@ -81,22 +81,23 @@ public final class AlminConfig {
      * server, so that wrapper would never see the exit.
      */
     public boolean webSupervisor = false;
-    /** Command the panel's Start button runs. Required for supervisor mode. */
+    /** Optional Start-button command; blank faithfully reuses this JVM's command line. */
     public String webStartCommand = "";
     /**
      * Start the server again from here when Almin stops it for a restart.
      *
-     * <p>Off by default because hosted servers, containers, and NAS packages
-     * usually already have a supervisor. If Almin and that supervisor both
-     * relaunch, two JVMs race over the same world and can swamp the host while
-     * one repeatedly loses Minecraft's session lock.
+     * <p>On by default because an automatic update that only stops is not an
+     * automatic update. Hosted servers with an external wrapper can turn it
+     * off so that wrapper remains the only thing starting a replacement JVM.
      *
-     * <p>Turn it on only for a directly launched server with nothing outside
-     * watching the process. Almin then reuses this JVM's command line.
+     * <p>Leave it on only for a directly launched server with nothing outside
+     * watching the process. Almin then reuses this JVM's command line. It is
+     * implied by {@code web-supervisor}: a panel deliberately left in charge
+     * of a stopped server must also apply its own restarts and updates.
      *
      * @see ServerRelaunch
      */
-    public boolean webRestartRelaunch = false;
+    public boolean webRestartRelaunch = true;
     /** Offer the mods in mods.json to joining players. */
     public boolean modsAdvertise = true;
     /**
@@ -402,11 +403,11 @@ public final class AlminConfig {
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
             c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
-        boolKey("web-supervisor", "Keep the panel up while the server is stopped, so it can be started from the browser",
+        boolKey("web-supervisor", "Keep the panel up while the server is stopped, start it from the browser, and handle Almin restarts",
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
         textKey("web-start-command", "Command used to start the server again (blank = re-run this server's own command line)",
             c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v),
-        boolKey("web-restart-relaunch", "Start the server again from here after an Almin restart or update (only enable when no wrapper, container or service restarts it)",
+        boolKey("web-restart-relaunch", "Start the server again from here after an Almin restart or update (turn off when a wrapper, container or service does this)",
             c -> c.webRestartRelaunch, (c, v) -> c.webRestartRelaunch = (Boolean) v),
         boolKey("mods-advertise", "Offer the mods listed in mods.json to joining players",
             c -> c.modsAdvertise, (c, v) -> c.modsAdvertise = (Boolean) v),
@@ -482,7 +483,7 @@ public final class AlminConfig {
      * time the file is read, and so a value someone chose on purpose is only
      * ever overwritten if it is still sitting on the old default.
      */
-    private static final int CONFIG_VERSION = 3;
+    private static final int CONFIG_VERSION = 4;
     /** Version of the defaults this file was last written against. */
     public int configVersion = 0;
 
@@ -574,6 +575,15 @@ public final class AlminConfig {
         // afterwards for a directly launched, unsupervised server.
         if (cfg.configVersion < 3 && cfg.webRestartRelaunch) {
             cfg.webRestartRelaunch = false;
+        }
+        // v4: the v3 safety migration was added while a severe NAS slowdown
+        // was believed to be two Almin JVMs. That incident was later traced to
+        // the host hardware, while the forced-off setting left direct servers
+        // unable to finish updates or restart from the website. Restore the
+        // working default once. Externally supervised installs can switch it
+        // off again and v4 will preserve that explicit choice thereafter.
+        if (cfg.configVersion < 4 && !cfg.webRestartRelaunch) {
+            cfg.webRestartRelaunch = true;
         }
         cfg.configVersion = CONFIG_VERSION;
     }

@@ -158,7 +158,11 @@ public final class ServerRelaunch {
 
     /** Whether a relaunch is allowed at all on this server. */
     public static boolean enabled() {
-        return AlminConfig.get().webRestartRelaunch;
+        AlminConfig cfg = AlminConfig.get();
+        // Supervisor mode means Almin is deliberately responsible for the
+        // stopped server. Requiring a second switch as well made automatic
+        // updates stop forever while the website sat there offering Start.
+        return cfg.webSupervisor || cfg.webRestartRelaunch;
     }
 
     /**
@@ -169,8 +173,8 @@ public final class ServerRelaunch {
     public static synchronized boolean arm(String reason) {
         if (armed) return true;
         if (!enabled()) {
-            AlminLog.info("[almin] relaunch is off (web-restart-relaunch false) — {} will just stop",
-                reason);
+            AlminLog.info("[almin] relaunch is off (neither web-supervisor nor "
+                + "web-restart-relaunch is enabled) — {} will just stop", reason);
             return false;
         }
         Plan plan = plan();
