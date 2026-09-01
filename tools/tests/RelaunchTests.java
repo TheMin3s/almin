@@ -114,8 +114,8 @@ public class RelaunchTests {
         ck("...and armed() agrees", !ServerRelaunch.armed(), "");
 
         cfg.webSupervisor = true;
-        ck("supervisor mode owns its restarts without a second toggle",
-            ServerRelaunch.arm("a supervised restart"), "not armed");
+        ck("website preservation does not silently take over restarts",
+            !ServerRelaunch.arm("a supervised restart"), "armed");
         reset();
         cfg.webSupervisor = false;
 
@@ -256,31 +256,35 @@ public class RelaunchTests {
             web.contains("relaunchError = r.message()"), "not recorded");
         // Without supervisor mode every web thread is a daemon, so "the panel
         // stays up" needs something non-daemon or the JVM exits anyway.
-        int hold = web.indexOf("private static void holdOpenForStart()");
+        int hold = web.indexOf("private static void holdOpenToReport()");
         ck("...with a thread that actually holds the JVM open", hold > 0, "missing");
         ck("...which is not a daemon, or it would not",
             hold > 0 && web.indexOf("t.setDaemon(false)", hold) > hold, "daemon");
         ck("...and which gives up eventually rather than squatting the port forever",
             hold > 0 && web.indexOf("REPORT_WINDOW_MS", hold) > hold
                 && web.indexOf("halt(0)", hold) > hold, "no limit");
-        ck("website Stop leaves a temporary route back to Start",
-            web.contains("keepPanelForStart = true")
-                && web.contains("if (keepPanelForStart)")
-                && !web.contains("AlminExit.arm(\"a stop from the web panel\")"),
-            "website tears down its own Start button");
+        ck("website Stop uses the original supervisor-aware exit watchdog",
+            web.contains("AlminExit.arm(\"a stop from the web panel\")")
+                && !web.contains("keepPanelForStart"),
+            "temporary Stop fallback still present");
         int stoppedMethod = web.indexOf("public static void onServerStopped()");
-        int permanent = web.indexOf("if (AlminConfig.get().webSupervisor)", stoppedMethod);
-        int temporary = web.indexOf("if (keepPanelForStart)", stoppedMethod);
-        int close = web.indexOf("stop();", temporary);
-        ck("permanent supervision keeps the whole website without a timeout",
-            stoppedMethod > 0 && permanent > stoppedMethod
-                && temporary > permanent && close > temporary,
-            stoppedMethod + " / " + permanent + " / " + temporary + " / " + close);
+        int supervisorChoice = web.indexOf("if (!AlminConfig.get().webSupervisor)", stoppedMethod);
+        int close = web.indexOf("stop();", supervisorChoice);
+        int staysUp = web.indexOf("server stopped — entire website remains available", close);
+        ck("the original supervisor path preserves the website without a timeout",
+            stoppedMethod > 0 && supervisorChoice > stoppedMethod
+                && close > supervisorChoice && staysUp > close,
+            stoppedMethod + " / " + supervisorChoice + " / " + close + " / " + staysUp);
         int handoverMethod = web.indexOf("private static void handOverOrStayUp()");
-        int releasePort = web.indexOf("if (hadPanel) stop()", handoverMethod);
         int spawn = web.indexOf("ServerRelaunch.launch(", handoverMethod);
-        ck("a replacement gets the website port before it is spawned",
-            releasePort > handoverMethod && spawn > releasePort, "port released too late");
+        int releasePort = web.indexOf("stop();", spawn);
+        ck("the original handoff launches before releasing the website",
+            spawn > handoverMethod && releasePort > spawn, "launch/stop order changed");
+        int startMethod = web.indexOf("private void handOffNow()");
+        int startSpawn = web.indexOf("ServerRelaunch.launch(", startMethod);
+        int startRelease = web.indexOf("stop();", startSpawn);
+        ck("Start uses the same launch-first handoff",
+            startSpawn > startMethod && startRelease > startSpawn, "launch/stop order changed");
         ck("the page is never cached, so an update is the panel you get",
             web.contains("\"Cache-Control\", \"no-store"), "no header");
 

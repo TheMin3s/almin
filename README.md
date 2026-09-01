@@ -358,7 +358,7 @@ server that is down with nothing left to bring it back.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `web-supervisor` | `true` | keep the entire website available while stopped; also handle Almin restarts and updates |
+| `web-supervisor` | `true` | keep the entire website available while stopped |
 | `web-restart-relaunch` | `true` | handle Almin restarts here without keeping a stopped-server website permanently |
 | `web-start-command` | *(blank)* | run this instead of re-running this server's own command line |
 
@@ -366,18 +366,19 @@ server that is down with nothing left to bring it back.
 or service already restarts this server.** Otherwise both can start one, and
 the second to reach the world loses to Minecraft's own `session.lock`.
 
-`web-supervisor` already means Almin owns the stopped server, so it implies
-self-relaunch; a second toggle is no longer required. All seven authenticated
-pages stay reachable after Minecraft stops. Actions that need a live server say
-that it is stopped, while **Start server** remains available without a timeout.
-Even with supervisor mode explicitly turned off, pressing **Stop server** on the
-website keeps a temporary launcher panel for one hour. The old panel releases
-its web port before spawning a replacement, avoiding a fast-start handoff
-collision.
+The two switches are deliberately independent, as they were in the original
+restart system. `web-supervisor` only preserves the website. It does not make
+Almin take restart ownership away from a host wrapper. All seven authenticated
+pages stay reachable after Minecraft stops when it is enabled; actions that
+need a live server say that it is stopped, while **Start server** remains
+available without a timeout.
+
+Restart and Start use the original launch-first handoff: the replacement is
+successfully created before the old website releases its port and exits. A
+failed launch leaves the current website untouched and reports the failure.
 
 Turn `web-supervisor` off only when an external wrapper must see the Almin JVM
-exit after an ordinary server stop. Existing installs are migrated to the new
-on-by-default behavior once; an explicit opt-out is preserved after that.
+exit after an ordinary server stop.
 
 Only a stop Almin was *asked* for becomes a restart. An ordinary `/stop`, a
 crash, or the machine shutting down are not restarts and are never turned into

@@ -89,9 +89,9 @@ public final class AlminConfig {
      * off so that wrapper remains the only thing starting a replacement JVM.
      *
      * <p>Leave it on only for a directly launched server with nothing outside
-     * watching the process. Almin then reuses this JVM's command line. It is
-     * implied by {@code web-supervisor}: a panel deliberately left in charge
-     * of a stopped server must also apply its own restarts and updates.
+     * watching the process. Almin then reuses this JVM's command line. This is
+     * deliberately independent of {@code web-supervisor}: keeping a stopped
+     * website alive must not silently change who owns server restarts.
      *
      * @see ServerRelaunch
      */
@@ -401,7 +401,7 @@ public final class AlminConfig {
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
             c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
-        boolKey("web-supervisor", "Keep the entire website up while the server is stopped, start it from the browser, and handle Almin restarts",
+        boolKey("web-supervisor", "Keep the entire website up while the server is stopped, so it can be started from the browser",
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
         textKey("web-start-command", "Command used to start the server again (blank = re-run this server's own command line)",
             c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v),

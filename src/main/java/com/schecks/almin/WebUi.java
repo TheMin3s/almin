@@ -25,7 +25,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /**
@@ -115,10 +114,6 @@ public final class WebUi {
     /** How long a panel with a failed restart on it waits to be read. */
     private static final long REPORT_WINDOW_MS = 60 * 60 * 1000L;
 
-    /** A website Stop leaves one temporary route back to the Start button. */
-    private static volatile boolean keepPanelForStart = false;
-    private static final AtomicBoolean HOLDING_FOR_START = new AtomicBoolean();
-
     /** Attempts on the configured port before looking elsewhere, and the wait between. */
     private static final int PREFERRED_RETRIES = 4;
     private static final long PREFERRED_RETRY_MS = 750;
@@ -178,7 +173,6 @@ public final class WebUi {
     public static synchronized void start(MinecraftServer server) {
         boundServer = server;
         serverUp = true;
-        keepPanelForStart = false;
         hookTick();
         if (instance != null) return;
         AlminConfig cfg = AlminConfig.get();
@@ -692,21 +686,12 @@ public final class WebUi {
         // too if the handover fails — that is the only way anyone would find
         // out that it did.
         if (ServerRelaunch.armed()) return;
-        // Permanent supervision wins over the temporary website-Stop fallback.
-        // In this mode the complete site remains reachable until Start hands
-        // its listener to a new Minecraft process.
-        if (AlminConfig.get().webSupervisor) {
-            AlminLog.info("[almin] server stopped — entire website remains available "
-                + "(supervisor mode)");
+        if (!AlminConfig.get().webSupervisor) {
+            stop();
             return;
         }
-        if (keepPanelForStart) {
-            AlminLog.info("[almin] server stopped from the website — keeping its Start button "
-                + "available for {} minutes", REPORT_WINDOW_MS / 60_000);
-            holdOpenForStart();
-            return;
-        }
-        stop();
+        AlminLog.info("[almin] server stopped — entire website remains available "
+            + "(supervisor mode)");
     }
 
     /**
@@ -735,22 +720,16 @@ public final class WebUi {
 
     private static void handOverOrStayUp() {
         String why = ServerRelaunch.why();
-        boolean hadPanel = instance != null;
-        // The replacement uses the same web address. Release it before the
-        // process is created, otherwise a fast server can reach its bind while
-        // this old panel still owns the port.
-        if (hadPanel) stop();
         ServerRelaunch.Result r = ServerRelaunch.launch(dirOf(boundServer));
         if (!r.ok()) {
             relaunchError = r.message();
             lastError = r.message();
             ServerRelaunch.disarm();
-            if (hadPanel) {
-                listen(boundServer, AlminConfig.get());
+            if (instance != null) {
                 CONSOLE.warn("[almin] {} could not start the server again: {} — leaving the panel "
                     + "up so you can start it from there.", why, r.message());
                 AlminLog.warn("[almin] relaunch after {} failed; panel stays up", why);
-                holdOpenForStart();
+                holdOpenToReport();
                 return;
             }
             // Nothing to fall back on. Behave as before: exit, and let whatever
@@ -761,6 +740,7 @@ public final class WebUi {
 
         AlminLog.info("[almin] {} — new server launched; handing over the port and exiting", why);
         AlminLog.close();
+        stop();                               // release the port for the new process
         Runtime.getRuntime().halt(0);
     }
 
@@ -778,23 +758,19 @@ public final class WebUi {
      * nothing behind it is the bug this whole area exists to fix, so the wait
      * has an end.
      */
-    private static void holdOpenForStart() {
-        if (!HOLDING_FOR_START.compareAndSet(false, true)) return;
+    private static void holdOpenToReport() {
         Thread t = new Thread(() -> {
-            try {
-                long deadline = System.currentTimeMillis() + REPORT_WINDOW_MS;
-                while (System.currentTimeMillis() < deadline && instance != null) {
-                    sleep(5000);
-                }
-                if (instance == null) return;  // Start was pressed, or the panel was stopped
-                CONSOLE.warn("[almin] Nobody started the server in the last {} minutes. Closing "
-                    + "the temporary launcher panel.", REPORT_WINDOW_MS / 60_000);
-                AlminLog.close();
-                stop();
-                Runtime.getRuntime().halt(0);
-            } finally {
-                HOLDING_FOR_START.set(false);
+            long deadline = System.currentTimeMillis() + REPORT_WINDOW_MS;
+            while (System.currentTimeMillis() < deadline && instance != null) {
+                sleep(5000);
             }
+            if (instance == null) return;      // someone pressed Start, or stopped the panel
+            CONSOLE.warn("[almin] Nobody started the server in the last {} minutes. Closing the "
+                + "panel and exiting so this process stops holding its port.",
+                REPORT_WINDOW_MS / 60_000);
+            AlminLog.close();
+            stop();
+            Runtime.getRuntime().halt(0);
         }, "Almin-web-report");
         // Not a daemon: holding the JVM open is the entire job.
         t.setDaemon(false);
@@ -1080,13 +1056,12 @@ public final class WebUi {
                 // Stop means stop. Anything left armed from an earlier request
                 // would turn this into a restart.
                 ServerRelaunch.disarm();
-                // A button that stops the website can never offer Start. Keep
-                // this one panel alive temporarily even when permanent
-                // supervisor mode is off.
-                keepPanelForStart = true;
                 json(ex, 200, "{\"ok\":true,\"action\":\"stop\"}");
                 // Halt on the server thread, after the response is on its way.
-                server.execute(() -> server.halt(false));
+                server.execute(() -> {
+                    AlminExit.arm("a stop from the web panel");
+                    server.halt(false);
+                });
                 return;
             }
 
@@ -1147,19 +1122,16 @@ public final class WebUi {
     private void handOffNow() {
         Thread t = new Thread(() -> {
             sleep(400);                                // let the response reach the browser
-            MinecraftServer stopped = server;
-            stop();                                    // replacement needs this exact port
-            ServerRelaunch.Result r = ServerRelaunch.launch(dirOf(stopped));
+            ServerRelaunch.Result r = ServerRelaunch.launch(dirOf(server));
             if (!r.ok()) {
                 relaunchError = r.message();
                 lastError = r.message();
-                listen(stopped, AlminConfig.get());
-                holdOpenForStart();
                 CONSOLE.warn("[almin] Start failed: {}", r.message());
                 return;                                // panel stays up, and says so
             }
             AlminLog.info("[almin] server launched from the panel; handing over and exiting");
             AlminLog.close();
+            stop();                                    // release the port for the new process
             Runtime.getRuntime().halt(0);
         }, "Almin-web-handoff");
         // Not a daemon: this thread is the only thing left that has to finish.
