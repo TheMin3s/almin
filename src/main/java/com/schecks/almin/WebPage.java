@@ -5822,6 +5822,8 @@ final class WebPage {
               'BlueMap terrain with Almin activity in world coordinates');
             add('Legacy 2D',!usingBlueMap()?'on':'',()=>setBlueMapMode('legacy'),
               'The original recorded-snapshot activity map');
+            add('Reset renders…','danger',resetBlueMapDialog,
+              'Purge every configured BlueMap render after a world reset');
             return;
           }
           if(!s.installed){
@@ -5845,6 +5847,8 @@ final class WebPage {
           if(s.downloadAccepted===false) add('Allow resource download','go',acceptBlueMapDownload,
             'Let BlueMap download the Minecraft client resources required to render the map');
           if(s.restartRequired) add('Restart to finish','go',()=>$('srvrestart').click());
+          if(s.loaded) add('Reset renders…','danger',resetBlueMapDialog,
+            'Purge every configured BlueMap render after a world reset');
           add('Legacy 2D','on',()=>setBlueMapMode('legacy'));
         }
 
@@ -5894,6 +5898,32 @@ final class WebPage {
           await loadBlueMapStatus(true);
           if(confirm((r.body.message||'BlueMap is ready to start.')+'\\n\\nRestart now?'))
             $('srvrestart').click();
+        }
+
+        function resetBlueMapDialog(){
+          modal('Reset BlueMap renders',(body,close)=>{
+            body.innerHTML='<p>This purges <b>every configured BlueMap render</b>. It does not '+
+              'delete the Minecraft world, BlueMap settings, or Almin activity history.</p>'+
+              '<p class="muted">BlueMap normally notices a replaced world itself. Use this when '+
+              'old terrain remains after a reset. Unless a map is frozen, BlueMap immediately '+
+              'renders it again; a full re-render can use substantial NAS disk I/O and CPU.</p>'+
+              '<div class="row2"><button class="btn danger" id="bm-reset">Purge all renders</button>'+
+              '<button class="btn" id="bm-reset-no">Cancel</button></div>'+
+              '<div class="msg" id="bm-reset-msg"></div>';
+            $('bm-reset-no').onclick=close;
+            $('bm-reset').onclick=async()=>{
+              const button=$('bm-reset'), msg=$('bm-reset-msg');
+              button.disabled=true; msg.className='msg'; msg.textContent='Asking BlueMap to purge…';
+              const r=await jpost('/api/bluemap',{action:'reset'});
+              msg.className='msg '+(r.status===200?'ok':'err');
+              msg.textContent=r.body.message||r.body.error||
+                (r.status===200?'Reset requested.':'BlueMap reset failed.');
+              if(r.status===200){
+                blueFrameReady=false; blueCamera=null; blueFrameBox=null;
+                await loadBlueMapStatus(true); paintAll();
+              } else button.disabled=false;
+            };
+          });
         }
 
         function focusBlueMap(x,y,z,distance){

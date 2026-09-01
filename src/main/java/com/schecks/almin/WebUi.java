@@ -3113,13 +3113,20 @@ public final class WebUi {
             }
             JsonObject body = readBody(ex);
             String action = body.has("action") ? body.get("action").getAsString() : "";
-            if (!"configure".equals(action) && !"accept-download".equals(action)) {
+            if (!"configure".equals(action) && !"accept-download".equals(action)
+                    && !"reset".equals(action)) {
                 json(ex, 400, err("Unknown BlueMap action."));
                 return;
             }
-            BlueMapIntegration.Result result = "accept-download".equals(action)
-                ? BlueMapIntegration.acceptDownload(server)
-                : BlueMapIntegration.configure(server, port);
+            BlueMapIntegration.Result result;
+            if ("reset".equals(action)) {
+                result = onServer(() -> BlueMapIntegration.reset(server),
+                    BlueMapIntegration.Result.fail("The server did not answer the reset request."));
+            } else if ("accept-download".equals(action)) {
+                result = BlueMapIntegration.acceptDownload(server);
+            } else {
+                result = BlueMapIntegration.configure(server, port);
+            }
             JsonObject out = new JsonObject();
             out.addProperty("ok", result.ok());
             out.addProperty("message", result.message());

@@ -1,5 +1,6 @@
 package com.schecks.almin;
 
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -19,6 +20,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -55,6 +59,7 @@ final class BlueMapIntegration {
     private static volatile int lastProbePort;
     private static volatile long lastProbeAt;
     private static volatile boolean lastProbeReady;
+    private static volatile long lastPurgeAt;
 
     record Status(boolean installed, boolean enabled, boolean loaded,
                   boolean configured, boolean ready, boolean restartRequired,
@@ -209,6 +214,64 @@ final class BlueMapIntegration {
         } catch (IOException | RuntimeException e) {
             return Result.fail("Could not update BlueMap's download setting: " + e.getMessage());
         }
+    }
+
+    /**
+     * Purges every configured map through BlueMap's documented command. This
+     * works with file and database storages alike and leaves the Minecraft
+     * world, BlueMap configuration, and Almin data untouched.
+     */
+    static synchronized Result reset(MinecraftServer server) {
+        if (server == null) return Result.fail("The Minecraft server is not running.");
+        if (!loaded()) return Result.fail("BlueMap is not loaded.");
+        long now = System.currentTimeMillis();
+        if (now - lastPurgeAt < 30_000) {
+            return Result.fail("A BlueMap reset was already requested less than 30 seconds ago.");
+        }
+        List<String> maps = mapIds(server.getServerDirectory());
+        if (maps.isEmpty()) {
+            return Result.fail("BlueMap has no map configs under config/bluemap/maps/.");
+        }
+        // Arm the repeat guard before the first command. If one later map
+        // fails, the maps already accepted must not be purged a second time by
+        // an immediate retry.
+        lastPurgeAt = now;
+        int queued = 0;
+        try {
+            for (String map : maps) {
+                String command = "bluemap purge " + StringArgumentType.escapeIfRequired(map);
+                server.getCommands().performPrefixedCommand(
+                    server.createCommandSourceStack(), command);
+                queued++;
+            }
+        } catch (RuntimeException e) {
+            return Result.fail("BlueMap accepted " + queued + " of " + maps.size()
+                + " purge requests before failing: " + e.getMessage());
+        }
+        AlminLog.warn("[almin] requested BlueMap purge for {}", String.join(", ", maps));
+        return new Result(true, false, 0, "Reset requested for " + queued
+            + (queued == 1 ? " BlueMap map" : " BlueMap maps")
+            + ". BlueMap will re-render them unless they are frozen.");
+    }
+
+    /** Map ids are the names of BlueMap's map configs without .conf. */
+    static List<String> mapIds(Path root) {
+        if (root == null) return List.of();
+        Path maps = root.resolve("config").resolve("bluemap").resolve("maps");
+        if (!Files.isDirectory(maps)) return List.of();
+        List<String> ids = new ArrayList<>();
+        try (var files = Files.list(maps)) {
+            files.filter(p -> Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                .map(p -> p.getFileName().toString())
+                .filter(name -> name.endsWith(".conf") && name.length() > 5)
+                .map(name -> name.substring(0, name.length() - 5))
+                .sorted(Comparator.naturalOrder())
+                .limit(128)
+                .forEach(ids::add);
+        } catch (IOException | RuntimeException e) {
+            return List.of();
+        }
+        return List.copyOf(ids);
     }
 
     private static boolean loaded() {

@@ -87,6 +87,19 @@ public class BlueMapTests {
                 bool(loaded, "ready") && bool(loaded, "downloadAccepted")
                     && !bool(loaded, "restartRequired"), loaded.toString());
 
+            Path maps = cfg.resolve("maps");
+            Files.createDirectories(maps);
+            Files.writeString(maps.resolve("world.conf"), "world: world\n");
+            Files.writeString(maps.resolve("world_nether.conf"), "world: world\n");
+            Files.writeString(maps.resolve("ignore.txt"), "not a map\n");
+            Files.createSymbolicLink(maps.resolve("linked.conf"), maps.resolve("world.conf"));
+            Method mapIds = type.getDeclaredMethod("mapIds", Path.class);
+            mapIds.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            var ids = (java.util.List<String>) mapIds.invoke(null, root);
+            check("the reset discovers configured BlueMap ids without following links",
+                ids.equals(java.util.List.of("world", "world_nether")), ids.toString());
+
             String integration = Files.readString(Path.of(
                 "src/main/java/com/schecks/almin/BlueMapIntegration.java"));
             String proxy = Files.readString(Path.of(
@@ -109,6 +122,15 @@ public class BlueMapTests {
                     && section(web, "private void handleBlueMap", 1600)
                         .contains("acceptDownload(server)"),
                 "the acceptance action is missing from the authenticated BlueMap route");
+            check("the authenticated reset uses BlueMap's supported purge command",
+                page.contains("Reset BlueMap renders")
+                    && page.contains("action:'reset'")
+                    && page.contains("full re-render can use substantial NAS disk I/O")
+                    && section(web, "private void handleBlueMap", 2200)
+                        .contains("BlueMapIntegration.reset(server)")
+                    && integration.contains("bluemap purge ")
+                    && integration.contains("performPrefixedCommand"),
+                "reset bypasses BlueMap or is missing its load warning");
             check("BlueMap streams cannot starve the four panel workers",
                 web.contains("newFixedThreadPool(16") && web.contains("Almin-BlueMap")
                     && web.contains("blueMapPool().execute"), "no separate streaming pool");

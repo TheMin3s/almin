@@ -427,6 +427,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'refreshOnce', 'poll', 'loadAll', 'paintAll', 'showAdmins', 'setAdmins',
                     'togglePlay', 'stopPlay', 'playerColor', 'marker', 'shotFor',
                     'loadBlueMapStatus', 'usingBlueMap', 'setBlueMapMode', 'paintBlueMap',
+                    'resetBlueMapDialog',
                     'blueMapPayload', 'openBlueScene', 'inspectBlueWorld']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
@@ -2996,6 +2997,14 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((world ? '  PASS  ' : '  FAIL  ') +
       'a connected BlueMap becomes the main activity map');
     if (!world) failures.push('BlueMap did not become the main renderer');
+
+    sandbox.paintBlueMapChoice();
+    const resetButton=(byId.get('t-map-choice').children||[])
+      .find((b)=>b.textContent==='Reset renders…');
+    const resetOffered=!!resetButton;
+    console.log((resetOffered ? '  PASS  ' : '  FAIL  ') +
+      'a connected BlueMap offers a render reset');
+    if (!resetOffered) failures.push('BlueMap render reset button is missing');
 
     let payload = sandbox.bluePendingState || {};
     const coldStartSafe=!(payload.scenes||[]).some(m=>m.kind==='block-change');
