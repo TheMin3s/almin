@@ -325,7 +325,7 @@ class H(http.server.BaseHTTPRequestHandler):
                             "ids": {n: UUIDS[n] for n in TRACKS},
                             "actions": ACTIONS, "from": FROM, "to": NOW,
                             "now": int(time.time() * 1000),
-                            "afkSeconds": 20, "admins": ADMINS,
+                            "afkSeconds": 20, "leftPlayerHours": 24, "admins": ADMINS,
                             "online": [
                               {"name": "Steve", "uuid": UUIDS["Steve"], "afk": False,
                                "stillSince": NOW - 4000, "mask": "",

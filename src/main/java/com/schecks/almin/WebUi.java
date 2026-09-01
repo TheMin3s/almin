@@ -2366,7 +2366,9 @@ public final class WebUi {
                 who2.addProperty(e.getKey(), e.getValue());
             }
             root.add("players", who2);
-            root.addProperty("trackSeconds", AlminConfig.get().activityTrackSeconds);
+            AlminConfig cfg = AlminConfig.get();
+            root.addProperty("trackSeconds", cfg.activityTrackSeconds);
+            root.addProperty("leftPlayerHours", cfg.blueMapLeftPlayerHours);
 
             // Everyone at once, for the timeline map at the top of the tab.
             if ("1".equals(queryParam(ex, "all"))) {

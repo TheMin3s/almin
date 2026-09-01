@@ -185,6 +185,8 @@ public class WebFeatureTests {
         ck("the track route answers", tr.statusCode() == 200 && tr.body().contains("\"players\""),
             tr.statusCode() + " " + tr.body());
         ck("...and reports the sample interval", tr.body().contains("\"trackSeconds\""), tr.body());
+        ck("...and reports how long departed BlueMap heads remain",
+            tr.body().contains("\"leftPlayerHours\":24"), tr.body());
         var one = send("GET", "/api/track?player=Nobody", null, cookie);
         ck("an unknown player gives an empty track",
             one.statusCode() == 200 && one.body().contains("\"points\":[]"), one.body());

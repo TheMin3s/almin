@@ -155,6 +155,20 @@ public class BlueMapTests {
                     && page.contains("id:'recent-block-'+a.x")
                     && integration.contains(".95*opacity"),
                 "recent block outline fading is incomplete");
+            Class<?> config = Class.forName("com.schecks.almin.AlminConfig");
+            var constructor = config.getDeclaredConstructor(); constructor.setAccessible(true);
+            Object defaults = constructor.newInstance();
+            Object leftHours = config.getField("blueMapLeftPlayerHours").get(defaults);
+            Object leftKey = config.getMethod("keyByName", String.class)
+                .invoke(null, "bluemap-left-player-hours");
+            check("departed BlueMap heads have a configurable 24-hour default",
+                Integer.valueOf(24).equals(leftHours) && leftKey != null,
+                "default=" + leftHours + ", key=" + leftKey);
+            check("the BlueMap bridge draws a clock on a departed head",
+                integration.contains("almin-left-clock")
+                    && integration.contains("m.gone?' gone'")
+                    && integration.contains("bottom:-5px"),
+                "departed-head clock styling missing");
             check("BlueMap messages are accepted only from Almin's own iframe",
                 page.contains("e.source!==f.contentWindow")
                     && page.contains("e.origin!==location.origin"),

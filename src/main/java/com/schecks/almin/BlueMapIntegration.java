@@ -480,10 +480,13 @@ final class BlueMapIntegration {
             'style="--almin-color:'+esc(m.color||'#9aa3ae')+';--almin-size:'+
             esc(m.size||1)+';opacity:'+(m.opacity==null?1:m.opacity)+'" title="'+
             esc(m.title||'')+'">'+esc(m.text||'')+'</button>';
-          const headHtml=m=>'<button class="almin-head" data-almin-kind="player" '+
+          const headHtml=m=>'<button class="almin-head'+(m.gone?' gone':'')+'" data-almin-kind="player" '+
             'data-almin-id="'+esc(m.id)+'" style="--almin-color:'+esc(m.color)+';--almin-size:'+
             esc(m.size||1)+'" title="'+esc(m.title||'')+'">'+
-            (m.icon?'<img src="'+esc(m.icon)+'" alt="">':'')+'<span>'+esc(m.text)+'</span></button>';
+            (m.icon?'<img src="'+esc(m.icon)+'" alt="">':'<span class="almin-fallback">'+
+              esc(m.fallback||'?')+'</span>')+
+            (m.gone?'<i class="almin-left-clock" aria-hidden="true"></i>':
+              '<span class="almin-name">'+esc(m.text)+'</span>')+'</button>';
 
           function ensureRoot(){
             const app=window.bluemap, api=window.BlueMap;
@@ -615,8 +618,17 @@ final class BlueMapIntegration {
               'min-width:25px;height:21px;border-radius:7px}.almin-mark.scene{width:auto;height:23px;border-radius:5px;'+
               'padding:0 6px;background:#ffab33;color:#14100a}.almin-mark.gridlabel{width:auto;height:auto;'+
               'border:0;background:#10141bc9;color:#d9e0e8;border-radius:3px;padding:1px 3px;font-size:9px}'+
-              '.almin-head{display:flex;align-items:center;gap:4px;'+
-              'border-radius:5px;padding:2px 5px}.almin-head img{width:20px;height:20px;image-rendering:pixelated}';
+              '.almin-head{display:flex;align-items:center;gap:4px;position:relative;'+
+              'border-radius:5px;padding:2px 5px}.almin-head img{width:20px;height:20px;image-rendering:pixelated}'+
+              '.almin-head.gone{width:28px;height:28px;padding:2px;justify-content:center;'+
+              'filter:grayscale(1);opacity:.82}.almin-head.gone img{width:22px;height:22px}'+
+              '.almin-fallback{min-width:20px;text-align:center}.almin-left-clock{position:absolute;'+
+              'right:-5px;bottom:-5px;width:12px;height:12px;border:2px solid #0b0d11;'+
+              'border-radius:50%;background:#e8edf3;box-shadow:0 1px 4px #000c}'+
+              '.almin-left-clock:before{content:"";position:absolute;left:5px;top:2px;width:1px;'+
+              'height:4px;background:#303844;transform-origin:bottom;transform:rotate(-8deg)}'+
+              '.almin-left-clock:after{content:"";position:absolute;left:5px;top:5px;width:3px;'+
+              'height:1px;background:#303844;transform:rotate(24deg);transform-origin:left}';
             document.head.appendChild(s);
           }
           ready();

@@ -198,7 +198,7 @@ const responses = {
                            { at: Date.now(), dim: 'the_nether', x: 5, y: 40, z: 8 }],
                   // The all=1 shape shares this route; the harness strips the query.
                   all: true, from: Date.now() - 4 * 3600e3, to: Date.now(),
-                  now: Date.now(), afkSeconds: 20,
+                  now: Date.now(), afkSeconds: 20, leftPlayerHours: 24,
                   ids: { Steve: '00000000-0000-0000-0000-0000000000aa',
                          Alex: '00000000-0000-0000-0000-0000000000bb' },
                   online: [
@@ -3047,6 +3047,36 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((carried ? '  PASS  ' : '  FAIL  ') +
       'the 3D renderer receives actions, player paths and a labelled coordinate grid');
     if (!carried) failures.push('BlueMap payload omitted map features');
+
+    const clusterHtml=sandbox.blueClusterHtml([
+      {at:clock-3000,player:'Steve',mask:'',action:'break',detail:'Stone',count:2,x:4,y:63,z:8},
+      {at:clock-2000,player:'Alex',mask:'Builder',action:'place',detail:'Oak Planks',count:3,x:6,y:64,z:10}
+    ]);
+    const clusterLists=/Steve/.test(clusterHtml)&&/Stone/.test(clusterHtml)&&
+      /Builder/.test(clusterHtml)&&/Oak Planks/.test(clusterHtml)&&/×3/.test(clusterHtml);
+    console.log((clusterLists ? '  PASS  ' : '  FAIL  ') +
+      'a BlueMap cluster lists the players, actions, items and counts inside it');
+    if (!clusterLists) failures.push('BlueMap cluster still only shows a grouped-action count');
+
+    const leftAt=clock-60*60000;
+    const leftData={shownNames:['Alex'],shownActs:[],tracks:{Alex:[{at:leftAt-1000,
+      dim:'overworld',x:12,y:64,z:18}]},ids:{Alex:'00000000-0000-0000-0000-0000000000bb'},
+      online:[],away:{Alex:{at:leftAt,gone:true}},afkSecs:20,cursor:clock,now:clock,
+      leftPlayerHours:24,windowMs:4*3600000};
+    const wasLive=sandbox.live; sandbox.live=true;
+    const departed=sandbox.blueMapPayload(leftData,[],[],[]).players[0];
+    const leftHead=departed&&departed.gone&&departed.text==='Alex'&&
+      departed.title.includes('Alex · left at '+sandbox.fmtWhen(leftAt))&&
+      !departed.title.includes('afk');
+    console.log((leftHead ? '  PASS  ' : '  FAIL  ') +
+      'a departed BlueMap player is a timed head, not an AFK player');
+    if (!leftHead) failures.push('departed BlueMap head has the wrong state or hover text');
+    leftData.now=leftAt+24*3600000+1;
+    const expired=sandbox.blueMapPayload(leftData,[],[],[]).players.length===0;
+    console.log((expired ? '  PASS  ' : '  FAIL  ') +
+      'a departed BlueMap head disappears after its configured retention');
+    if (!expired) failures.push('expired departed BlueMap head remained visible');
+    sandbox.live=wasLive;
 
     const pathOpacity=[...new Set((payload.lines||[]).filter(l=>
       String(l.id||'').startsWith('path-')).map(l=>l.opacity))];

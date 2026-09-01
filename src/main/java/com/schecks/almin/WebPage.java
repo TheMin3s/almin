@@ -141,8 +141,17 @@ final class WebPage {
           .bluepicked{position:absolute;left:12px;bottom:12px;max-width:min(520px,70%);
                       background:rgba(11,13,17,.9);border:1px solid var(--line);
                       border-radius:8px;padding:6px 10px;color:var(--dim);font-size:12px;
-                      pointer-events:none}
+                      pointer-events:auto;max-height:min(280px,52%);overflow:auto;
+                      overscroll-behavior:contain}
           .bluepicked strong{color:var(--ink)}
+          .bluepicked .bcl{display:grid;grid-template-columns:auto auto auto minmax(70px,1fr) auto;
+                           gap:5px 8px;align-items:baseline;padding:4px 0;
+                           border-top:1px solid rgba(255,255,255,.06)}
+          .bluepicked .bcl:first-child{margin-top:6px}
+          .bluepicked .bcl .bn{font-weight:650;color:var(--ink)}
+          .bluepicked .bcl .bx{color:var(--brand);font-variant-numeric:tabular-nums}
+          .bluepicked .bcl .bd{word-break:break-word}
+          .bluepicked .bcl .bt{color:var(--mute);white-space:nowrap}
           .legend svg{width:15px;height:15px;display:inline-block;vertical-align:-3px}
           /* ---- the timeline map ---- */
           .maplayout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
@@ -3142,7 +3151,9 @@ final class WebPage {
           if(usingBlueMap()){
             paintBlueMap({tracks:tracks,acts:acts,ids:ids,online:online,names:names,
               shownActs:shownActs,shownNames:shownNames,away:away,afkSecs:afkSecs,
-              cursor:cursor,windowMs:windowMs});
+              cursor:cursor,now:allData.now||Date.now(),
+              leftPlayerHours:allData.leftPlayerHours==null?24:allData.leftPlayerHours,
+              windowMs:windowMs});
             return;
           }
 
@@ -6089,6 +6100,9 @@ final class WebPage {
             }
           }
 
+          const onlineNow=new Set((d.online||[]).map(p=>String(p.name||'').toLowerCase()));
+          const playerClock=live?Math.max(d.cursor,+d.now||0):d.cursor;
+          const leftWindow=Math.max(0,+d.leftPlayerHours||0)*3600000;
           for(const who of d.shownNames){
             const full=(d.tracks[who]||[]).filter(p=>p.dim===allDim);
             const upto=full.filter(p=>p.at<=d.cursor);
@@ -6106,15 +6120,24 @@ final class WebPage {
             }
             if(!upto.length || !mapOpts.players) continue;
             const last=upto[upto.length-1], id='p-'+who;
-            const gone=!!(d.away[who]&&d.away[who].gone&&d.away[who].at>=last.at-1000);
+            // Live mode has a definitive answer: the server's online list.
+            // Timeline playback instead uses the latest join/leave row at
+            // that cursor. The old one-second comparison with a movement
+            // sample mislabeled real departures as AFK whenever the two
+            // recorders happened to run on different ticks.
+            const leftEvent=d.away[who]&&d.away[who].gone?d.away[who]:null;
+            const gone=live?!onlineNow.has(who.toLowerCase()):!!leftEvent;
+            const leftAt=leftEvent?leftEvent.at:last.at;
+            if(gone&&(!leftWindow||playerClock-leftAt>=leftWindow)) continue;
             const stillFor=d.cursor-last.at;
             const idle=!gone&&d.afkSecs>0&&stillFor>d.afkSecs*1000;
             const icon=(mapOpts.faces&&d.ids[who])?'/api/head?uuid='+
               encodeURIComponent(d.ids[who])+'&name='+encodeURIComponent(who):'';
             players.push({id:id,x:last.x+.5,y:last.y+2.2,z:last.z+.5,
               color:(gone||idle)?'#6d7682':playerColor(who),
-              size:mapOpts.head*(gone?.62:1),text:who+(gone?' · left':idle?' · afk':''),icon:icon,
-              title:who+(gone?' · left here '+fmtAgo(d.away[who].at):
+              size:mapOpts.head*(gone?.78:1),gone:gone,fallback:who.charAt(0),
+              text:who+(idle?' · afk':''),icon:icon,
+              title:who+(gone?' · left at '+fmtWhen(leftAt):
                 idle?' · not moving for '+humanSeconds(Math.round(stillFor/1000)):'')+
                 ' · X '+last.x+' / Y '+last.y+' / Z '+last.z+' · '+fmtAgo(last.at)});
             blueRefs.set(id,{type:'player',data:{name:who,point:last}});
@@ -6298,6 +6321,24 @@ final class WebPage {
           p.innerHTML=bluePicked; p.style.display=bluePicked?'':'none';
         }
 
+        /** The contents of a BlueMap cluster, folded the same way as Legacy 2D. */
+        function blueClusterHtml(group){
+          const rows=clusterList(group);
+          const total=rows.reduce((n,row)=>n+row.n,0);
+          const x=Math.round(group.reduce((n,a)=>n+a.x,0)/group.length);
+          const y=Math.round(group.reduce((n,a)=>n+a.y,0)/group.length);
+          const z=Math.round(group.reduce((n,a)=>n+a.z,0)/group.length);
+          return '<strong>'+total+' grouped action'+(total===1?'':'s')+'</strong> around X '+x+
+            ' / Y '+y+' / Z '+z+'<div class="bcls">'+rows.map(row=>{
+              const a=row.a;
+              return '<div class="bcl"><span class="bn">'+esc(a.mask||a.player)+'</span>'+
+                '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+
+                esc(a.action)+'</span>'+(row.n>1?'<span class="bx">×'+row.n+'</span>':
+                '<span></span>')+'<span class="bd">'+esc(a.detail||'')+'</span>'+
+                '<span class="bt">'+esc(fmtAgo(row.at).replace(' ago',''))+'</span></div>';
+            }).join('')+'</div>';
+        }
+
         if(!window.alminBlueMessages){
           window.alminBlueMessages=true;
           window.addEventListener('message',e=>{
@@ -6326,9 +6367,7 @@ final class WebPage {
               focusPlayer=focusPlayer===ref.data.name?'':ref.data.name; paintAll(); return;
             }
             if(ref.type==='cluster'){
-              const g=ref.data, a=g.reduce((x,y)=>x.at>=y.at?x:y);
-              bluePicked='<strong>'+g.length+' grouped actions</strong> around X '+a.x+
-                ' / Y '+a.y+' / Z '+a.z; paintBluePicked(); return;
+              bluePicked=blueClusterHtml(ref.data); paintBluePicked(); return;
             }
             const a=ref.data;
             bluePicked='<strong>'+esc(a.detail||a.action)+'</strong> · '+esc(a.player)+' · '+

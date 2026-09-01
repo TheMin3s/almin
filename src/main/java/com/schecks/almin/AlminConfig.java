@@ -167,6 +167,12 @@ public final class AlminConfig {
      */
     public int activityAfkSeconds = 20;
     /**
+     * How long a departed player's last position remains visible on BlueMap.
+     * The head is explicitly marked as historical while it remains; 0 hides
+     * departed players immediately.
+     */
+    public int blueMapLeftPlayerHours = 24;
+    /**
      * Seconds between pictures of the ground for the activity map. 0 turns
      * them off, leaving the map a grid with paths on it.
      *
@@ -433,6 +439,8 @@ public final class AlminConfig {
             c -> c.activityTrackSeconds, (c, v) -> c.activityTrackSeconds = (Integer) v),
         intKey("activity-afk-seconds", "Seconds of not moving before a player counts as away (0 = never)", 0, 600,
             c -> c.activityAfkSeconds, (c, v) -> c.activityAfkSeconds = (Integer) v),
+        intKey("bluemap-left-player-hours", "Hours a departed player's last head remains on BlueMap (0 = hide immediately)", 0, 720,
+            c -> c.blueMapLeftPlayerHours, (c, v) -> c.blueMapLeftPlayerHours = (Integer) v),
         intKey("map-snapshot-seconds", "Seconds between pictures of the ground for the map (0 = no world under it)", 0, 600,
             c -> c.mapSnapshotSeconds, (c, v) -> c.mapSnapshotSeconds = (Integer) v),
         intKey("map-snapshot-keep", "Hard ceiling on how many pictures of the ground are kept", 2, 4000,
