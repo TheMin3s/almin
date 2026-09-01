@@ -77,6 +77,11 @@ public class Almin implements ModInitializer {
             UpdateChecker.checkOnBoot(server);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            // A live world requested through the file browser is only removed
+            // here, after Minecraft has closed its region files. Deleting it
+            // while the server is running can saturate storage with failed
+            // saves and regeneration attempts.
+            WebFiles.completePendingDelete(server);
             // In supervisor mode the panel deliberately outlives the server, so
             // it can start it again; otherwise this shuts it down with the rest.
             WebUi.onServerStopped();

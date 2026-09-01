@@ -1789,6 +1789,13 @@ public final class AlminCommand {
             ctx.getSource().sendFailure(Component.literal(result.message()));
             return 0;
         }
+        if (!"ok".equals(result.message())) {
+            AlminLog.info("[almin] {} requested guarded deletion of {}: {}",
+                self.getGameProfile().name(), relPath, result.message());
+            ctx.getSource().sendSuccess(() -> Component.literal(result.message())
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.YELLOW)), false);
+            return 1;
+        }
         AlminLog.info("[almin] {} recursively deleted {}", self.getGameProfile().name(), relPath);
         ctx.getSource().sendSuccess(() ->
             Component.literal("Deleted ").setStyle(Style.EMPTY.withColor(ChatFormatting.GREEN))

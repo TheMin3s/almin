@@ -52,6 +52,12 @@ public final class WebFiles {
     private static final int MAX_COUNTED_CHILDREN = 5000;
 
     /**
+     * A loaded world cannot be removed while Minecraft still has region files
+     * open. The delete is completed by the SERVER_STOPPED hook instead.
+     */
+    private static Path pendingWorldDelete;
+
+    /**
      * One row in a folder view. {@code modified} is epoch millis (0 when the
      * filesystem would not say), {@code items} is a directory's child count or
      * -1. {@code writable} controls edits and renames, while {@code deletable}
@@ -159,6 +165,28 @@ public final class WebFiles {
         return absolute.startsWith(datapacks);
     }
 
+    /**
+     * True when deleting {@code target} would touch the currently loaded world
+     * and therefore has to wait until Minecraft has closed it. Datapacks keep
+     * their existing live-management behavior.
+     */
+    public static boolean requiresServerStop(Path worldRoot, Path datapacksRoot, Path target) {
+        if (worldRoot == null || target == null) return false;
+        Path world = worldRoot.toAbsolutePath().normalize();
+        Path absolute = target.toAbsolutePath().normalize();
+        if (!absolute.startsWith(world)) return false;
+        if (datapacksRoot == null) return true;
+        Path datapacks = datapacksRoot.toAbsolutePath().normalize();
+        return !absolute.startsWith(datapacks);
+    }
+
+    private static boolean requiresServerStop(MinecraftServer server, Path target) {
+        Path world = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
+        Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR)
+            .toAbsolutePath().normalize();
+        return requiresServerStop(world, datapacks, target);
+    }
+
     private static boolean isOwnJar(Path target) {
         Path own = UpdateChecker.ownJarPath();
         return own != null && own.toAbsolutePath().normalize().equals(target);
@@ -262,13 +290,56 @@ public final class WebFiles {
                 + " (or a world's datapacks/)");
         }
         if (!Files.exists(target)) return Result.fail("No such file: " + rel);
+        if (requiresServerStop(server, target)) {
+            return scheduleAfterWorldCloses(server, target, rel);
+        }
         Path base = root(server);
+        return deleteTree(target, protectedPaths(base));
+    }
+
+    private static List<Path> protectedPaths(Path base) {
         List<Path> protectedPaths = new ArrayList<>();
         Path own = UpdateChecker.ownJarPath();
         if (own != null) protectedPaths.add(own);
         protectedPaths.add(base.resolve("config").resolve("almin")
             .resolve(AiInsights.keyFileName()));
-        return deleteTree(target, protectedPaths);
+        return protectedPaths;
+    }
+
+    /** Queues one live-world delete and starts a normal, clean server stop. */
+    private static synchronized Result scheduleAfterWorldCloses(
+            MinecraftServer server, Path target, String rel) {
+        if (pendingWorldDelete != null) {
+            return Result.fail("A world deletion is already waiting for the server to stop");
+        }
+        pendingWorldDelete = target.toAbsolutePath().normalize();
+        AlminLog.warn("[almin] /{} will be deleted after the loaded world closes; stopping server",
+            rel);
+        // This method runs on the server thread, where execute() may run inline.
+        // Hop off it briefly so the web response or command acknowledgement
+        // reaches the admin before the normal shutdown begins.
+        java.util.concurrent.CompletableFuture.delayedExecutor(
+            750, java.util.concurrent.TimeUnit.MILLISECONDS).execute(
+                () -> server.execute(() -> server.halt(false)));
+        return new Result(true, "Stopping the server safely; /" + rel
+            + " will be deleted after the world files close");
+    }
+
+    /**
+     * Completes a live-world deletion after Minecraft has closed its levels.
+     * Called from the SERVER_STOPPED hook before any optional handover.
+     */
+    public static synchronized void completePendingDelete(MinecraftServer server) {
+        Path target = pendingWorldDelete;
+        pendingWorldDelete = null;
+        if (target == null || server == null) return;
+        Result result = deleteTree(target, protectedPaths(root(server)));
+        if (result.ok()) {
+            AlminLog.warn("[almin] deleted {} after the world closed", target);
+        } else {
+            AlminLog.warn("[almin] could not delete {} after the world closed: {}",
+                target, result.message());
+        }
     }
 
     /**

@@ -1407,7 +1407,10 @@ final class WebPage {
 
         function deleteDialog(path,entry){
           modal('Delete',(body,close)=>{
-            const warn = entry && entry.directory
+            const liveWorld = path==='world' || path.startsWith('world/');
+            const warn = liveWorld
+              ? 'Minecraft will stop cleanly first. Almin deletes this only after the world files close; your NAS or host can then start the server again.'
+              : entry && entry.directory
               ? 'This permanently deletes the folder and everything inside it.'
               : 'This cannot be undone.';
             body.innerHTML='<p>Delete <code>/'+esc(path)+'</code>?</p>'+
@@ -1418,7 +1421,13 @@ final class WebPage {
             $('dlno').onclick=close;
             $('dlgo').onclick=async()=>{
               const r=await jpost('/api/file/delete',{path:path});
-              if(r.body.ok){ close(); loadDir(curDir); fmsg('Deleted '+path+'.','ok'); }
+              if(r.body.ok){
+                close();
+                const said=r.body.message && r.body.message!=='ok'
+                  ? r.body.message : 'Deleted '+path+'.';
+                fmsg(said,'ok');
+                if(!liveWorld) loadDir(curDir);
+              }
               else { const m=$('dlmsg'); m.className='msg err';
                 m.textContent=r.body.message||r.body.error||'delete failed'; }
             };

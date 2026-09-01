@@ -38,6 +38,17 @@ public class RelaunchTests {
         inst.setAccessible(true);
         inst.set(null, cfg);
 
+        ck("self-relaunch is opt-in by default", !cfg.webRestartRelaunch,
+            String.valueOf(cfg.webRestartRelaunch));
+        cfg.configVersion = 2;
+        cfg.webRestartRelaunch = true; // the old persisted default
+        Method migrate = AlminConfig.class.getDeclaredMethod("migrate", AlminConfig.class);
+        migrate.setAccessible(true);
+        migrate.invoke(null, cfg);
+        ck("the unsafe old default is migrated off",
+            !cfg.webRestartRelaunch && cfg.configVersion == 3,
+            cfg.webRestartRelaunch + " / v" + cfg.configVersion);
+
         dir = Files.createTempDirectory("alminrelaunch");
         Files.createDirectories(dir.resolve("config").resolve("almin"));
         javaBin = ProcessHandle.current().info().command().orElse("java");

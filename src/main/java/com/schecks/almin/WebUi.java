@@ -1222,7 +1222,7 @@ public final class WebUi {
             JsonObject body = readBody(ex);
             String rel = body.has("path") ? body.get("path").getAsString() : "";
             WebFiles.Result r = onServer(() -> WebFiles.delete(server, rel), WebFiles.Result.fail("timeout"));
-            AlminLog.info("[almin] web deleted {} ({})", rel, r.ok() ? "ok" : r.message());
+            AlminLog.info("[almin] web delete {} ({})", rel, r.message());
             json(ex, r.ok() ? 200 : 400, result(r));
         } catch (Throwable t) {
             fault(ex, t);

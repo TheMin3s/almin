@@ -329,11 +329,12 @@ do the second. On a server where nothing is watching, every feature that
 "restarts" simply stopped the server and left it stopped, and nothing anywhere
 said that was what had happened.
 
-Almin now does the second half itself, and **you do not have to configure how**.
+Almin can do the second half itself, and **you do not have to configure how**.
 This JVM already knows the command line it was launched with, so running that
 again is a faithful restart: same java binary, same heap flags, same jar, same
 arguments, same environment, same working directory. The panel's Settings tab
-shows the exact command it would run.
+shows the exact command it would run. This is opt-in because most hosted,
+container, and NAS installs already have a process supervisor.
 
 This is what **Restart** and **Start** in the panel do, what `/almin op restart`
 does, and how an auto-update applies itself. The order matters and is deliberate:
@@ -344,12 +345,13 @@ server that is down with nothing left to bring it back.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `web-restart-relaunch` | `true` | start the server again from here after an Almin restart |
+| `web-restart-relaunch` | `false` | start the server again from here after an Almin restart |
 | `web-start-command` | *(blank)* | run this instead of re-running this server's own command line |
 
-**Turn `web-restart-relaunch` off if a wrapper script or a systemd unit already
-restarts this server.** Otherwise both will start one, and the second to reach
-the world loses to Minecraft's own `session.lock` — noisy, and avoidable.
+**Only turn `web-restart-relaunch` on when no wrapper, container policy, host
+panel, or service restarts this server.** Otherwise both will start one, and
+the second to reach the world loses to Minecraft's own `session.lock`. Existing
+installs using the former `true` default are migrated to `false` once.
 
 Only a stop Almin was *asked* for becomes a restart. An ordinary `/stop`, a
 crash, or the machine shutting down are not restarts and are never turned into

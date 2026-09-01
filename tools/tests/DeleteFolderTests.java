@@ -43,6 +43,18 @@ public class DeleteFolderTests {
         ck("a path outside the server can never be deleted",
             !WebFiles.isDeletable(root, defaults.dirDeletableRootsAsSet(), datapacks,
                 root.getParent().resolve("outside")), "outside path was allowed");
+        ck("loaded world data waits for the server to stop",
+            WebFiles.requiresServerStop(root.resolve("world"), datapacks,
+                root.resolve("world/region/r.0.0.mca")), "live region was treated as safe");
+        ck("the world folder itself waits for the server to stop",
+            WebFiles.requiresServerStop(root.resolve("world"), datapacks,
+                root.resolve("world")), "live world was treated as safe");
+        ck("datapacks retain their live delete behavior",
+            !WebFiles.requiresServerStop(root.resolve("world"), datapacks,
+                root.resolve("world/datapacks/example.zip")), "datapack forced a stop");
+        ck("a different folder does not stop the server",
+            !WebFiles.requiresServerStop(root.resolve("world"), datapacks,
+                root.resolve("mods/example.jar")), "mods forced a stop");
 
         Path tree = root.resolve("config/pack");
         Files.createDirectories(tree.resolve("nested/deeper"));
@@ -93,6 +105,12 @@ public class DeleteFolderTests {
             "src/main/java/com/schecks/almin/commands/AlminCommand.java"));
         ck("the in-game command uses the same guarded implementation",
             command.contains("WebFiles.delete(server, relPath)"), "duplicate delete path");
+        String entrypoint = Files.readString(Path.of(
+            "src/main/java/com/schecks/almin/Almin.java"));
+        ck("queued world deletion runs only after the server stops",
+            entrypoint.indexOf("SERVER_STOPPED")
+                < entrypoint.indexOf("WebFiles.completePendingDelete(server)"),
+            "missing stopped hook");
         String page = Files.readString(Path.of(
             "src/main/java/com/schecks/almin/WebPage.java"));
         ck("the web confirmation warns that folder contents are included",

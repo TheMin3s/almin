@@ -84,18 +84,17 @@ public final class AlminConfig {
     /**
      * Start the server again from here when Almin stops it for a restart.
      *
-     * <p>On by default, because the alternative is a restart that only stops.
-     * Every Almin feature that restarts — {@code /almin op restart}, the
-     * panel's Restart, an auto-update — used to depend on something outside
-     * noticing the exit and starting the server again, and on a host where
-     * nothing is watching they all left the server down.
+     * <p>Off by default because hosted servers, containers, and NAS packages
+     * usually already have a supervisor. If Almin and that supervisor both
+     * relaunch, two JVMs race over the same world and can swamp the host while
+     * one repeatedly loses Minecraft's session lock.
      *
-     * <p>Turn it off if a wrapper script or a systemd unit already restarts
-     * this server, so it doesn't get started twice.
+     * <p>Turn it on only for a directly launched server with nothing outside
+     * watching the process. Almin then reuses this JVM's command line.
      *
      * @see ServerRelaunch
      */
-    public boolean webRestartRelaunch = true;
+    public boolean webRestartRelaunch = false;
     /** Offer the mods in mods.json to joining players. */
     public boolean modsAdvertise = true;
     /**
@@ -406,7 +405,7 @@ public final class AlminConfig {
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
         textKey("web-start-command", "Command used to start the server again (blank = re-run this server's own command line)",
             c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v),
-        boolKey("web-restart-relaunch", "Start the server again from here after an Almin restart or update (turn off if a wrapper script already does)",
+        boolKey("web-restart-relaunch", "Start the server again from here after an Almin restart or update (only enable when no wrapper, container or service restarts it)",
             c -> c.webRestartRelaunch, (c, v) -> c.webRestartRelaunch = (Boolean) v),
         boolKey("mods-advertise", "Offer the mods listed in mods.json to joining players",
             c -> c.modsAdvertise, (c, v) -> c.modsAdvertise = (Boolean) v),
@@ -482,7 +481,7 @@ public final class AlminConfig {
      * time the file is read, and so a value someone chose on purpose is only
      * ever overwritten if it is still sitting on the old default.
      */
-    private static final int CONFIG_VERSION = 2;
+    private static final int CONFIG_VERSION = 3;
     /** Version of the defaults this file was last written against. */
     public int configVersion = 0;
 
@@ -566,6 +565,14 @@ public final class AlminConfig {
         // ceiling chosen for the folded log would now throw away most of it.
         if (cfg.configVersion < 2 && cfg.activityMaxEntries == 20000) {
             cfg.activityMaxEntries = 120000;
+        }
+        // v3: self-relaunch used to be on by default. That is unsafe on the
+        // hosted/container/NAS setups most servers actually use: their own
+        // supervisor starts a second copy while Almin starts one too. Migrate
+        // the old default off once; anyone can explicitly turn it back on
+        // afterwards for a directly launched, unsupervised server.
+        if (cfg.configVersion < 3 && cfg.webRestartRelaunch) {
+            cfg.webRestartRelaunch = false;
         }
         cfg.configVersion = CONFIG_VERSION;
     }
