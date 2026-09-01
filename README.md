@@ -27,7 +27,9 @@ a jar cannot be swapped underneath a running game.
 `auto-update-when-empty` is on (the default), an update found while people are
 playing is queued until the last player leaves. A slow download is staged as a
 non-jar and the player count is checked again before anything is replaced, so
-somebody joining mid-download is not kicked. Almin starts the server again
+somebody joining mid-download is not kicked. The running jar is replaced at
+the same pathname, so background mod scanners such as BlueMap never retain a
+versioned path that disappears during startup. Almin starts the server again
 itself afterwards — see
 [Restarting](#restarting) — so the update completes without anything else
 having to notice.

@@ -8,7 +8,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -122,21 +121,15 @@ public final class ServerAutoUpdater {
         }
 
         Path serverDir = server.getServerDirectory();
-        Path mods = serverDir.resolve("mods");
-        String jarName;
+        Path staged;
         try {
-            Path named = Path.of(release.jarName());
-            jarName = named.getFileName() == null ? "" : named.getFileName().toString();
-            if (!jarName.equals(release.jarName()) || !jarName.endsWith(".jar")) {
-                throw new IllegalArgumentException("unsafe asset name");
-            }
+            staged = ServerJarUpdate.stage(serverDir, release.jarName());
         } catch (RuntimeException e) {
             WORKING.set(false);
             CONSOLE.warn("[Almin] Auto-update aborted: release {} has an invalid jar name.",
                 release.version());
             return;
         }
-        Path staged = mods.resolve(".almin-update-" + jarName + ".part");
         deleteQuietly(staged);
 
         CONSOLE.warn("[Almin] Auto-update: downloading {} ...", release.version());
@@ -187,24 +180,18 @@ public final class ServerAutoUpdater {
     private static void finish(MinecraftServer server, Pending ready) {
         WORKING.set(true);
         UpdateChecker.Release release = ready.release();
-        Path target = server.getServerDirectory().resolve("mods").resolve(release.jarName());
-        try {
-            try {
-                Files.move(ready.staged(), target, StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException atomic) {
-                Files.move(ready.staged(), target, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException e) {
+        ServerJarUpdate.Install installed = ServerJarUpdate.install(
+            server.getServerDirectory(), ready.staged(), release.jarName());
+        if (!installed.ok()) {
             CONSOLE.warn("[Almin] Auto-update could not move the staged jar into place: {}",
-                e.getMessage());
-            AlminLog.warn("[almin] auto-update install failed: {}", e.getMessage());
+                installed.message());
+            AlminLog.warn("[almin] auto-update install failed: {}", installed.message());
             deleteQuietly(ready.staged());
             WORKING.set(false);
             return;
         }
 
-        String removal = UpdateChecker.removeOldJar(target);
+        String removal = installed.message();
         CONSOLE.warn("[Almin] Auto-update installed {} {} — restarting to apply.",
             release.version(), removal);
         AlminLog.info("[almin] auto-update installed {} ({} bytes) {}; restarting",

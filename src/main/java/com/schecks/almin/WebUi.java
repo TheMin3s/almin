@@ -2005,15 +2005,38 @@ public final class WebUi {
             return o.toString();
         }
         Path dir = server.getServerDirectory();
-        Path target = dir.resolve("mods").resolve(rel.jarName());
-        AlminLog.info("[almin] web panel update: downloading {} -> mods/{}", rel.version(), rel.jarName());
-        FileFetcher.FetchResult fetched = FileFetcher.fetch(rel.jarUrl(), target, dir);
+        Path staged;
+        try {
+            staged = ServerJarUpdate.stage(dir, rel.jarName());
+        } catch (RuntimeException e) {
+            o.addProperty("ok", false);
+            o.addProperty("message", "Release has an invalid jar name.");
+            return o.toString();
+        }
+        ServerJarUpdate.discard(staged);
+        AlminLog.info("[almin] web panel update: staging {} -> mods/{}",
+            rel.version(), staged.getFileName());
+        FileFetcher.FetchResult fetched = FileFetcher.fetch(rel.jarUrl(), staged, dir);
         if (!fetched.ok()) {
+            ServerJarUpdate.discard(staged);
             o.addProperty("ok", false);
             o.addProperty("message", "Download failed: " + fetched.message());
             return o.toString();
         }
-        String removal = UpdateChecker.removeOldJar(target);
+        if (!UpdateChecker.looksLikeValidMod(staged)) {
+            ServerJarUpdate.discard(staged);
+            o.addProperty("ok", false);
+            o.addProperty("message", "Download is not a valid Fabric mod jar.");
+            return o.toString();
+        }
+        ServerJarUpdate.Install installed = ServerJarUpdate.install(dir, staged, rel.jarName());
+        if (!installed.ok()) {
+            ServerJarUpdate.discard(staged);
+            o.addProperty("ok", false);
+            o.addProperty("message", "Could not install update: " + installed.message());
+            return o.toString();
+        }
+        String removal = installed.message();
         AlminLog.info("[almin] web panel installed update {} ({} bytes) {}",
             rel.version(), fetched.bytes(), removal);
         updateJson = "";

@@ -265,12 +265,40 @@ public class RelaunchTests {
         ck("a detected update is queued while players are online",
             upd.contains("shouldWaitForPlayers(server.getPlayerCount())")
                 && upd.contains("will install after the last player"), "no empty-server gate");
+        String installer = src("ServerJarUpdate.java");
         ck("the download cannot become a loadable duplicate before the final check",
-            upd.contains(".part") && upd.indexOf("shouldWaitForPlayers(server.getPlayerCount())")
-                < upd.lastIndexOf("Files.move("), "jar is swapped too early");
+            upd.contains("ServerJarUpdate.stage")
+                && upd.indexOf("shouldWaitForPlayers(server.getPlayerCount())")
+                    < upd.lastIndexOf("ServerJarUpdate.install"), "jar is swapped too early");
+        ck("every server update route uses the BlueMap-safe installer",
+            upd.contains("ServerJarUpdate.install")
+                && web.contains("ServerJarUpdate.install"), "an update route bypasses staging");
+        ck("the updater keeps the running jar pathname stable for background mod scanners",
+            installer.contains("Path target = current == null ? releaseTarget : current")
+                && installer.contains("ATOMIC_MOVE"), "running jar path can disappear");
         ck("the empty-server queue is checked from the server tick",
             almin.contains("register(ServerAutoUpdater::tick)")
                 && almin.contains("ServerAutoUpdater.checkOnBoot(server)"), "not wired");
+
+        Path updateRoot = dir.resolve("update-install");
+        Path updateMods = Files.createDirectories(updateRoot.resolve("mods"));
+        Path runningJar = updateMods.resolve("almin-2.42.0-server.jar");
+        Path stagedJar = updateMods.resolve(".almin-update-almin-2.42.1-server.jar.part");
+        Files.writeString(runningJar, "old");
+        Files.writeString(stagedJar, "new");
+        Class<?> installerType = Class.forName("com.schecks.almin.ServerJarUpdate");
+        Method stableInstall = installerType.getDeclaredMethod("install",
+            Path.class, Path.class, String.class, Path.class);
+        stableInstall.setAccessible(true);
+        Object installed = stableInstall.invoke(null, updateRoot, stagedJar,
+            "almin-2.42.1-server.jar", runningJar);
+        boolean installedOk = (Boolean) installed.getClass().getMethod("ok").invoke(installed);
+        Path installedAt = (Path) installed.getClass().getMethod("target").invoke(installed);
+        ck("an update replaces bytes without deleting BlueMap's snapshotted path",
+            installedOk && installedAt.equals(runningJar.toAbsolutePath().normalize())
+                && Files.readString(runningJar).equals("new")
+                && !Files.exists(updateMods.resolve("almin-2.42.1-server.jar")),
+            String.valueOf(installedAt));
 
         Method waits = Class.forName("com.schecks.almin.ServerAutoUpdater")
             .getDeclaredMethod("shouldWaitForPlayers", int.class);
@@ -283,6 +311,9 @@ public class RelaunchTests {
         cfg.autoUpdateWhenEmpty = true;
 
         String cmd = src("commands/AlminCommand.java");
+        ck("the in-game update command stages through the same installer",
+            cmd.contains("ServerJarUpdate.stage") && cmd.contains("ServerJarUpdate.install"),
+            "command update bypasses staging");
         ck("/almin op restart restarts too", cmd.contains("ServerRelaunch.arm(\"/almin op restart\")"),
             "no arm");
 

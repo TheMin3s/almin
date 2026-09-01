@@ -31,6 +31,7 @@ import com.schecks.almin.PlayerHistory;
 import com.schecks.almin.TrustedOps;
 import com.schecks.almin.Passwords;
 import com.schecks.almin.ServerRelaunch;
+import com.schecks.almin.ServerJarUpdate;
 import com.schecks.almin.UpdateChecker;
 import com.schecks.almin.WebAdminNet;
 import com.schecks.almin.WebAdminPayload;
@@ -877,19 +878,30 @@ public final class AlminCommand {
 
     private static void downloadAndSwap(MinecraftServer server, UUID invokerId, UpdateChecker.Release release) {
         Path serverDir = server.getServerDirectory();
-        Path target = serverDir.resolve("mods").resolve(release.jarName());
+        Path staged;
+        try {
+            staged = ServerJarUpdate.stage(serverDir, release.jarName());
+        } catch (RuntimeException e) {
+            ServerPlayer p = server.getPlayerList().getPlayer(invokerId);
+            if (p != null) p.sendSystemMessage(Component.literal(
+                "Update aborted: release has an invalid jar name.")
+                .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+            return;
+        }
+        ServerJarUpdate.discard(staged);
 
         ServerPlayer starting = server.getPlayerList().getPlayer(invokerId);
         if (starting != null) starting.sendSystemMessage(
             Component.literal("Downloading " + release.version() + " ...")
                 .setStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
-        AlminLog.info("[almin] update started: downloading {} -> mods/{}",
-            release.version(), release.jarName());
+        AlminLog.info("[almin] update started: staging {} -> mods/{}",
+            release.version(), staged.getFileName());
 
-        FileFetcher.fetchAsync(release.jarUrl(), target, serverDir)
+        FileFetcher.fetchAsync(release.jarUrl(), staged, serverDir)
             .whenComplete((fr, err) -> server.execute(() -> {
                 ServerPlayer p = server.getPlayerList().getPlayer(invokerId);
                 if (err != null) {
+                    ServerJarUpdate.discard(staged);
                     AlminLog.warn("[almin] update download crashed: {}", err.toString());
                     if (p != null) p.sendSystemMessage(Component.literal(
                         "Update download crashed: " + err.getMessage())
@@ -897,13 +909,30 @@ public final class AlminCommand {
                     return;
                 }
                 if (!fr.ok()) {
+                    ServerJarUpdate.discard(staged);
                     AlminLog.warn("[almin] update download failed: {}", fr.message());
                     if (p != null) p.sendSystemMessage(Component.literal(
                         "Update download failed: " + fr.message())
                         .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
                     return;
                 }
-                String removal = UpdateChecker.removeOldJar(target);
+                if (!UpdateChecker.looksLikeValidMod(staged)) {
+                    ServerJarUpdate.discard(staged);
+                    if (p != null) p.sendSystemMessage(Component.literal(
+                        "Update download is not a valid Fabric mod jar.")
+                        .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+                    return;
+                }
+                ServerJarUpdate.Install installed = ServerJarUpdate.install(
+                    serverDir, staged, release.jarName());
+                if (!installed.ok()) {
+                    ServerJarUpdate.discard(staged);
+                    if (p != null) p.sendSystemMessage(Component.literal(
+                        "Could not install update: " + installed.message())
+                        .setStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
+                    return;
+                }
+                String removal = installed.message();
                 AlminLog.info("[almin] update installed: {} ({} bytes) {}",
                     release.version(), fr.bytes(), removal);
                 if (p != null) {
