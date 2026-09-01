@@ -71,16 +71,14 @@ public final class AlminConfig {
      */
     public boolean webRequireSecure = false;
     /**
-     * Keep the web panel (and this JVM) alive after the Minecraft server stops,
-     * so the panel can start it again.
+     * Keep the entire website (and this JVM) alive after the Minecraft server
+     * stops, so its pages remain reachable and the panel can start it again.
      *
-     * <p>Off by default because it changes what happens at shutdown. With it
-     * off, stopping the server lets the JVM exit — which is what an external
-     * wrapper watches for in order to restart it, and how {@code /almin op
-     * restart} has always worked. Turning it on makes this JVM outlive the
-     * server, so that wrapper would never see the exit.
+     * <p>On by default so Stop in the website does not take the website down
+     * with it. An install whose external wrapper must observe this JVM exiting
+     * after an ordinary stop can turn it off.
      */
-    public boolean webSupervisor = false;
+    public boolean webSupervisor = true;
     /** Optional Start-button command; blank faithfully reuses this JVM's command line. */
     public String webStartCommand = "";
     /**
@@ -403,7 +401,7 @@ public final class AlminConfig {
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
             c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
-        boolKey("web-supervisor", "Keep the panel up while the server is stopped, start it from the browser, and handle Almin restarts",
+        boolKey("web-supervisor", "Keep the entire website up while the server is stopped, start it from the browser, and handle Almin restarts",
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
         textKey("web-start-command", "Command used to start the server again (blank = re-run this server's own command line)",
             c -> c.webStartCommand, (c, v) -> c.webStartCommand = (String) v),
@@ -483,7 +481,7 @@ public final class AlminConfig {
      * time the file is read, and so a value someone chose on purpose is only
      * ever overwritten if it is still sitting on the old default.
      */
-    private static final int CONFIG_VERSION = 4;
+    private static final int CONFIG_VERSION = 5;
     /** Version of the defaults this file was last written against. */
     public int configVersion = 0;
 
@@ -584,6 +582,13 @@ public final class AlminConfig {
         // off again and v4 will preserve that explicit choice thereafter.
         if (cfg.configVersion < 4 && !cfg.webRestartRelaunch) {
             cfg.webRestartRelaunch = true;
+        }
+        // v5: stopping Minecraft from the website must not also remove the
+        // website that offers Start and the rest of the administrative pages.
+        // Move existing installs onto the permanent supervisor once; an
+        // external process supervisor can explicitly opt out afterwards.
+        if (cfg.configVersion < 5 && !cfg.webSupervisor) {
+            cfg.webSupervisor = true;
         }
         cfg.configVersion = CONFIG_VERSION;
     }

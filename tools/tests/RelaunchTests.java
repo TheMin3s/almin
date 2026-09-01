@@ -40,6 +40,8 @@ public class RelaunchTests {
 
         ck("self-relaunch works by default", cfg.webRestartRelaunch,
             String.valueOf(cfg.webRestartRelaunch));
+        ck("the entire website outlives a stopped server by default", cfg.webSupervisor,
+            String.valueOf(cfg.webSupervisor));
         ck("automatic updates wait for an empty server by default",
             cfg.autoUpdateWhenEmpty, String.valueOf(cfg.autoUpdateWhenEmpty));
         ck("the empty-server policy is configurable",
@@ -49,9 +51,9 @@ public class RelaunchTests {
         Method migrate = AlminConfig.class.getDeclaredMethod("migrate", AlminConfig.class);
         migrate.setAccessible(true);
         migrate.invoke(null, cfg);
-        ck("the mistaken forced-off migration is restored once",
-            cfg.webRestartRelaunch && cfg.configVersion == 4,
-            cfg.webRestartRelaunch + " / v" + cfg.configVersion);
+        ck("changed restart and website defaults are migrated once",
+            cfg.webRestartRelaunch && cfg.webSupervisor && cfg.configVersion == 5,
+            cfg.webRestartRelaunch + " / " + cfg.webSupervisor + " / v" + cfg.configVersion);
 
         dir = Files.createTempDirectory("alminrelaunch");
         Files.createDirectories(dir.resolve("config").resolve("almin"));
@@ -106,6 +108,7 @@ public class RelaunchTests {
     /** Arming is what turns a stop into a restart, and it can be refused. */
     static void arming() {
         reset();
+        cfg.webSupervisor = false;
         cfg.webRestartRelaunch = false;
         ck("switched off, nothing is armed", !ServerRelaunch.arm("a test"), "");
         ck("...and armed() agrees", !ServerRelaunch.armed(), "");
@@ -265,6 +268,14 @@ public class RelaunchTests {
                 && web.contains("if (keepPanelForStart)")
                 && !web.contains("AlminExit.arm(\"a stop from the web panel\")"),
             "website tears down its own Start button");
+        int stoppedMethod = web.indexOf("public static void onServerStopped()");
+        int permanent = web.indexOf("if (AlminConfig.get().webSupervisor)", stoppedMethod);
+        int temporary = web.indexOf("if (keepPanelForStart)", stoppedMethod);
+        int close = web.indexOf("stop();", temporary);
+        ck("permanent supervision keeps the whole website without a timeout",
+            stoppedMethod > 0 && permanent > stoppedMethod
+                && temporary > permanent && close > temporary,
+            stoppedMethod + " / " + permanent + " / " + temporary + " / " + close);
         int handoverMethod = web.indexOf("private static void handOverOrStayUp()");
         int releasePort = web.indexOf("if (hadPanel) stop()", handoverMethod);
         int spawn = web.indexOf("ServerRelaunch.launch(", handoverMethod);

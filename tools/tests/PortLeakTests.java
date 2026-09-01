@@ -69,7 +69,7 @@ public class PortLeakTests {
         }
     }
 
-    /** The default: the panel must never be the reason a dead JVM stays up. */
+    /** Explicit opt-out: the panel must not be the reason a dead JVM stays up. */
     static void daemonFlag() throws Exception {
         set("webSupervisor", false);
         set("webUiPort", freePort());

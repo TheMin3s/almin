@@ -627,9 +627,9 @@ public final class WebUi {
      * behind it. The next start then found its port taken by its own corpse.
      *
      * <p>So the bind happens on a short-lived thread whose daemon flag matches
-     * {@code web-supervisor}: off (the default) means the JVM ends when
-     * Minecraft does and the port goes with it; on means the panel is
-     * deliberately outliving the server and must hold the JVM open.
+     * {@code web-supervisor}: off means the JVM ends when Minecraft does and
+     * the port goes with it; on (the default) means the panel deliberately
+     * outlives the server and must hold the JVM open.
      */
     private static void bindOnOwnThread(MinecraftServer server, AlminConfig cfg,
                                         String bind, int port) throws IOException {
@@ -692,17 +692,21 @@ public final class WebUi {
         // too if the handover fails — that is the only way anyone would find
         // out that it did.
         if (ServerRelaunch.armed()) return;
+        // Permanent supervision wins over the temporary website-Stop fallback.
+        // In this mode the complete site remains reachable until Start hands
+        // its listener to a new Minecraft process.
+        if (AlminConfig.get().webSupervisor) {
+            AlminLog.info("[almin] server stopped — entire website remains available "
+                + "(supervisor mode)");
+            return;
+        }
         if (keepPanelForStart) {
             AlminLog.info("[almin] server stopped from the website — keeping its Start button "
                 + "available for {} minutes", REPORT_WINDOW_MS / 60_000);
             holdOpenForStart();
             return;
         }
-        if (!AlminConfig.get().webSupervisor) {
-            stop();
-            return;
-        }
-        AlminLog.info("[almin] server stopped — web panel still up (supervisor mode)");
+        stop();
     }
 
     /**

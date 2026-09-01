@@ -106,11 +106,11 @@ of a panel with a dead server behind it, and nothing watching for the process to
 exit ever saw it. The next start then found its own corpse on the port.
 
 Almin now binds from a thread whose daemon flag matches `web-supervisor`, so the
-JVM ends when Minecraft does unless you have explicitly asked it not to. On top
-of that, a stop Almin itself asked for — auto-update, `/almin op restart`, the
-panel's Stop and Restart — arms a watchdog that forces the process to exit if it
-is still running a minute later, because every one of those features is a
-restart only if the process actually ends.
+website deliberately remains available when Minecraft stops unless you opt out.
+On top of that, a restart Almin itself asked for — an auto-update, `/almin op
+restart`, or the panel's Restart — arms a watchdog that forces the old process
+to exit if it is still running a minute later, because a restart only works if
+the old process actually hands over.
 
 And if one is left behind anyway, the next start takes the port back rather than
 moving aside. Almin leaves a note in `config/almin/web.lock` saying which process
@@ -351,7 +351,7 @@ server that is down with nothing left to bring it back.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `web-supervisor` | `false` | keep the website available while stopped; also handle Almin restarts and updates |
+| `web-supervisor` | `true` | keep the entire website available while stopped; also handle Almin restarts and updates |
 | `web-restart-relaunch` | `true` | handle Almin restarts here without keeping a stopped-server website permanently |
 | `web-start-command` | *(blank)* | run this instead of re-running this server's own command line |
 
@@ -360,10 +360,17 @@ or service already restarts this server.** Otherwise both can start one, and
 the second to reach the world loses to Minecraft's own `session.lock`.
 
 `web-supervisor` already means Almin owns the stopped server, so it implies
-self-relaunch; a second toggle is no longer required. Even with supervisor mode
-off, pressing **Stop server** on the website keeps a temporary launcher panel
-for one hour so **Start server** remains usable. The old panel releases its web
-port before spawning a replacement, avoiding a fast-start handoff collision.
+self-relaunch; a second toggle is no longer required. All seven authenticated
+pages stay reachable after Minecraft stops. Actions that need a live server say
+that it is stopped, while **Start server** remains available without a timeout.
+Even with supervisor mode explicitly turned off, pressing **Stop server** on the
+website keeps a temporary launcher panel for one hour. The old panel releases
+its web port before spawning a replacement, avoiding a fast-start handoff
+collision.
+
+Turn `web-supervisor` off only when an external wrapper must see the Almin JVM
+exit after an ordinary server stop. Existing installs are migrated to the new
+on-by-default behavior once; an explicit opt-out is preserved after that.
 
 Only a stop Almin was *asked* for becomes a restart. An ordinary `/stop`, a
 crash, or the machine shutting down are not restarts and are never turned into
