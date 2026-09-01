@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -1945,6 +1946,8 @@ public final class WebUi {
         JsonObject o = new JsonObject();
         o.addProperty("current", UpdateChecker.currentVersion());
         o.addProperty("repo", AlminConfig.get().updateRepo);
+        String queued = ServerAutoUpdater.pendingVersion();
+        if (!queued.isEmpty()) o.addProperty("queued", queued);
         try {
             UpdateChecker.CheckResult r =
                 UpdateChecker.checkAsync().get(UPDATE_CHECK_MS, TimeUnit.MILLISECONDS);
@@ -2581,12 +2584,20 @@ public final class WebUi {
         }
     }
 
+    private static long longNumber(String s, long fallback) {
+        try {
+            return s == null || s.isEmpty() ? fallback : Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
     /**
-     * "Show me what I am looking for", turned into the panel's own filter.
+     * Answers an Activity question and identifies its supporting filters.
      *
-     * <p>Answers with a filter rather than a list of rows on purpose — see
-     * {@link AiInsights.Lens}. The route holds nothing: the panel applies what
-     * comes back to controls the person can then see and change.
+     * <p>The panel can show the answer alone or apply the returned filter. The
+     * selected subject and timeline window are applied here, against the
+     * server's own rows, rather than trusting a browser-supplied activity log.
      */
     private void handleFind(HttpExchange ex) throws IOException {
         try {
@@ -2594,20 +2605,40 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             JsonObject body = readBody(ex);
             String question = body.has("question") ? body.get("question").getAsString() : "";
+            AiInsights.Scope scope = scopeOf(ex, body);
             if (!AlminConfig.get().aiEnabled) {
                 json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
                 return;
             }
-            List<ActivityEntry> rows = ActivityLog.recent(MAP_ROWS);
-            List<Episodes.Episode> episodes = Episodes.of(rows);
-            episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
-            long from = Long.MAX_VALUE, to = 0;
-            for (ActivityEntry e : rows) {
-                from = Math.min(from, e.at());
-                to = Math.max(to, e.at());
+            List<ActivityEntry> allRows = ActivityLog.recent(MAP_ROWS);
+            List<Episodes.Episode> allEpisodes = Episodes.of(allRows);
+            allEpisodes = merge(allEpisodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
+
+            long dataFrom = Long.MAX_VALUE, dataTo = 0;
+            for (ActivityEntry e : allRows) {
+                dataFrom = Math.min(dataFrom, e.at());
+                dataTo = Math.max(dataTo, e.at());
             }
-            AiInsights.Lens lens = AiInsights.look(question, episodes, rows,
-                from == Long.MAX_VALUE ? to : from, to);
+            for (Episodes.Episode e : allEpisodes) {
+                dataFrom = Math.min(dataFrom, e.from());
+                dataTo = Math.max(dataTo, e.to());
+            }
+            if (dataFrom == Long.MAX_VALUE) dataFrom = dataTo;
+            long from = longNumber(pick(ex, body, "from"), dataFrom);
+            long to = longNumber(pick(ex, body, "to"), dataTo);
+            if (from < dataFrom) from = dataFrom;
+            if (to <= 0 || to > dataTo) to = dataTo;
+            if (from > to) { from = dataFrom; to = dataTo; }
+
+            List<ActivityEntry> rows = new ArrayList<>();
+            for (ActivityEntry e : allRows) {
+                if (scope.holds(e) && e.at() >= from && e.at() <= to) rows.add(e);
+            }
+            List<Episodes.Episode> episodes = new ArrayList<>();
+            for (Episodes.Episode e : allEpisodes) {
+                if (scope.holds(e) && e.to() >= from && e.from() <= to) episodes.add(e);
+            }
+            AiInsights.Lens lens = AiInsights.look(question, scope, episodes, rows, from, to);
             JsonObject o = new JsonObject();
             o.addProperty("question", lens.question());
             o.addProperty("reply", lens.reply());

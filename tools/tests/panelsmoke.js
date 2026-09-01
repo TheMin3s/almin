@@ -2903,8 +2903,35 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   try {
     sandbox.tab = 'activity'; sandbox.render();
     await new Promise((r) => setTimeout(r, 20));
+    sandbox.clearFilter(); sandbox.focusPlayer = '';
     byId.get('i-ask').value = 'lava near spawn';
-    await sandbox.runAsk();
+    let askBody = null;
+    const askFetch = sandbox.fetch;
+    sandbox.fetch = async (url, init) => {
+      if (String(url).split('?')[0] === '/api/insights/find' && init && init.body) {
+        askBody = JSON.parse(init.body);
+      }
+      return askFetch(url, init);
+    };
+    await sandbox.runAsk(false);
+
+    const answerOnly = sandbox.filt.acts.size === 0 && sandbox.filt.items.size === 0
+      && sandbox.focusPlayer === ''
+      && /Filtered to lava going down near spawn/.test(deepText(byId.get('i-asked')))
+      && /Find on map/.test(deepText(byId.get('i-asked')));
+    console.log((answerOnly ? '  PASS  ' : '  FAIL  ') +
+      'Ask answers from Activity data without changing the map');
+    if (!answerOnly) failures.push('Ask changed the Activity filter or did not answer');
+
+    const windowed = askBody && askBody.scope === 'all'
+      && Number.isFinite(askBody.from) && Number.isFinite(askBody.to)
+      && askBody.to >= askBody.from;
+    console.log((windowed ? '  PASS  ' : '  FAIL  ') +
+      'Activity questions carry the selected scope and timeline window');
+    if (!windowed) failures.push('Ask omitted its Activity scope/window');
+
+    await sandbox.runAsk(true);
+    sandbox.fetch = askFetch;
 
     const filtered = sandbox.filt.acts.has('place') && sandbox.filt.acts.has('use')
       && sandbox.filt.items.has('Lava Bucket') && sandbox.filt.kinds.has('hazard');

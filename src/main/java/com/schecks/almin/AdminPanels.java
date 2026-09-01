@@ -228,7 +228,11 @@ public final class AdminPanels {
         rows.add(PanelPayload.Row.header("Settings"));
         rows.add(toggle("Check on boot", cfg.updateCheckOnBoot, "update-check-on-boot"));
         rows.add(toggle("Install automatically", cfg.autoUpdate, "auto-update"));
-        rows.add(PanelPayload.Row.note("Auto-update stops the server to apply. Players are told first."));
+        rows.add(toggle("Wait until empty", cfg.autoUpdateWhenEmpty, "auto-update-when-empty"));
+        String queued = ServerAutoUpdater.pendingVersion();
+        rows.add(PanelPayload.Row.note(queued.isEmpty()
+            ? "Auto-update waits for the last player to leave before restarting."
+            : "v" + queued + " is queued and will install after the last player leaves."));
         return new PanelPayload("Almin — Updates", "", "almin update version", rows);
     }
 

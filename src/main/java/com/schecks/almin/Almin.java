@@ -49,6 +49,7 @@ public class Almin implements ModInitializer {
             ClientProfiles.init(server);
             PlayerTracks.init(server);
             BlockTextures.init(server);
+            ServerAutoUpdater.reset();
         });
         // Once the levels are loaded, and not before: the check needs the
         // overworld's seed, and while the server is still starting there is
@@ -70,11 +71,15 @@ public class Almin implements ModInitializer {
         // schedule lives in WorldSnapshots; this only has to offer the tick.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
             .register(WorldSnapshots::tick);
+        // A queued update is a null check until everybody has left. The final
+        // player-count check and jar swap both happen on this server thread.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
+            .register(ServerAutoUpdater::tick);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             Dashboard.markStarted();
             ConsoleTap.start(server);
             WebUi.start(server);
-            UpdateChecker.checkOnBoot(server);
+            ServerAutoUpdater.checkOnBoot(server);
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             // A live world requested through the file browser is only removed
@@ -91,6 +96,7 @@ public class Almin implements ModInitializer {
             WorldSnapshots.close();
             AiInsights.close();
             BlockTextures.close();
+            ServerAutoUpdater.reset();
             // Last, and deliberately so: when the stop was a restart, this
             // starts the server again and then ends this process. Anything
             // that still has a file to close has to come above it, because

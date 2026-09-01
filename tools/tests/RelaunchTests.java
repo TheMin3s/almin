@@ -40,6 +40,10 @@ public class RelaunchTests {
 
         ck("self-relaunch is opt-in by default", !cfg.webRestartRelaunch,
             String.valueOf(cfg.webRestartRelaunch));
+        ck("automatic updates wait for an empty server by default",
+            cfg.autoUpdateWhenEmpty, String.valueOf(cfg.autoUpdateWhenEmpty));
+        ck("the empty-server policy is configurable",
+            AlminConfig.keyByName("auto-update-when-empty") != null, "missing config key");
         cfg.configVersion = 2;
         cfg.webRestartRelaunch = true; // the old persisted default
         Method migrate = AlminConfig.class.getDeclaredMethod("migrate", AlminConfig.class);
@@ -253,11 +257,30 @@ public class RelaunchTests {
         ck("the page is never cached, so an update is the panel you get",
             web.contains("\"Cache-Control\", \"no-store"), "no header");
 
-        String upd = src("UpdateChecker.java");
+        String upd = src("ServerAutoUpdater.java");
         ck("an auto-update restarts rather than only stopping",
             upd.contains("ServerRelaunch.arm(\"an auto-update to "), "no arm");
         ck("...and only falls back to a bare exit when it cannot",
             upd.contains("if (!relaunch) AlminExit.arm("), "unconditional exit");
+        ck("a detected update is queued while players are online",
+            upd.contains("shouldWaitForPlayers(server.getPlayerCount())")
+                && upd.contains("will install after the last player"), "no empty-server gate");
+        ck("the download cannot become a loadable duplicate before the final check",
+            upd.contains(".part") && upd.indexOf("shouldWaitForPlayers(server.getPlayerCount())")
+                < upd.lastIndexOf("Files.move("), "jar is swapped too early");
+        ck("the empty-server queue is checked from the server tick",
+            almin.contains("register(ServerAutoUpdater::tick)")
+                && almin.contains("ServerAutoUpdater.checkOnBoot(server)"), "not wired");
+
+        Method waits = Class.forName("com.schecks.almin.ServerAutoUpdater")
+            .getDeclaredMethod("shouldWaitForPlayers", int.class);
+        waits.setAccessible(true);
+        cfg.autoUpdateWhenEmpty = true;
+        ck("the policy waits when somebody is online", (Boolean) waits.invoke(null, 1), "did not wait");
+        ck("...and proceeds once nobody is online", !(Boolean) waits.invoke(null, 0), "still waited");
+        cfg.autoUpdateWhenEmpty = false;
+        ck("the policy can be disabled", !(Boolean) waits.invoke(null, 4), "setting ignored");
+        cfg.autoUpdateWhenEmpty = true;
 
         String cmd = src("commands/AlminCommand.java");
         ck("/almin op restart restarts too", cmd.contains("ServerRelaunch.arm(\"/almin op restart\")"),

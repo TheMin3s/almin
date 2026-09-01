@@ -864,19 +864,23 @@ public final class AiInsights {
             ? o.get(k).getAsString() : "";
     }
 
-    // ---------- "what am I looking for" ----------
+    // ---------- questions and "what am I looking for" ----------
 
     static final String LENS_SYSTEM = """
-        You are helping a Minecraft server's admin find something in a log they \
-        cannot read by hand. They will tell you, in their own words, what they \
-        are looking for. You are given the episodes worked out from the log — \
-        stretches of one player doing one thing — and the actions the log \
-        records.
+        You are answering a Minecraft server admin's question about the \
+        Activity screen in front of them. You are given only the evidence in \
+        that screen's selected player or map area and timeline window: compact \
+        activity counts and episodes already worked out from the log.
 
-        Your job is NOT to answer them. It is to set the filter they would have \
-        set themselves if they knew the data. Pick the players, the action \
-        types, the specific things and the stretches that could possibly be \
-        what they mean, and leave everything else out.
+        First answer the question directly, in one to four short sentences. \
+        Use only the supplied evidence. If it cannot answer the question, say \
+        that plainly. Do not invent motives, structures, or events, and do not \
+        turn scattered block edits into a grand construction project.
+
+        Then choose the Activity filters that show the evidence behind the \
+        answer. Pick only the players, action types, specific things, and \
+        episode kinds that could help. The admin may press Ask for the answer \
+        alone or Find on map to apply those filters.
 
         Be generous rather than strict. A filter that hides the answer is worse \
         than one that leaves some noise in, because they can see what you \
@@ -888,14 +892,13 @@ public final class AiInsights {
         the lists you were given, and only timestamps that are on an episode.
 
         Answer as JSON and nothing else:
-        {"reply": "one sentence saying what you filtered to, and anything you \
-        could not find", \
+        {"reply": "a concise direct answer grounded only in the evidence", \
         "players": ["exact names"], "actions": ["exact action names"], \
         "items": ["exact detail strings"], "kinds": ["episode kinds"], \
         "episodes": [<timestamps of matching episodes>]}""";
 
     /**
-     * Turns a sentence into a filter over what is already on screen.
+     * Answers a question and returns filters for its supporting evidence.
      *
      * <p>Deliberately not a search: nothing is fetched, nothing is re-read,
      * and the model never sees a row the panel was not already showing. It is
@@ -904,8 +907,14 @@ public final class AiInsights {
      */
     public static Lens look(String question, List<Episodes.Episode> episodes,
                             List<ActivityEntry> rows, long from, long to) {
+        return look(question, Scope.all(), episodes, rows, from, to);
+    }
+
+    /** Same question, limited to the Activity screen's selected subject. */
+    public static Lens look(String question, Scope scope, List<Episodes.Episode> episodes,
+                            List<ActivityEntry> rows, long from, long to) {
         String q = question == null ? "" : question.trim();
-        if (q.isEmpty()) return Lens.failed(q, "Say what you are looking for first.");
+        if (q.isEmpty()) return Lens.failed(q, "Ask a question about the activity first.");
         if (q.length() > 400) q = q.substring(0, 400);
         String why = problem();
         if (!why.isEmpty()) return Lens.failed(q, why);
@@ -915,7 +924,9 @@ public final class AiInsights {
         try {
             AlminConfig cfg = AlminConfig.get();
             lastAsked = System.currentTimeMillis();
-            String text = ask(cfg, LENS_SYSTEM, lensPrompt(q, episodes, rows, from, to));
+            Scope where = scope == null ? Scope.all() : scope;
+            String text = ask(cfg, LENS_SYSTEM,
+                lensPrompt(q, where, episodes, rows, from, to, cfg.aiSendChat));
             return lens(q, text, episodes);
         } catch (Exception e) {
             return Lens.failed(q, e.getMessage() == null ? e.toString() : e.getMessage());
@@ -925,24 +936,38 @@ public final class AiInsights {
     }
 
     /** The episodes, the vocabulary of the log, and the question. */
-    static String lensPrompt(String question, List<Episodes.Episode> episodes,
-                             List<ActivityEntry> rows, long from, long to) {
-        StringBuilder b = new StringBuilder(4096);
-        b.append("They are looking for: ").append(question).append("\n\n");
+    static String lensPrompt(String question, Scope scope, List<Episodes.Episode> episodes,
+                             List<ActivityEntry> rows, long from, long to,
+                             boolean sendChat) {
+        StringBuilder b = new StringBuilder(8192);
+        b.append("Question: ").append(question).append("\n");
+        b.append(scope.said()).append('\n');
         b.append("Period: ").append(span(to - from)).append(", ending now.\n\n");
 
         java.util.TreeSet<String> players = new java.util.TreeSet<>();
         java.util.TreeSet<String> actions = new java.util.TreeSet<>();
         Map<String, Integer> things = new java.util.HashMap<>();
+        Map<String, long[]> totals = new java.util.HashMap<>();
         for (ActivityEntry e : rows) {
             players.add(e.player());
             actions.add(e.action());
-            if (e.detail() != null && !e.detail().isBlank() && e.detail().length() <= 40) {
+            boolean hiddenChat = "chat".equals(e.action()) && !sendChat;
+            if (!hiddenChat && e.detail() != null && !e.detail().isBlank()
+                    && e.detail().length() <= 80) {
                 things.merge(e.detail(), Math.max(1, e.count()), Integer::sum);
             }
+            String detail = hiddenChat ? "(content withheld)" : cut(e.detail(), 80);
+            String key = e.player() + " | " + e.action()
+                + (detail.isEmpty() ? "" : " | " + detail);
+            long[] stat = totals.computeIfAbsent(key,
+                ignored -> new long[]{0, Long.MAX_VALUE, Long.MIN_VALUE});
+            stat[0] += Math.max(1, e.count());
+            stat[1] = Math.min(stat[1], e.at());
+            stat[2] = Math.max(stat[2], e.at());
         }
         b.append("Players in the log: ").append(String.join(", ", players)).append('\n');
         b.append("Action names in the log: ").append(String.join(", ", actions)).append('\n');
+        b.append("Chat text: ").append(sendChat ? "included when present" : "withheld").append('\n');
 
         List<Map.Entry<String, Integer>> top = new ArrayList<>(things.entrySet());
         top.sort(Map.Entry.<String, Integer>comparingByValue().reversed());
@@ -951,7 +976,20 @@ public final class AiInsights {
             if (i > 0) b.append(", ");
             b.append(top.get(i).getKey());
         }
-        b.append("\n\nEpisodes:\n");
+        b.append("\n\nActivity counts (player | action | detail | count | first/last):\n");
+        List<Map.Entry<String, long[]>> counted = new ArrayList<>(totals.entrySet());
+        counted.sort((a, c) -> Long.compare(c.getValue()[0], a.getValue()[0]));
+        for (int i = 0; i < Math.min(100, counted.size()); i++) {
+            Map.Entry<String, long[]> e = counted.get(i);
+            long[] stat = e.getValue();
+            b.append("- ").append(e.getKey()).append(" | ").append(stat[0])
+             .append(" | first ").append(span(Math.max(0, to - stat[1])))
+             .append(" before end, last ").append(span(Math.max(0, to - stat[2])))
+             .append(" before end\n");
+        }
+        if (counted.isEmpty()) b.append("- nothing recorded\n");
+
+        b.append("\nEpisodes:\n");
         int n = 0;
         for (Episodes.Episode e : episodes) {
             if (n++ >= MAX_EPISODES) break;
@@ -995,7 +1033,7 @@ public final class AiInsights {
                     }
                 }
             }
-            return new Lens(System.currentTimeMillis(), question, cut(str(o, "reply"), 300),
+            return new Lens(System.currentTimeMillis(), question, cut(str(o, "reply"), 1200),
                 hits, strings(o, "players", 24), strings(o, "actions", 24),
                 strings(o, "items", 60), strings(o, "kinds", 24), "");
         } catch (Exception e) {

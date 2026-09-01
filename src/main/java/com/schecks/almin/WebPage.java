@@ -2116,9 +2116,10 @@ final class WebPage {
               '<span class="dims" id="i-scope"></span>'+
               '<button class="btn" id="i-run">Summarise</button></div>'+
               '<div class="term" id="i-askbar" style="margin:2px 0 10px">'+
-                '<input id="i-ask" placeholder="what are you looking for? ' +
-                  'e.g. anyone digging near spawn last night">'+
-                '<button class="btn" id="i-askgo">Find</button>'+
+                '<input id="i-ask" placeholder="ask about this activity, ' +
+                  'e.g. what was Steve doing last night?">'+
+                '<button class="btn go" id="i-askgo">Ask</button>'+
+                '<button class="btn" id="i-findgo">Find on map</button>'+
                 '<button class="btn" id="i-askclear">Clear</button></div>'+
               '<div id="i-asked"></div>'+
               '<div id="i-ai"></div>'+
@@ -2149,10 +2150,11 @@ final class WebPage {
             $('t-filter').onclick=()=>{ filterOpen=!filterOpen; paintFilters(); paintAll(); };
             $('t-livepill').onclick=()=>{ $('t-line').scrollIntoView({block:'nearest'}); };
             $('i-run').onclick=()=>runSummary(true);
-            $('i-askgo').onclick=runAsk;
+            $('i-askgo').onclick=()=>runAsk(false);
+            $('i-findgo').onclick=()=>runAsk(true);
             $('i-askclear').onclick=()=>{ $('i-ask').value=''; asked=null;
               clearFilter(); paintAsked(); paintFilters(); paintAll(); paintInsights(); };
-            $('i-ask').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); runAsk(); } };
+            $('i-ask').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); runAsk(false); } };
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
@@ -4432,19 +4434,24 @@ final class WebPage {
          * them, widen it, or throw it away — none of which is possible with a
          * list of results that appeared from nowhere.
          */
-        async function runAsk(){
+        async function runAsk(applyFilter=false){
           const inp=$('i-ask'); if(!inp || asking) return;
           const q=(inp.value||'').trim();
-          if(!q){ asked={error:'Say what you are looking for first.'}; paintAsked(); return; }
+          if(!q){ asked={error:'Ask a question about the activity first.'}; paintAsked(); return; }
           asking=true; asked={pending:true,question:q}; paintAsked();
           try {
-            const r=await jpost('/api/insights/find',{question:q});
+            const request=Object.assign({question:q},scopeNow());
+            if(allData){
+              request.from=Math.round(win.set?win.from:(allData.from||0));
+              request.to=Math.round(win.set?win.to:(allData.to||allData.now||0));
+            }
+            const r=await jpost('/api/insights/find',request);
             if(r.status!==200){
               asked={question:q,error:(r.body&&(r.body.error||r.body.reply))||'failed'};
               return;
             }
-            asked=r.body;
-            applyLens(r.body);
+            asked=Object.assign({},r.body,{applied:!!applyFilter});
+            if(applyFilter) applyLens(r.body);
           } catch(e){
             asked={question:q,error:'failed — '+e.message};
           } finally {
@@ -4485,6 +4492,13 @@ final class WebPage {
           if((asked.kinds||[]).length) bits.push((asked.kinds||[]).join(', '));
           const n=(asked.items||[]).length;
           if(n) bits.push(n+' particular thing'+(n===1?'':'s'));
+          if(!asked.applied){
+            box.innerHTML='<div class="note">'+
+              (asked.reply?esc(asked.reply):'The model found no answer in this activity window.')+
+              (bits.length?' <span class="muted">Press <b>Find on map</b> to show the '+
+                'supporting activity.</span>':'')+'</div>';
+            return;
+          }
           box.innerHTML='<div class="note">'+
             (asked.reply?esc(asked.reply)+' ':'')+
             (bits.length?'<b>Filtered to:</b> '+esc(bits.join(' · '))+'. '
@@ -6896,7 +6910,10 @@ final class WebPage {
           const b=r.body;
           updateInfo=b;
           const head='Running <b>v'+esc(b.current)+'</b> · <span class="muted">'+esc(b.repo||'')+'</span>';
-          if(b.status==='current'){ box.innerHTML=head+' — up to date.'; }
+          if(b.queued){
+            box.innerHTML=head+' — <span class="state warn">v'+esc(b.queued)+
+              ' queued</span> and will install after the last player leaves.';
+          } else if(b.status==='current'){ box.innerHTML=head+' — up to date.'; }
           else if(b.status==='available'){
             box.innerHTML=head+' — <span class="state warn">v'+esc(b.latest)+' available</span>'+
               (b.hasJar?'':' <span class="muted">(no jar attached to that release)</span>');

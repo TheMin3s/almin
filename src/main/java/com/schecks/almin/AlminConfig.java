@@ -39,6 +39,8 @@ public final class AlminConfig {
     public String updateRepo = "TheMin3s/almin";
     public boolean updateCheckOnBoot = true;
     public boolean autoUpdate = true;
+    /** Let active players finish before an unattended update restarts the server. */
+    public boolean autoUpdateWhenEmpty = true;
     public String dirWritableRoots = "mods,config,resourcepacks,shared";
     /**
      * Top-level folders that may be deleted recursively. Separate from writes:
@@ -293,12 +295,9 @@ public final class AlminConfig {
     /**
      * How long to wait for the model, in seconds.
      *
-     * <p>Deliberately under a minute. A reverse proxy in front of the panel
-     * has its own limit — 60 seconds is the usual default — and whichever
-     * limit is shorter is the one that decides what the browser sees. When
-     * Almin waited longer than the proxy, the proxy answered 504 with no
-     * message and Almin's account of what went wrong never arrived. Raise it
-     * if the model is genuinely slow, and raise the proxy's to match.
+     * <p>Forty-five seconds by default, but custom and local servers can be
+     * given up to an hour in the model settings. A reverse proxy in front of
+     * the panel may have its own shorter limit and should be raised to match.
      */
     public int aiTimeoutSeconds = 45;
     /**
@@ -379,6 +378,8 @@ public final class AlminConfig {
             c -> c.updateCheckOnBoot, (c, v) -> c.updateCheckOnBoot = (Boolean) v),
         boolKey("auto-update", "On boot, automatically download, install and restart into a newer version",
             c -> c.autoUpdate, (c, v) -> c.autoUpdate = (Boolean) v),
+        boolKey("auto-update-when-empty", "If players are online when an automatic update is found, install it after the last one leaves",
+            c -> c.autoUpdateWhenEmpty, (c, v) -> c.autoUpdateWhenEmpty = (Boolean) v),
         textKey("dir-writable-roots", "Comma-separated top-level folders the dir UI may upload, edit and rename in",
             c -> c.dirWritableRoots, (c, v) -> c.dirWritableRoots = (String) v),
         textKey("dir-deletable-roots", "Comma-separated top-level folders the dir UI may delete recursively (world is included by default)",

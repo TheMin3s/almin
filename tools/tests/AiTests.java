@@ -106,6 +106,25 @@ public class AiTests {
         check("and withheld when not", !without.contains("meet me at spawn"));
         check("the prompt stays small", withChat.length() < 6000);
 
+        // Activity questions obey the same separate consent switch as
+        // summaries: knowing that chat happened is not permission to send
+        // what was said.
+        Method lensPrompt = AI.getDeclaredMethod("lensPrompt", String.class, scopeCls,
+            List.class, List.class, long.class, long.class, boolean.class);
+        lensPrompt.setAccessible(true);
+        String privateQuestion = (String) lensPrompt.invoke(null, "what happened?", all,
+            episodes, List.of(chat), at - 60000, at, false);
+        String chatQuestion = (String) lensPrompt.invoke(null, "what happened?", all,
+            episodes, List.of(chat), at - 60000, at, true);
+        check("Activity questions withhold chat text when configured",
+            !privateQuestion.contains("meet me at spawn")
+                && privateQuestion.contains("content withheld"));
+        check("...and include it only when allowed", chatQuestion.contains("meet me at spawn"));
+        Field lensSystem = AI.getDeclaredField("LENS_SYSTEM");
+        lensSystem.setAccessible(true);
+        check("the Activity model is told to answer rather than only filter",
+            ((String) lensSystem.get(null)).contains("answer the question directly"));
+
         // ---- which subject it is about ----
         Object mine = scopeCls.getMethod("of", String.class).invoke(null, "Steve");
         Object here = scopeCls.getMethod("area", String.class, int.class, int.class, int.class)

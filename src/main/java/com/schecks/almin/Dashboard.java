@@ -100,8 +100,11 @@ public final class Dashboard {
         rows.add(Row.metric("Minecraft", server.getServerVersion()));
         rows.add(Row.metric("Uptime", m.uptimeMillis() == 0L ? "—" : duration(m.uptimeMillis())));
         rows.add(Row.metric("Players", m.players() + " / " + m.maxPlayers()));
-        rows.add(Row.metric("Auto-update", cfg.autoUpdate ? "on" : "off",
-            cfg.autoUpdate ? PLAIN : YELLOW));
+        String queuedUpdate = ServerAutoUpdater.pendingVersion();
+        rows.add(Row.metric("Auto-update", !queuedUpdate.isEmpty()
+                ? "v" + queuedUpdate + " queued"
+                : cfg.autoUpdate ? (cfg.autoUpdateWhenEmpty ? "on · waits for empty" : "on") : "off",
+            !queuedUpdate.isEmpty() || !cfg.autoUpdate ? YELLOW : PLAIN));
 
         // ---- performance ----
         rows.add(Row.header("Performance"));

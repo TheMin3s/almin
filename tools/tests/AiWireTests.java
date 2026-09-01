@@ -408,6 +408,9 @@ public class AiWireTests {
         check("a question goes out", !hits.isEmpty());
         check("it is told what words are actually in the log",
             lensBody.get().contains("Action names in the log") && lensBody.get().contains("break"));
+        check("it is asked for a concise answer backed by Activity evidence",
+            lensBody.get().contains("answer the question directly")
+                && lensBody.get().contains("Activity counts"));
         check("the answer comes back as a filter",
             lens.ok() && lens.actions().contains("break") && lens.players().contains("Steve"));
         check("an episode it was given is kept", lens.episodes().contains(shaftAt));

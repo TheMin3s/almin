@@ -23,9 +23,12 @@ Both sides update themselves, and both apply the update at the next start —
 a jar cannot be swapped underneath a running game.
 
 **The server** checks GitHub on boot (`update-check-on-boot`) and, with
-`auto-update` on, downloads the new version and restarts to apply it. It says
-so in chat and on the console first, so an unattended restart is not mistaken
-for a crash. Almin starts the server again itself afterwards — see
+`auto-update` on, downloads the new version and restarts to apply it. When
+`auto-update-when-empty` is on (the default), an update found while people are
+playing is queued until the last player leaves. A slow download is staged as a
+non-jar and the player count is checked again before anything is replaced, so
+somebody joining mid-download is not kicked. Almin starts the server again
+itself afterwards — see
 [Restarting](#restarting) — so the update completes without anything else
 having to notice.
 
@@ -638,6 +641,13 @@ Sequences are in the same tree. Ticking `fight` shows everything that player
 did *while the fight was going on* rather than only the swings, which is the
 honest reading of the question. The filter reaches the map, the timeline ticks
 and the side list together, so all three agree about what is being shown.
+
+When a model is enabled, the question box above the map has two separate
+actions. **Ask** answers from the selected Everything/player/area scope and the
+visible timeline window without moving the map. **Find on map** also applies
+the supporting player, action, item and episode filters so the answer can be
+inspected. Both are grounded in the server's own Activity rows; chat text is
+withheld when `ai-send-chat` is off.
 
 #### One badge per stretch of work
 
