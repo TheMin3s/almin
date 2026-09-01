@@ -269,7 +269,7 @@ const responses = {
                    x: 90, y: 64, z: 12, events: 12, weight: 42, tool: 'loop' }],
       ai: { enabled: true, provider: 'local', model: 'qwen2.5:3b',
             baseUrl: 'http://127.0.0.1:11434/v1', sendChat: true, autoMinutes: 0,
-            hasKey: false, problem: '' },
+            timeoutSeconds: 45, hasKey: false, problem: '' },
       report: { generated: Date.now() - 1000, summary: 'Steve spent the evening underground.',
                 model: 'qwen2.5:3b', provider: 'local', error: '',
                 sequences: [{ at: Date.now() - 40000, player: 'Steve',
@@ -3133,6 +3133,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       byId.get('s-aiprov').value = provider;
       byId.get('s-aimodel').value = 'some-model';
       byId.get('s-aiurl').value = address;
+      byId.get('s-aitimeout').value = '900';
       sandbox.aiFormChanged();
       posted = [];
       // A real click hands the handler an event. That argument is what broke
@@ -3148,6 +3149,11 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((keptUrl ? '  PASS  ' : '  FAIL  ') +
       'a custom endpoint address is actually sent to the server');
     if (!keptUrl) failures.push('ai-base-url not saved for custom: ' + custom.get('ai-base-url'));
+
+    const keptTimeout = custom.get('ai-timeout-seconds') === '900';
+    console.log((keptTimeout ? '  PASS  ' : '  FAIL  ') +
+      'a custom endpoint wait time is actually sent to the server');
+    if (!keptTimeout) failures.push('ai-timeout-seconds not saved for custom');
 
     const said = byId.get('s-aimsg').textContent || '';
     const confirmed = /Saved/.test(said);
@@ -3166,6 +3172,12 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((noUrl ? '  PASS  ' : '  FAIL  ') +
       'a provider with one fixed endpoint sends no address');
     if (!noUrl) failures.push('openai sent an address it does not have');
+
+    const noCustomTimeout = !openai.has('ai-timeout-seconds')
+      && byId.get('s-aitimeoutrow').style.display === 'none';
+    console.log((noCustomTimeout ? '  PASS  ' : '  FAIL  ') +
+      'the custom-server timeout stays out of hosted OpenAI setup');
+    if (!noCustomTimeout) failures.push('hosted OpenAI showed or saved the custom timeout');
 
     const named = openai.get('ai-provider') === 'openai' && openai.get('ai-model') === 'some-model';
     console.log((named ? '  PASS  ' : '  FAIL  ') + 'the provider and model go with it');

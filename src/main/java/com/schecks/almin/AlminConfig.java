@@ -471,7 +471,7 @@ public final class AlminConfig {
             c -> c.aiSendSceneImages, (c, v) -> c.aiSendSceneImages = (Boolean) v),
         intKey("ai-auto-minutes", "Minutes between unattended summaries (0 = only when asked)", 0, 1440,
             c -> c.aiAutoMinutes, (c, v) -> c.aiAutoMinutes = (Integer) v),
-        intKey("ai-timeout-seconds", "How long to wait for the model (keep it under any reverse proxy's own timeout)", 5, 600,
+        intKey("ai-timeout-seconds", "How long to wait for a model response (slow custom servers may need several minutes)", 5, 3600,
             c -> c.aiTimeoutSeconds, (c, v) -> c.aiTimeoutSeconds = (Integer) v)
     );
 

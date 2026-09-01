@@ -208,7 +208,7 @@ public final class AiInsights {
     /** How long to wait for the model. Configurable; see ai-timeout-seconds. */
     static Duration timeout() {
         int s = AlminConfig.get().aiTimeoutSeconds;
-        return Duration.ofSeconds(s < 5 ? 5 : Math.min(s, 600));
+        return Duration.ofSeconds(s < 5 ? 5 : Math.min(s, 3600));
     }
     /** Episodes handed to the model. Past this the prompt stops being small. */
     private static final int MAX_EPISODES = 60;

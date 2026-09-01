@@ -6405,6 +6405,9 @@ final class WebPage {
               '</select></label>'+
               '<label id="s-aiurlrow"><span>Address</span>'+
                 '<input id="s-aiurl" placeholder="http://127.0.0.1:11434/v1"></label>'+
+              '<label id="s-aitimeoutrow"><span>Wait up to (seconds)</span>'+
+                '<input id="s-aitimeout" type="number" min="5" max="3600" step="5" '+
+                'value="45" inputmode="numeric"></label>'+
               '<div id="s-aihint" class="note" style="display:none"></div>'+
               '<label><span>Model</span>'+
                 '<input id="s-aimodel" placeholder="qwen2.5:3b"></label>'+
@@ -6447,7 +6450,7 @@ final class WebPage {
             $('s-aidiag').onclick=()=>showAiDiagnostics(false);
             $('s-aikeyclr').onclick=()=>saveAiKey('');
             $('s-aiprov').onchange=aiFormChanged;
-            for(const id of ['s-aiurl','s-aimodel','s-aikey','s-aiimage'])
+            for(const id of ['s-aiurl','s-aitimeout','s-aimodel','s-aikey','s-aiimage'])
               $(id).oninput=aiFormChanged;
             $('s-pwgo').onclick=setPassword;
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
@@ -6501,6 +6504,7 @@ final class WebPage {
             $('s-aimodel').value=a.model||'';
             $('s-aiimage').value=a.sendSceneImages===false?'false':'true';
             $('s-aiauto').value=String(a.autoMinutes||0);
+            $('s-aitimeout').value=String(a.timeoutSeconds||45);
           }
           const local=(prov?prov.value:a.provider)==='local';
           const leaves=local
@@ -6547,6 +6551,8 @@ final class WebPage {
           // Gemini, whose address only moves for a proxy.
           const row=$('s-aiurlrow');
           if(row) row.style.display=aiHasUrl(prov.value)?'':'none';
+          const timeoutRow=$('s-aitimeoutrow');
+          if(timeoutRow) timeoutRow.style.display=(local||custom)?'':'none';
           // A model name that belongs to the provider they just picked, so the
           // common case is one dropdown and a button.
           const model=$('s-aimodel');
@@ -6572,7 +6578,8 @@ final class WebPage {
                 'Groq, Together, DeepSeek, Mistral, vLLM, or a model on another machine '+
                 'on your network. Give the base address, up to and including '+
                 '<code>/v1</code>; Almin adds <code>/chat/completions</code>. The key is '+
-                'sent as a bearer token if you set one, and left out if you do not.';
+                'sent as a bearer token if you set one, and left out if you do not. '+
+                'Increase <b>Wait up to</b> if that server loads or generates slowly.';
             }
           }
 
@@ -6606,6 +6613,11 @@ final class WebPage {
           // of this test, because a local model does not want one.
           const needsUrl=prov.value==='local' || prov.value==='custom';
           if(needsUrl && !($('s-aiurl').value||'').trim()) missing.push('an address');
+          if(needsUrl){
+            const timeout=Number(($('s-aitimeout').value||'').trim());
+            if(!Number.isInteger(timeout) || timeout<5 || timeout>3600)
+              missing.push('a timeout from 5 to 3600 seconds');
+          }
           const needsKey=prov.value==='openai' || prov.value==='anthropic' ||
             prov.value==='google';
           const typed=($('s-aikey').value||'').trim();
@@ -6623,6 +6635,8 @@ final class WebPage {
                       ['ai-send-scene-images',$('s-aiimage').value],
                       ['ai-auto-minutes',$('s-aiauto').value]];
           if(aiHasUrl(prov)) sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
+          if(prov==='local' || prov==='custom')
+            sets.push(['ai-timeout-seconds',$('s-aitimeout').value]);
           for(const [k,v] of sets){
             const r=await jpost('/api/config',{name:k,value:v});
             if(r.status!==200){

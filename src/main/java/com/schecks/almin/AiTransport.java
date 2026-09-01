@@ -88,7 +88,7 @@ final class AiTransport {
     private static String askProvider(AlminConfig cfg, String provider, String system,
                                       String prompt, String image) throws IOException {
         return switch (provider) {
-            case "openai" -> askOnce(openAi(cfg, system, prompt, image));
+            case "openai" -> openAiResponses(cfg, system, prompt, image);
             case "anthropic" -> askOnce(anthropic(cfg, system, prompt, image));
             case "google" -> askOnce(google(cfg, system, prompt, image));
             case "custom", "local" -> openAiCompatible(cfg, provider, system, prompt, image);
@@ -119,22 +119,66 @@ final class AiTransport {
         DIAGNOSTICS.clear();
     }
 
-    private static String openAiCompatible(AlminConfig cfg, String provider,
-                                            String system, String prompt, String image)
+    /**
+     * OpenAI's Responses API calls its optional limit max_output_tokens. A few
+     * proxies and model-specific compatibility layers implement the rest of
+     * Responses but reject that field. The prompt is already deliberately
+     * short, so retrying without the optional cap is safer than making the
+     * whole feature fail on an otherwise usable model.
+     */
+    private static String openAiResponses(AlminConfig cfg, String system,
+                                           String prompt, String image)
             throws IOException {
-        Request first = openAiChat(cfg, provider, system, prompt, image, false);
         try {
-            return askOnce(first);
+            return askOnce(openAi(cfg, system, prompt, image, true));
         } catch (IOException e) {
-            String said = e.getMessage() == null ? "" : e.getMessage();
-            if (!said.contains("max_completion_tokens")) throw e;
-            AlminLog.info("[almin] this model wants max_completion_tokens; asking again");
-            return askOnce(openAiChat(cfg, provider, system, prompt, image, true));
+            if (!tokenLimitRejected(e, "max_output_tokens")) throw e;
+            AlminLog.info("[almin] this OpenAI endpoint rejects max_output_tokens; "
+                + "asking again without an output limit");
+            return askOnce(openAi(cfg, system, prompt, image, false));
         }
     }
 
+    private static String openAiCompatible(AlminConfig cfg, String provider,
+                                            String system, String prompt, String image)
+            throws IOException {
+        try {
+            return askOnce(openAiChat(cfg, provider, system, prompt, image, "max_tokens"));
+        } catch (IOException e) {
+            String said = e.getMessage() == null ? "" : e.getMessage();
+            if (said.contains("max_completion_tokens")) {
+                AlminLog.info("[almin] this model wants max_completion_tokens; asking again");
+                try {
+                    return askOnce(openAiChat(cfg, provider, system, prompt, image,
+                        "max_completion_tokens"));
+                } catch (IOException renamed) {
+                    if (!tokenLimitRejected(renamed, "max_completion_tokens")) throw renamed;
+                    AlminLog.info("[almin] this endpoint rejects token-limit fields; "
+                        + "asking again without one");
+                    return askOnce(openAiChat(cfg, provider, system, prompt, image, ""));
+                }
+            }
+            if (!tokenLimitRejected(e, "max_tokens")) throw e;
+            AlminLog.info("[almin] this endpoint rejects max_tokens; asking again without it");
+            return askOnce(openAiChat(cfg, provider, system, prompt, image, ""));
+        }
+    }
+
+    /** Only retry a request when the service clearly blamed this exact field. */
+    private static boolean tokenLimitRejected(IOException error, String field) {
+        String s = error.getMessage() == null ? ""
+            : error.getMessage().toLowerCase(java.util.Locale.ROOT);
+        if (!s.contains(field.toLowerCase(java.util.Locale.ROOT))) return false;
+        return s.contains("unsupported") || s.contains("not support")
+            || s.contains("unrecognized") || s.contains("unknown")
+            || s.contains("not allowed") || s.contains("not permitted")
+            || s.contains("unexpected") || s.contains("extra field")
+            || s.contains("invalid") || s.contains("not accepted");
+    }
+
     /** OpenAI's current Responses API. */
-    private static Request openAi(AlminConfig cfg, String system, String prompt, String image) {
+    private static Request openAi(AlminConfig cfg, String system, String prompt, String image,
+                                  boolean includeLimit) {
         JsonObject body = new JsonObject();
         body.addProperty("model", cfg.aiModel.trim());
         body.addProperty("instructions", system);
@@ -155,7 +199,7 @@ final class AiTransport {
             input.add(turn);
             body.add("input", input);
         }
-        body.addProperty("max_output_tokens", 2000);
+        if (includeLimit) body.addProperty("max_output_tokens", 2000);
         // These are one-shot summaries. Do not retain player activity as API state.
         body.addProperty("store", false);
         return request("openai", cfg.aiModel,
@@ -166,10 +210,12 @@ final class AiTransport {
 
     /** OpenAI-compatible Chat Completions for local and custom endpoints. */
     private static Request openAiChat(AlminConfig cfg, String provider, String system,
-                                      String prompt, String image, boolean renamedLimit) {
+                                      String prompt, String image, String limitField) {
         JsonObject body = new JsonObject();
         body.addProperty("model", cfg.aiModel.trim());
-        body.addProperty(renamedLimit ? "max_completion_tokens" : "max_tokens", 2000);
+        if (limitField != null && !limitField.isBlank()) {
+            body.addProperty(limitField, 2000);
+        }
         body.addProperty("stream", false);
         JsonArray messages = new JsonArray();
         messages.add(message("system", system));

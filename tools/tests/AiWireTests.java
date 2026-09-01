@@ -138,6 +138,42 @@ public class AiWireTests {
         check("OpenAI sends its bearer key", auth.get().equals("Bearer wire-secret"));
         check("OpenAI's response comes back", oa.ok() && oa.summary().equals("A quiet night."));
 
+        // Some model gateways implement the Responses shape but reject its
+        // optional output cap. Almin should keep the standard field on the
+        // first request, then omit only that field when it is explicitly what
+        // the service objected to.
+        AtomicInteger outputLimitAttempts = new AtomicInteger();
+        List<String> outputLimitBodies = new ArrayList<>();
+        http.createContext("/openai/no-output-limit", ex -> {
+            int attempt = outputLimitAttempts.incrementAndGet();
+            String request = new String(ex.getRequestBody().readAllBytes(),
+                StandardCharsets.UTF_8);
+            outputLimitBodies.add(request);
+            int status = attempt == 1 ? 400 : 200;
+            String reply = attempt == 1
+                ? "{\"error\":{\"message\":\"Unsupported parameter: max_output_tokens\"}}"
+                : "{\"output_text\":\"{\\\"summary\\\":\\\"limit fallback\\\"}\"}";
+            byte[] bytes = reply.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(status, bytes.length);
+            try (OutputStream out = ex.getResponseBody()) { out.write(bytes); }
+            ex.close();
+        });
+        setEndpointOverrides(Map.of(
+            "openai", "http://127.0.0.1:" + port + "/openai/no-output-limit",
+            "anthropic", "http://127.0.0.1:" + port + "/anthropic/messages",
+            "google", "http://127.0.0.1:" + port + "/google/generate"));
+        AiInsights.Report outputFallback = AiInsights.summarise(AiInsights.Scope.all(),
+            episodes(), List.of(), 0, 1, 0, true);
+        check("OpenAI retries when max_output_tokens alone is rejected",
+            outputFallback.ok() && outputFallback.summary().equals("limit fallback")
+                && outputLimitAttempts.get() == 2
+                && outputLimitBodies.get(0).contains("\"max_output_tokens\":2000")
+                && !outputLimitBodies.get(1).contains("max_output_tokens"));
+        setEndpointOverrides(Map.of(
+            "openai", "http://127.0.0.1:" + port + "/openai/responses",
+            "anthropic", "http://127.0.0.1:" + port + "/anthropic/messages",
+            "google", "http://127.0.0.1:" + port + "/google/generate"));
+
         configure(true, "anthropic", "claude-test", "");
         AiInsights.Report an = AiInsights.summarise(AiInsights.Scope.all(), sceneEpisodes,
             sceneRows, NOW - 60_000, NOW, 0, true);
@@ -223,6 +259,33 @@ public class AiWireTests {
             sceneRows, NOW - 60_000, NOW, 0, true);
         check("the text-only capability is remembered", visionAttempts.get() == 3
             && imagesRejected.get() == 1);
+
+        AtomicInteger tokenlessAttempts = new AtomicInteger();
+        List<String> tokenlessBodies = new ArrayList<>();
+        http.createContext("/tokenless/v1/chat/completions", ex -> {
+            int attempt = tokenlessAttempts.incrementAndGet();
+            String request = new String(ex.getRequestBody().readAllBytes(),
+                StandardCharsets.UTF_8);
+            tokenlessBodies.add(request);
+            int status = attempt == 1 ? 422 : 200;
+            String reply = attempt == 1
+                ? "{\"error\":{\"message\":\"max_tokens is not supported\"}}"
+                : "{\"choices\":[{\"message\":{\"content\":"
+                    + "\"{\\\"summary\\\":\\\"tokenless fallback\\\"}\"}}]}";
+            byte[] bytes = reply.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(status, bytes.length);
+            try (OutputStream out = ex.getResponseBody()) { out.write(bytes); }
+            ex.close();
+        });
+        configure(true, "custom", "strict-model",
+            "http://127.0.0.1:" + port + "/tokenless/v1");
+        AiInsights.Report tokenless = AiInsights.summarise(AiInsights.Scope.all(), episodes(),
+            List.of(), 0, 1, 0, true);
+        check("a custom server can reject token-limit fields",
+            tokenless.ok() && tokenless.summary().equals("tokenless fallback")
+                && tokenlessAttempts.get() == 2
+                && tokenlessBodies.get(0).contains("\"max_tokens\":2000")
+                && !tokenlessBodies.get(1).contains("max_tokens"));
 
         // A provider that errors must say so rather than looking like success.
         http.createContext("/bad", ex -> {

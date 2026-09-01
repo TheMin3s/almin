@@ -2766,6 +2766,7 @@ public final class WebUi {
         o.addProperty("sendChat", cfg.aiSendChat);
         o.addProperty("sendSceneImages", cfg.aiSendSceneImages);
         o.addProperty("autoMinutes", cfg.aiAutoMinutes);
+        o.addProperty("timeoutSeconds", cfg.aiTimeoutSeconds);
         o.addProperty("hasKey", AiInsights.hasKey());
         o.addProperty("problem", AiInsights.problem());
         return o;

@@ -185,6 +185,23 @@ public class AiTests {
         CFG.getField("aiEnabled").setBoolean(cfg, true);
         CFG.getField("aiProvider").set(cfg, "local");
 
+        // Slow local and custom servers get the timeout the admin chose, up
+        // to the same one-hour bound accepted by config and the settings UI.
+        Method timeout = AI.getDeclaredMethod("timeout");
+        timeout.setAccessible(true);
+        CFG.getField("aiTimeoutSeconds").setInt(cfg, 1800);
+        check("a custom model can wait for the configured half hour",
+            ((java.time.Duration) timeout.invoke(null)).toSeconds() == 1800);
+        CFG.getField("aiTimeoutSeconds").setInt(cfg, 9999);
+        check("the runtime timeout still has a one-hour safety bound",
+            ((java.time.Duration) timeout.invoke(null)).toSeconds() == 3600);
+        Object timeoutKey = CFG.getMethod("keyByName", String.class)
+            .invoke(null, "ai-timeout-seconds");
+        check("the config accepts custom waits up to one hour",
+            timeoutKey != null && timeoutKey.getClass().getField("min").getInt(timeoutKey) == 5
+                && timeoutKey.getClass().getField("max").getInt(timeoutKey) == 3600);
+        CFG.getField("aiTimeoutSeconds").setInt(cfg, 45);
+
         // ---- the key file ----
         Path dir = Files.createTempDirectory("almin-ai");
         AI.getMethod("init", Path.class).invoke(null, dir);
