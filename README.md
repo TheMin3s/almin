@@ -125,6 +125,13 @@ directory there is no ambiguity to begin with — Minecraft's own world lock mea
 a second live server here is impossible, so anything still holding the port is a
 leftover by definition.
 
+If a NAS panel, SSH session or process wrapper disconnects stdin instead, Java
+can report `Exception handling console input` with `java.io.IOException:
+Input/output error`. That exception comes from Minecraft's console-reader
+thread, not its main server thread. Almin turns the dead pipe into a clean EOF,
+so the server and website continue without the stack trace; console commands
+remain available through Almin's website even when the host terminal is gone.
+
 To check and fix from in game, `/almin op web` reports the reason, and:
 
 ```

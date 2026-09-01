@@ -16,6 +16,10 @@ public class Almin implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        // Do this before Minecraft creates "Server console handler". Some NAS
+        // panels leave stdin attached to a dead terminal, where read() throws
+        // EIO; make that indistinguishable from the clean EOF it really is.
+        ConsoleInputGuard.install();
         // Packet types first: both entrypoints need them declared before any
         // handler or receiver can be attached.
         AlminPayloads.registerTypes();
