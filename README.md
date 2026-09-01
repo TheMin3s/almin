@@ -374,8 +374,12 @@ need a live server say that it is stopped, while **Start server** remains
 available without a timeout.
 
 Restart and Start use the original launch-first handoff: the replacement is
-successfully created before the old website releases its port and exits. A
-failed launch leaves the current website untouched and reports the failure.
+successfully created before the old website releases its port and exits. The
+replacement must now reach Minecraft's `SERVER_STARTED` event too; a Java
+process that spawns and then dies during mod or world loading is still a failed
+launch. The current website remains untouched, reports the failure, and allows
+Start to be tried again. Slow servers are allowed up to ten minutes to finish
+startup before the attempted child is stopped and reported as failed.
 
 Turn `web-supervisor` off only when an external wrapper must see the Almin JVM
 exit after an ordinary server stop.

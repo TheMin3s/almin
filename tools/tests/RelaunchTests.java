@@ -134,17 +134,28 @@ public class RelaunchTests {
 
     static void launching() throws Exception {
         reset();
+        System.setProperty("almin.relaunch.startup-timeout-ms", "10000");
         cfg.webRestartRelaunch = true;
         Path marker = dir.resolve("launched.txt");
-        cfg.webStartCommand = "touch " + marker.toAbsolutePath();
+        cfg.webStartCommand = "touch " + marker.toAbsolutePath()
+            + "; printf '%s' \"$ALMIN_RELAUNCH_TOKEN\" > \"$ALMIN_RELAUNCH_READY\"; sleep 1";
         ServerRelaunch.Result r = ServerRelaunch.launch(dir);
-        ck("launching runs the command", r.ok(), r.message());
+        ck("launching waits for a ready replacement", r.ok(), r.message());
         for (int i = 0; i < 50 && !Files.exists(marker); i++) Thread.sleep(100);
         ck("...and the process really ran", Files.exists(marker), "no marker file");
 
         ServerRelaunch.Result twice = ServerRelaunch.launch(dir);
         ck("a second launch is refused — one restart, one server", !twice.ok(), twice.message());
+
+        reset();
+        cfg.webStartCommand = "exit 7";
+        ServerRelaunch.Result failed = ServerRelaunch.launch(dir);
+        ck("a child that dies during startup is a failed launch",
+            !failed.ok() && failed.message().contains("exited during startup"), failed.message());
+        ck("a startup failure can be retried from the preserved website",
+            !ServerRelaunch.launched(), "launch was latched");
         cfg.webStartCommand = "";
+        System.clearProperty("almin.relaunch.startup-timeout-ms");
         reset();
     }
 
@@ -254,6 +265,16 @@ public class RelaunchTests {
             handOverAt + " / " + launch + " / " + halt);
         ck("a failed relaunch keeps the panel up to say so",
             web.contains("relaunchError = r.message()"), "not recorded");
+        int started = almin.indexOf("SERVER_STARTED.register(server ->");
+        int ready = almin.indexOf("ServerRelaunch.reportReady(");
+        int childWeb = almin.indexOf("WebUi.start(server)", ready);
+        ck("a replacement reports SERVER_STARTED before trying to take the website",
+            started > 0 && ready > started && childWeb > ready,
+            started + " / " + ready + " / " + childWeb);
+        String relaunch = src("ServerRelaunch.java");
+        ck("launch success waits for the child readiness handshake",
+            relaunch.contains("awaitReady(p, ready, token)")
+                && relaunch.contains("process.isAlive()"), "spawn alone counted as ready");
         // Without supervisor mode every web thread is a daemon, so "the panel
         // stays up" needs something non-daemon or the JVM exits anyway.
         int hold = web.indexOf("private static void holdOpenToReport()");

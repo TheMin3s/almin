@@ -82,6 +82,9 @@ public class Almin implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             Dashboard.markStarted();
             ConsoleTap.start(server);
+            // A parent Almin process keeps its working website untouched until
+            // this replacement has actually survived startup.
+            ServerRelaunch.reportReady(server.getServerDirectory());
             WebUi.start(server);
             ServerAutoUpdater.checkOnBoot(server);
         });

@@ -1,12 +1,17 @@
 package com.schecks.almin;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Starts the Minecraft server again after Almin has stopped it.
@@ -51,6 +56,12 @@ public final class ServerRelaunch {
      */
     private static final ProcessBuilder.Redirect NULL_INPUT =
         ProcessBuilder.Redirect.from(new File("/dev/null"));
+
+    /** Child-to-parent handshake: set only on a process Almin launches. */
+    private static final String READY_TOKEN_ENV = "ALMIN_RELAUNCH_TOKEN";
+    private static final String READY_FILE_ENV = "ALMIN_RELAUNCH_READY";
+    private static final long STARTUP_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(10);
+    private static final long READY_POLL_MS = 100;
 
     /** How the server would be started again, or why it cannot be. */
     public record Plan(List<String> argv, String display, String source, String problem) {
@@ -197,14 +208,45 @@ public final class ServerRelaunch {
     public static boolean launched()   { return launched; }
     public static String lastError()   { return lastError; }
 
+    /**
+     * Called by the replacement at SERVER_STARTED, immediately before its web
+     * listener tries to take the old website's port. A normal server process
+     * has no handshake environment and does nothing here.
+     */
+    public static void reportReady(Path serverDirectory) {
+        String token = System.getenv(READY_TOKEN_ENV);
+        String named = System.getenv(READY_FILE_ENV);
+        if (token == null || token.isBlank() || named == null || named.isBlank()) return;
+        try {
+            Path root = serverDirectory.toAbsolutePath().normalize();
+            Path ready = Path.of(named).toAbsolutePath().normalize();
+            // The parent always places this under this server's config folder.
+            // Refuse an injected environment path anywhere else.
+            if (!ready.startsWith(root.resolve("config").resolve("almin"))) return;
+            Files.createDirectories(ready.getParent());
+            Path tmp = Files.createTempFile(ready.getParent(), ".relaunch-ready-", ".tmp");
+            Files.writeString(tmp, token, StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, ready, StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                Files.move(tmp, ready, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException | RuntimeException e) {
+            CONSOLE.warn("[almin] Could not report replacement-server readiness: {}", e.toString());
+        }
+    }
+
     // ---------- doing it ----------
 
     /**
      * Starts the server again, once.
      *
      * <p>Output is inherited so the new server's log lands wherever this one's
-     * did. The child is not waited on and not killed when this process ends —
-     * the whole point is that it outlives us.
+     * did. The existing website is kept intact until the child reaches
+     * SERVER_STARTED and reports that through a one-use file handshake. Merely
+     * creating a Java process is not success: a child that exits during mod or
+     * world loading is a failed launch, and the old website remains available.
      */
     public static synchronized Result launch(Path serverDirectory) {
         if (launched) return new Result(false, "The server has already been started again.");
@@ -214,24 +256,95 @@ public final class ServerRelaunch {
             return new Result(false, plan.problem());
         }
         Path dir = workingDirectory(serverDirectory);
+        Path ready = readinessFile(serverDirectory);
+        String token = UUID.randomUUID().toString();
         try {
+            Files.deleteIfExists(ready);
             ProcessBuilder pb = new ProcessBuilder(plan.argv());
             pb.directory(dir.toFile());
             pb.redirectInput(NULL_INPUT);
             pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
             pb.redirectError(ProcessBuilder.Redirect.INHERIT);
+            pb.environment().put(READY_TOKEN_ENV, token);
+            pb.environment().put(READY_FILE_ENV, ready.toString());
             Process p = pb.start();
+            Result started = awaitReady(p, ready, token);
+            deleteReady(ready);
+            if (!started.ok()) {
+                lastError = started.message();
+                AlminLog.warn("[almin] replacement server failed before readiness: {}",
+                    started.message());
+                CONSOLE.warn("[almin] Replacement server did not start: {}", started.message());
+                return started;
+            }
             launched = true;
             lastError = "";
-            AlminLog.info("[almin] started the server again as pid {} in {}: {}",
+            AlminLog.info("[almin] replacement server pid {} is ready in {}: {}",
                 p.pid(), dir, plan.display());
-            CONSOLE.warn("[almin] Starting the server again (pid {}).", p.pid());
-            return new Result(true, "Started the server again (pid " + p.pid() + ").");
+            CONSOLE.warn("[almin] Replacement server is ready (pid {}).", p.pid());
+            return new Result(true, "Replacement server is ready (pid " + p.pid() + ").");
         } catch (Exception e) {
+            deleteReady(ready);
             lastError = e.toString();
             AlminLog.warn("[almin] relaunch failed: {}", e.toString());
             CONSOLE.warn("[almin] Could not start the server again: {}", e.toString());
             return new Result(false, "Could not start the server again: " + e);
+        }
+    }
+
+    private static Path readinessFile(Path serverDirectory) {
+        Path root = serverDirectory == null ? Path.of(".") : serverDirectory;
+        return root.toAbsolutePath().normalize().resolve("config").resolve("almin")
+            .resolve("relaunch.ready");
+    }
+
+    private static Result awaitReady(Process process, Path ready, String token) {
+        long timeout = Long.getLong("almin.relaunch.startup-timeout-ms", STARTUP_TIMEOUT_MS);
+        long deadline = System.currentTimeMillis() + Math.max(1000, timeout);
+        while (System.currentTimeMillis() < deadline) {
+            if (readyToken(ready).equals(token) && process.isAlive()) {
+                return new Result(true, "ready");
+            }
+            if (!process.isAlive()) {
+                int code;
+                try { code = process.exitValue(); } catch (IllegalThreadStateException e) { code = -1; }
+                return new Result(false, "The replacement exited during startup"
+                    + (code >= 0 ? " (exit " + code + ")." : "."));
+            }
+            try {
+                Thread.sleep(READY_POLL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                terminate(process);
+                return new Result(false, "Interrupted while waiting for the replacement to start.");
+            }
+        }
+        terminate(process);
+        return new Result(false, "The replacement did not finish starting within "
+            + Math.max(1, timeout / 1000) + " seconds.");
+    }
+
+    private static String readyToken(Path ready) {
+        try {
+            return Files.isRegularFile(ready)
+                ? Files.readString(ready, StandardCharsets.UTF_8).trim() : "";
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private static void deleteReady(Path ready) {
+        try { Files.deleteIfExists(ready); } catch (IOException ignored) { }
+    }
+
+    private static void terminate(Process process) {
+        if (!process.isAlive()) return;
+        process.destroy();
+        try {
+            if (!process.waitFor(3, TimeUnit.SECONDS)) process.destroyForcibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
         }
     }
 
