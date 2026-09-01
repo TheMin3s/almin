@@ -690,8 +690,9 @@ public final class AiInsights {
      *
      * <p>Models wrap JSON in prose and in code fences however they feel, and a
      * 3B model does it more than most. Rather than insist, the first balanced
-     * object in the reply is taken; if there is not one, the whole reply
-     * becomes the summary, which is a worse answer but still an answer.
+     * object in the reply is taken. If a provider cuts the object off at its
+     * output limit, the completed summary string at its beginning is still
+     * recovered instead of showing the admin a page of half-written JSON.
      */
     static Report parse(String text, long from, long to, AlminConfig cfg,
                         List<Episodes.Episode> episodes, Scope scope) {
@@ -700,7 +701,7 @@ public final class AiInsights {
         String where = scope == null ? "all" : scope.key();
         String json = firstObject(text);
         if (json.isEmpty()) {
-            return new Report(System.currentTimeMillis(), from, to, text.trim(),
+            return new Report(System.currentTimeMillis(), from, to, displaySummary(text),
                 List.of(), List.of(), List.of(), where, model, provider, "");
         }
         try {
@@ -734,13 +735,13 @@ public final class AiInsights {
                 }
             }
             if (summary.isEmpty() && moments.isEmpty() && meanings.isEmpty() && found.isEmpty()) {
-                return new Report(System.currentTimeMillis(), from, to, text.trim(),
+                return new Report(System.currentTimeMillis(), from, to, displaySummary(text),
                     List.of(), List.of(), List.of(), where, model, provider, "");
             }
             return new Report(System.currentTimeMillis(), from, to, summary, moments,
                 meanings, found, where, model, provider, "");
         } catch (Exception e) {
-            return new Report(System.currentTimeMillis(), from, to, text.trim(),
+            return new Report(System.currentTimeMillis(), from, to, displaySummary(text),
                 List.of(), List.of(), List.of(), where, model, provider, "");
         }
     }
@@ -834,6 +835,7 @@ public final class AiInsights {
 
     /** The first balanced {...} in a string, ignoring braces inside strings. */
     static String firstObject(String text) {
+        if (text == null) return "";
         int start = text.indexOf('{');
         if (start < 0) return "";
         int depth = 0;
@@ -849,6 +851,59 @@ public final class AiInsights {
             if (c == '"') inString = true;
             else if (c == '{') depth++;
             else if (c == '}' && --depth == 0) return text.substring(start, i + 1);
+        }
+        return "";
+    }
+
+    /**
+     * A human-readable fallback for a reply that was not complete JSON.
+     *
+     * <p>The summary is deliberately the first field requested from the
+     * model. That means it is usually complete even when a small/custom model
+     * spends the rest of its token budget on moments and gets cut off before
+     * the final brace. Recover that JSON string and discard the unfinished
+     * envelope. Plain prose remains plain prose for providers which ignore
+     * the requested response shape entirely.
+     */
+    static String displaySummary(String text) {
+        String raw = text == null ? "" : text.trim();
+        String recovered = jsonStringField(raw, "summary");
+        if (!recovered.isBlank()) return recovered.trim();
+        return raw;
+    }
+
+    /** Reads one complete JSON string field without needing the outer object to close. */
+    private static String jsonStringField(String text, String field) {
+        String key = "\"" + field + "\"";
+        int from = 0;
+        while (from < text.length()) {
+            int at = text.indexOf(key, from);
+            if (at < 0) return "";
+            int p = at + key.length();
+            while (p < text.length() && Character.isWhitespace(text.charAt(p))) p++;
+            if (p >= text.length() || text.charAt(p) != ':') {
+                from = at + key.length();
+                continue;
+            }
+            p++;
+            while (p < text.length() && Character.isWhitespace(text.charAt(p))) p++;
+            if (p >= text.length() || text.charAt(p) != '"') return "";
+
+            int start = p;
+            boolean escaped = false;
+            for (p++; p < text.length(); p++) {
+                char c = text.charAt(p);
+                if (escaped) { escaped = false; continue; }
+                if (c == '\\') { escaped = true; continue; }
+                if (c != '"') continue;
+                try {
+                    JsonElement value = JsonParser.parseString(text.substring(start, p + 1));
+                    return value.isJsonPrimitive() ? value.getAsString() : "";
+                } catch (RuntimeException ignored) {
+                    return "";
+                }
+            }
+            return "";
         }
         return "";
     }

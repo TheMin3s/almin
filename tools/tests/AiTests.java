@@ -46,6 +46,16 @@ public class AiTests {
                 .equals("{\"a\":{\"b\":2},\"c\":3}"));
         check("no JSON at all is no JSON", first.invoke(null, "I could not do that").equals(""));
 
+        Method displaySummary = AI.getDeclaredMethod("displaySummary", String.class);
+        displaySummary.setAccessible(true);
+        String cutOff = "```json\n{\"summary\":\"They mined together, then had a duel.\"," +
+            "\"moments\":[{\"label\":\"unfinished";
+        check("a summary is recovered when structured output is cut off",
+            displaySummary.invoke(null, cutOff)
+                .equals("They mined together, then had a duel."));
+        check("plain model prose is left alone",
+            displaySummary.invoke(null, "It was a quiet night.").equals("It was a quiet night."));
+
         // ---- reading a report ----
         Object cfg = CFG.getMethod("get").invoke(null);
         CFG.getField("aiProvider").set(cfg, "local");
@@ -89,6 +99,12 @@ public class AiTests {
         check("prose with no JSON becomes the summary",
             get(report, "summary").equals("I am just going to talk instead."));
         check("  and is not an error", (Boolean) report.getClass().getMethod("ok").invoke(report));
+
+        report = parse.invoke(null, cutOff, at - 1000, at, cfg, episodes, all);
+        check("a truncated fenced report does not render its raw JSON",
+            get(report, "summary").equals("They mined together, then had a duel."));
+        check("unfinished report sections are safely omitted",
+            ((List<?>) get(report, "moments")).isEmpty());
 
         // ---- the prompt ----
         Method prompt = AI.getDeclaredMethod("prompt", scopeCls, List.class, List.class,

@@ -2763,7 +2763,9 @@ public final class WebUi {
     private static JsonObject reportJson(AiInsights.Report r) {
         JsonObject o = new JsonObject();
         o.addProperty("generated", r.generated());
-        o.addProperty("summary", r.summary());
+        // Also cleans an answer already held in the in-memory cache from
+        // before truncated structured replies were handled by the parser.
+        o.addProperty("summary", AiInsights.displaySummary(r.summary()));
         o.addProperty("model", r.model());
         o.addProperty("provider", r.provider());
         o.addProperty("error", r.error() == null ? "" : r.error());
