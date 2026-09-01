@@ -15,6 +15,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -25,9 +26,9 @@ import java.util.stream.Stream;
  *   <li>every path is resolved against the server directory and rejected if it
  *       escapes it (so {@code ../} can't walk out);</li>
  *   <li>reads and listings are allowed anywhere under the server root;</li>
- *   <li>writes, deletes and renames are limited to the configured writable
- *       roots (plus each world's {@code datapacks/}), and never the mod's own
- *       jar.</li>
+ *   <li>writes and renames are limited to the configured writable roots;
+ *       deletes use their own configured roots; both also allow each world's
+ *       {@code datapacks/}, and neither may touch the mod's own jar.</li>
  * </ul>
  *
  * All of this is the same policy as the commands — the web panel is another
@@ -53,20 +54,20 @@ public final class WebFiles {
     /**
      * One row in a folder view. {@code modified} is epoch millis (0 when the
      * filesystem would not say), {@code items} is a directory's child count or
-     * -1, and {@code writable} is whether the write rules would let this one be
-     * renamed or deleted — worked out here so the browser can grey the actions
-     * out rather than offering them and failing.
+     * -1. {@code writable} controls edits and renames, while {@code deletable}
+     * controls deletion. They are worked out here so the browser can grey out
+     * each action rather than offering it and then failing.
      */
     public record Entry(String name, boolean directory, long size,
-                        long modified, int items, boolean writable) {
+                        long modified, int items, boolean writable, boolean deletable) {
         public Entry(String name, boolean directory, long size) {
-            this(name, directory, size, 0L, -1, false);
+            this(name, directory, size, 0L, -1, false, false);
         }
     }
     public record Listing(String path, boolean isDir, long fileSize,
-                          List<Entry> entries, boolean writable) {
+                          List<Entry> entries, boolean writable, boolean deletable) {
         public Listing(String path, boolean isDir, long fileSize, List<Entry> entries) {
-            this(path, isDir, fileSize, entries, false);
+            this(path, isDir, fileSize, entries, false, false);
         }
     }
     public record Result(boolean ok, String message) {
@@ -116,9 +117,9 @@ public final class WebFiles {
     }
 
     /**
-     * True if {@code rel} lands somewhere writes are permitted: under one of the
-     * configured writable roots, or a world's {@code datapacks/} folder. Mirrors
-     * the guard on {@code /almin op delete|rename}.
+     * True if {@code target} lands somewhere writes are permitted: under one of
+     * the configured writable roots, or a world's {@code datapacks/} folder.
+     * Mirrors the guard on edits, uploads, new folders, and renames.
      */
     public static boolean isWritable(MinecraftServer server, Path target) {
         Path root = root(server);
@@ -130,6 +131,32 @@ public final class WebFiles {
         // Any world's datapacks dir, e.g. world/datapacks.
         Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR).toAbsolutePath().normalize();
         return target.startsWith(datapacks);
+    }
+
+    /** True when the target's top-level folder is allowed to be deleted. */
+    public static boolean isDeletable(MinecraftServer server, Path target) {
+        Path datapacks = server.getWorldPath(LevelResource.DATAPACK_DIR)
+            .toAbsolutePath().normalize();
+        return isDeletable(root(server), AlminConfig.get().dirDeletableRootsAsSet(),
+            datapacks, target);
+    }
+
+    /**
+     * Server-free form of the delete policy so its path boundaries and config
+     * defaults can be tested against real directories.
+     */
+    public static boolean isDeletable(Path root, Set<String> deletableRoots,
+                                      Path datapacksRoot, Path target) {
+        Path base = root.toAbsolutePath().normalize();
+        Path absolute = target.toAbsolutePath().normalize();
+        if (absolute.equals(base) || !absolute.startsWith(base)) return false;
+        Path rel = base.relativize(absolute);
+        if (rel.getNameCount() == 0) return false;
+        String top = rel.getName(0).toString();
+        if (deletableRoots != null && deletableRoots.contains(top)) return true;
+        if (datapacksRoot == null) return false;
+        Path datapacks = datapacksRoot.toAbsolutePath().normalize();
+        return absolute.startsWith(datapacks);
     }
 
     private static boolean isOwnJar(Path target) {
@@ -144,7 +171,8 @@ public final class WebFiles {
         if (!Files.exists(target)) throw new IOException("No such path: " + rel);
         if (!Files.isDirectory(target)) {
             long size = Files.size(target);
-            return new Listing(rel, false, size, List.of(), isWritable(server, target));
+            return new Listing(rel, false, size, List.of(),
+                isWritable(server, target), isDeletable(server, target));
         }
         List<Path> paths = new ArrayList<>();
         try (Stream<Path> s = Files.list(target)) {
@@ -176,9 +204,10 @@ public final class WebFiles {
                 try { size = Files.size(p); } catch (IOException ignored) {}
             }
             entries.add(new Entry(p.getFileName().toString(), dir, size,
-                modified, items, isWritable(server, p)));
+                modified, items, isWritable(server, p), isDeletable(server, p)));
         }
-        return new Listing(rel, true, -1, entries, isWritable(server, target));
+        return new Listing(rel, true, -1, entries,
+            isWritable(server, target), isDeletable(server, target));
     }
 
     /** Reads a text file's contents, capped at {@link #MAX_READ_BYTES}. */
@@ -217,7 +246,7 @@ public final class WebFiles {
     }
 
     /**
-     * Deletes a file or a complete folder tree under a writable root.
+     * Deletes a file or a complete folder tree under a deletable root.
      *
      * <p>The running Almin jar and the private AI credential are checked
      * before the first child is removed. A directory containing either is
@@ -228,8 +257,8 @@ public final class WebFiles {
         Path target = resolveSafe(server, rel);
         if (target == null) return Result.fail("Path escapes server directory");
         if (isOwnJar(target)) return Result.fail("Refusing to delete Almin's own jar");
-        if (!isWritable(server, target)) {
-            return Result.fail("Deletes are limited to: " + AlminConfig.get().dirWritableRoots
+        if (!isDeletable(server, target)) {
+            return Result.fail("Deletes are limited to: " + AlminConfig.get().dirDeletableRoots
                 + " (or a world's datapacks/)");
         }
         if (!Files.exists(target)) return Result.fail("No such file: " + rel);
@@ -245,7 +274,7 @@ public final class WebFiles {
     /**
      * Recursively removes {@code target} without following symbolic links.
      * Public for the disk-backed regression harness; callers must apply their
-     * own writable-root policy before invoking it.
+     * own deletable-root policy before invoking it.
      */
     public static Result deleteTree(Path target, List<Path> protectedPaths) {
         Path base = target.toAbsolutePath().normalize();

@@ -176,6 +176,7 @@ public final class Dashboard {
         rows.add(Row.metric("Vanilla ops", String.valueOf(server.getPlayerList().getOps().getUserList().length)));
         rows.add(Row.metric("Masks active", String.valueOf(MaskConfig.snapshot().size())));
         rows.add(Row.metric("Writable roots", cfg.dirWritableRoots));
+        rows.add(Row.metric("Deletable roots", cfg.dirDeletableRoots));
         rows.add(Row.metric("Spawn immunity",
             cfg.spawnImmunitySeconds <= 0 ? "off" : cfg.spawnImmunitySeconds + "s"));
         rows.add(Row.metric("Log", "config/almin/almin.log"));

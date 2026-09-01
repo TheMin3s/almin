@@ -1,3 +1,4 @@
+import com.schecks.almin.AlminConfig;
 import com.schecks.almin.WebFiles;
 
 import java.nio.file.Files;
@@ -15,6 +16,33 @@ public class DeleteFolderTests {
 
     public static void main(String[] args) throws Exception {
         Path root = Files.createTempDirectory("almin-delete");
+
+        var configConstructor = AlminConfig.class.getDeclaredConstructor();
+        configConstructor.setAccessible(true);
+        AlminConfig defaults = configConstructor.newInstance();
+        ck("world is deletable by default",
+            defaults.dirDeletableRootsAsSet().contains("world"),
+            defaults.dirDeletableRoots);
+        ck("world is not made writable by delete permission",
+            !defaults.dirWritableRootsAsSet().contains("world"),
+            defaults.dirWritableRoots);
+        ck("the deletable-folder list is exposed as a config key",
+            AlminConfig.keyByName("dir-deletable-roots") != null,
+            "missing dir-deletable-roots");
+
+        Path datapacks = root.resolve("world/datapacks");
+        ck("the configured world folder passes the delete policy",
+            WebFiles.isDeletable(root, defaults.dirDeletableRootsAsSet(), datapacks,
+                root.resolve("world")), "world was refused");
+        ck("an unlisted server folder is still protected",
+            !WebFiles.isDeletable(root, defaults.dirDeletableRootsAsSet(), datapacks,
+                root.resolve("logs")), "logs was allowed");
+        ck("the server root itself can never be deleted",
+            !WebFiles.isDeletable(root, defaults.dirDeletableRootsAsSet(), datapacks, root),
+            "server root was allowed");
+        ck("a path outside the server can never be deleted",
+            !WebFiles.isDeletable(root, defaults.dirDeletableRootsAsSet(), datapacks,
+                root.getParent().resolve("outside")), "outside path was allowed");
 
         Path tree = root.resolve("config/pack");
         Files.createDirectories(tree.resolve("nested/deeper"));
@@ -69,6 +97,10 @@ public class DeleteFolderTests {
             "src/main/java/com/schecks/almin/WebPage.java"));
         ck("the web confirmation warns that folder contents are included",
             page.contains("everything inside it"), "old empty-folder warning remains");
+        ck("the web panel gates delete independently from write",
+            page.contains("disabled:!e.deletable")
+                && page.contains("disabled:!e.writable"),
+            "delete still follows writable");
 
         System.out.println(fail == 0 ? "\nDELETE-FOLDER TESTS PASSED"
             : "\n" + fail + " FAILED");

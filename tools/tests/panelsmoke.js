@@ -145,16 +145,18 @@ const responses = {
                   serverRunning: true, generated: Date.now() },
   '/api/public': { rows: [], metrics: null, generated: Date.now() },
   '/api/console': { lines: ['[00:00:00] [Server thread/INFO]: hello'] },
-  '/api/files': { writable: true, roots: 'mods,config,resourcepacks,shared',
+  '/api/files': { writable: true, deletable: true,
+                  roots: 'mods,config,resourcepacks,shared',
+                  deleteRoots: 'mods,config,resourcepacks,shared,world',
                   entries: [
     { name: 'config', directory: true, size: -1, modified: Date.now() - 90000,
-      items: 4, writable: true },
+      items: 4, writable: true, deletable: true },
     { name: 'a.json', directory: false, size: 12, modified: Date.now() - 5000,
-      items: -1, writable: true },
+      items: -1, writable: true, deletable: true },
     { name: 'sodium.jar', directory: false, size: 900000, modified: Date.now() - 800000,
-      items: -1, writable: true },
+      items: -1, writable: true, deletable: true },
     { name: 'server.jar', directory: false, size: 50 * 1024 * 1024,
-      modified: Date.now() - 9000000, items: -1, writable: false }] },
+      modified: Date.now() - 9000000, items: -1, writable: false, deletable: false }] },
   '/api/file': { content: '{}' },
   '/api/mods': { mods: [
       { id: 'sodium', name: 'Sodium', version: '1.0', url: '', file: 's.jar',
@@ -179,7 +181,8 @@ const responses = {
         editable: true, reloadsPanel: false },
       { name: 'web-start-command', description: 'd', type: 'TEXT', min: 0, max: 0, value: '',
         editable: false, reloadsPanel: false }],
-    writableRoots: 'mods,config' },
+    writableRoots: 'mods,config',
+    deletableRoots: 'mods,config,resourcepacks,shared,world' },
   '/api/activity': { admins: { ok: true, includeAdmins: false, temporary: false,
                                configured: false },
                      rows: [{ at: Date.now() - 60000, player: 'Steve', action: 'break',
@@ -469,7 +472,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   try {
     sandbox.tab = 'files'; sandbox.render();
-    sandbox.openEditor('config/almin/config.json', false);
+    sandbox.openEditor('config/almin/config.json', false, true, true);
     sandbox.openEditor('', true);
     console.log('  PASS  the editor opens on demand');
   } catch (e) {
@@ -668,7 +671,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   check('right-clicking a file offers edit, download, rename, delete', () => {
     const items = sandbox.entryMenu({ name: 'a.json', directory: false, size: 12,
-                                      writable: true });
+                                      writable: true, deletable: true });
     const labels = items.filter((i) => i.label).map((i) => i.label);
     for (const want of ['Edit', 'Download', 'Rename…', 'Delete…', 'Copy path']) {
       if (!labels.includes(want)) return 'missing ' + want + ' (had ' + labels.join(', ') + ')';
@@ -678,7 +681,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   check('a read-only file cannot be renamed or deleted from the menu', () => {
     const items = sandbox.entryMenu({ name: 'server.jar', directory: false,
-                                      size: 50 * 1024 * 1024, writable: false });
+                                      size: 50 * 1024 * 1024, writable: false,
+                                      deletable: false });
     const ren = items.find((i) => i.label === 'Rename…');
     const del = items.find((i) => i.label === 'Delete…');
     if (!ren.disabled || !del.disabled) return 'offered a write it cannot do';
@@ -686,9 +690,18 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     return true;
   });
 
+  check('world can be deleted without becoming writable', () => {
+    const items = sandbox.entryMenu({ name: 'world', directory: true, size: -1,
+                                      items: 12, writable: false, deletable: true });
+    const ren = items.find((i) => i.label === 'Rename…');
+    const del = items.find((i) => i.label === 'Delete…');
+    if (!ren.disabled) return 'world was offered for rename';
+    return !del.disabled ? true : 'world deletion was disabled';
+  });
+
   check('a binary file cannot be opened in the editor', () => {
     const items = sandbox.entryMenu({ name: 'sodium.jar', directory: false, size: 900000,
-                                      writable: true });
+                                      writable: true, deletable: true });
     const edit = items.find((i) => i.label === 'Edit');
     if (!edit.disabled) return 'offered to edit a jar';
     // Download must stay available: it is the thing you actually want.
@@ -698,14 +711,15 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   check('a file too large for the editor says so', () => {
     const items = sandbox.entryMenu({ name: 'huge.log', directory: false,
-                                      size: 9 * 1024 * 1024, writable: true });
+                                      size: 9 * 1024 * 1024, writable: true,
+                                      deletable: true });
     const edit = items.find((i) => i.label === 'Edit');
     return edit.disabled && /2 MB/.test(edit.why) ? true : 'no size reason';
   });
 
   check('a folder offers Open rather than Edit', () => {
     const items = sandbox.entryMenu({ name: 'config', directory: true, size: -1,
-                                      items: 4, writable: true });
+                                      items: 4, writable: true, deletable: true });
     const labels = items.filter((i) => i.label).map((i) => i.label);
     return labels.includes('Open') && !labels.includes('Edit') && !labels.includes('Download')
       ? true : 'wrong menu: ' + labels.join(', ');

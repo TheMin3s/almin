@@ -49,6 +49,7 @@ public class CommandGrammarTests {
         System.out.println("values with spaces, which is where this went wrong");
         for (String c : new String[]{
                 "almin config dir-writable-roots mods, config, shared",
+                "almin config dir-deletable-roots mods, config, world",
                 "almin config web-start-command java -Xmx4G -jar server.jar nogui",
                 "almin config update-repo TheMin3s/almin",
                 "almin mask set TheMines The Mines",

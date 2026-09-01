@@ -236,6 +236,7 @@ FILES = {
              ("sodium-options.json", False, 2411, -1)],
 }
 WRITABLE = {"mods", "config", "resourcepacks", "shared"}
+DELETABLE = {"mods", "config", "resourcepacks", "shared", "world"}
 
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -461,11 +462,16 @@ class H(http.server.BaseHTTPRequestHandler):
                 self._json({"error": "No such path: " + rel}); return
             top = rel.split("/")[0] if rel else ""
             writable = top in WRITABLE
-            self._json({"path": rel, "isDir": True, "fileSize": -1, "writable": writable,
+            deletable = top in DELETABLE
+            self._json({"path": rel, "isDir": True, "fileSize": -1,
+                        "writable": writable, "deletable": deletable,
                         "roots": "mods,config,resourcepacks,shared",
+                        "deleteRoots": "mods,config,resourcepacks,shared,world",
                         "entries": [{"name": n, "directory": d, "size": sz,
                                      "modified": NOW - (i + 1) * 3_600_000,
-                                     "items": it, "writable": writable}
+                                     "items": it,
+                                     "writable": (top if top else n) in WRITABLE,
+                                     "deletable": (top if top else n) in DELETABLE}
                                     for i, (n, d, sz, it) in enumerate(rows)]})
         elif p == "/api/file":
             self._json({"content": "# " + (q.get("path") or [""])[0] + "\nkey=value\n"})
@@ -487,7 +493,8 @@ class H(http.server.BaseHTTPRequestHandler):
         elif p == "/api/update":
             self._json({"current": "2.15.0", "repo": "TheMin3s/almin", "status": "current"})
         elif p == "/api/config":
-            self._json({"writableRoots": "mods,config,resourcepacks,shared", "keys": [
+            self._json({"writableRoots": "mods,config,resourcepacks,shared",
+                        "deletableRoots": "mods,config,resourcepacks,shared,world", "keys": [
                 {"name": "mods-advertise", "description": "Offer the mods listed in mods.json",
                  "type": "BOOL", "min": 0, "max": 0, "value": "true", "editable": True,
                  "reloadsPanel": False},

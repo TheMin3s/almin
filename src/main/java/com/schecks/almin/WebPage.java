@@ -1093,7 +1093,7 @@ final class WebPage {
      */
     private static final String PARTFILES = """
         // ---- files ----
-        let curDir='', dirWritable=false, dirRoots='', dirEntries=[];
+        let curDir='', dirWritable=false, dirRoots='', dirDeleteRoots='', dirEntries=[];
 
         const KINDS={jar:'Java archive',json:'JSON',txt:'Text',log:'Log',yml:'YAML',yaml:'YAML',
           properties:'Properties',png:'Image',jpg:'Image',jpeg:'Image',gif:'Image',webp:'Image',
@@ -1186,6 +1186,8 @@ final class WebPage {
           const path=fullPath(e.name);
           const readOnly='Read-only here — writes are limited to '+
             (dirRoots||'the configured roots');
+          const noDelete='Deletion is limited to '+
+            (dirDeleteRoots||'the configured deletable roots');
           const items=[{header:e.name}];
           if(e.directory){
             items.push({label:'Open',icon:ICON.folder,run:()=>loadDir(path)});
@@ -1195,14 +1197,14 @@ final class WebPage {
               disabled:!isText(e.name)||big,
               why:big?'Larger than the 2 MB the editor can open'
                      :'Not a text file — download it instead',
-              run:()=>openEditor(path,false,e.writable)});
+              run:()=>openEditor(path,false,e.writable,e.deletable)});
             items.push({label:'Download',icon:ICON.down,run:()=>dlFile(path)});
           }
           items.push('sep');
           items.push({label:'Rename…',icon:ICON.rename,disabled:!e.writable,
             why:readOnly,run:()=>renameDialog(path,e.name)});
-          items.push({label:'Delete…',icon:ICON.trash,danger:true,disabled:!e.writable,
-            why:readOnly,run:()=>deleteDialog(path,e)});
+          items.push({label:'Delete…',icon:ICON.trash,danger:true,disabled:!e.deletable,
+            why:noDelete,run:()=>deleteDialog(path,e)});
           items.push('sep');
           items.push({label:'Copy path',run:()=>copyText('/'+path)});
           return items;
@@ -1238,6 +1240,7 @@ final class WebPage {
             return;
           }
           dirWritable=!!r.body.writable; dirRoots=r.body.roots||'';
+          dirDeleteRoots=r.body.deleteRoots||'';
           dirEntries=r.body.entries||[];
           crumbs();
           const hint=$('fhint');
@@ -1291,7 +1294,9 @@ final class WebPage {
           row.append(fileIcon(e),nm,kind,sz,when);
           row.onclick=()=>{
             if(e.directory) return loadDir(path);
-            if(isText(e.name) && e.size<=2*1024*1024) return openEditor(path,false,e.writable);
+            if(isText(e.name) && e.size<=2*1024*1024) {
+              return openEditor(path,false,e.writable,e.deletable);
+            }
             dlFile(path);
           };
           row.oncontextmenu=ev=>menuAt(ev,entryMenu(e));
@@ -1306,8 +1311,9 @@ final class WebPage {
          * anything was open; now the browser gets the whole page and the
          * editor appears when there is something to edit.
          */
-        function openEditor(path,fresh,writable){
+        function openEditor(path,fresh,writable,deletable){
           const canWrite = fresh ? dirWritable : !!writable;
+          const canDelete = !fresh && !!deletable;
           modal(fresh?'New file':path,(body)=>{
             body.innerHTML=
               '<label class="f">Path</label>'+
@@ -1332,14 +1338,19 @@ final class WebPage {
             $('fdel').onclick=()=>deleteDialog($('fpath').value.trim(),null);
             // Match the context menu: what the write rules forbid is not
             // offered here either, rather than offered and then refused.
-            ['fren','fdel'].forEach(id=>$(id).disabled=fresh || !canWrite);
+            $('fren').disabled=fresh || !canWrite;
+            $('fdel').disabled=!canDelete;
             $('fdl').disabled=!!fresh;
             if(!canWrite){
               $('fsave').disabled=true;
               const why='Read-only here — writes are limited to '+
                 (dirRoots||'the configured roots');
-              ['fsave','fren','fdel'].forEach(id=>$(id).title=why);
+              ['fsave','fren'].forEach(id=>$(id).title=why);
               const m=$('emsg'); m.className='msg'; m.textContent=why+'.';
+            }
+            if(!canDelete){
+              $('fdel').title='Deletion is limited to '+
+                (dirDeleteRoots||'the configured deletable roots');
             }
             if(fresh) $('fpath').focus(); else openFile(path);
           },{wide:true});

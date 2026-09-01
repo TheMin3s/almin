@@ -1163,11 +1163,14 @@ public final class WebUi {
                 je.addProperty("modified", e.modified());
                 je.addProperty("items", e.items());
                 je.addProperty("writable", e.writable());
+                je.addProperty("deletable", e.deletable());
                 arr.add(je);
             }
             o.add("entries", arr);
             o.addProperty("writable", listing.writable());
+            o.addProperty("deletable", listing.deletable());
             o.addProperty("roots", AlminConfig.get().dirWritableRoots);
+            o.addProperty("deleteRoots", AlminConfig.get().dirDeletableRoots);
             json(ex, 200, o.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -1801,6 +1804,7 @@ public final class WebUi {
         JsonObject root = new JsonObject();
         root.add("keys", arr);
         root.addProperty("writableRoots", cfg.dirWritableRoots);
+        root.addProperty("deletableRoots", cfg.dirDeletableRoots);
         return root.toString();
     }
 

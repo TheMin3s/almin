@@ -40,6 +40,12 @@ public final class AlminConfig {
     public boolean updateCheckOnBoot = true;
     public boolean autoUpdate = true;
     public String dirWritableRoots = "mods,config,resourcepacks,shared";
+    /**
+     * Top-level folders that may be deleted recursively. Separate from writes:
+     * allowing the live world to be removed must not also allow arbitrary
+     * uploads, edits, or renames inside it.
+     */
+    public String dirDeletableRoots = "mods,config,resourcepacks,shared,world";
     public int spawnImmunitySeconds = 3;
     public boolean webUiEnabled = true;
     /** 0 until the first startup picks one; see {@link #ensureFirstRunDefaults}. */
@@ -374,8 +380,10 @@ public final class AlminConfig {
             c -> c.updateCheckOnBoot, (c, v) -> c.updateCheckOnBoot = (Boolean) v),
         boolKey("auto-update", "On boot, automatically download, install and restart into a newer version",
             c -> c.autoUpdate, (c, v) -> c.autoUpdate = (Boolean) v),
-        textKey("dir-writable-roots", "Comma-separated top-level folders the dir UI may upload/delete in",
+        textKey("dir-writable-roots", "Comma-separated top-level folders the dir UI may upload, edit and rename in",
             c -> c.dirWritableRoots, (c, v) -> c.dirWritableRoots = (String) v),
+        textKey("dir-deletable-roots", "Comma-separated top-level folders the dir UI may delete recursively (world is included by default)",
+            c -> c.dirDeletableRoots, (c, v) -> c.dirDeletableRoots = (String) v),
         intKey("spawn-immunity-seconds", "Damage-immunity seconds granted on (re)spawn (0 = off)", 0, 30,
             c -> c.spawnImmunitySeconds, (c, v) -> c.spawnImmunitySeconds = (Integer) v),
         boolKey("web-ui-enabled", "Serve the read-only web dashboard over HTTP",
@@ -480,9 +488,18 @@ public final class AlminConfig {
 
     /** Parses {@link #dirWritableRoots} into a Set, ignoring empties/whitespace. */
     public Set<String> dirWritableRootsAsSet() {
+        return rootSet(dirWritableRoots);
+    }
+
+    /** Parses {@link #dirDeletableRoots}; {@code world} is in the default. */
+    public Set<String> dirDeletableRootsAsSet() {
+        return rootSet(dirDeletableRoots);
+    }
+
+    private static Set<String> rootSet(String roots) {
         Set<String> out = new HashSet<>();
-        if (dirWritableRoots == null) return out;
-        for (String s : dirWritableRoots.split(",")) {
+        if (roots == null) return out;
+        for (String s : roots.split(",")) {
             String t = s.trim();
             if (!t.isEmpty()) out.add(t);
         }
