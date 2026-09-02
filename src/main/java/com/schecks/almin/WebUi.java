@@ -1822,6 +1822,20 @@ public final class WebUi {
         "web-start-command"
     );
 
+    /**
+     * Settings only the owner may change, even from an account that otherwise
+     * holds Settings.
+     *
+     * <p>Both of these are about the owner's own position rather than about
+     * running the server: one is the name the owner signs in with, and the
+     * other decides how long the record of a watched account's Activity use
+     * is kept — which the watched account should not be able to set to zero.
+     */
+    private static final java.util.Set<String> OWNER_ONLY_KEYS = java.util.Set.of(
+        "web-admin-username",
+        "panel-audit-days"
+    );
+
     /** Settings whose new value only takes hold when the listener is rebuilt. */
     private static final java.util.Set<String> PANEL_RELOADS = java.util.Set.of(
         "web-ui-port", "web-ui-bind", "web-supervisor"
@@ -1845,6 +1859,13 @@ public final class WebUi {
             if (WEB_LOCKED_KEYS.contains(key.name)) {
                 json(ex, 403, err(key.name + " can't be changed from the web panel."));
                 return;
+            }
+            if (OWNER_ONLY_KEYS.contains(key.name)) {
+                Accounts.Account me = who(ex);
+                if (me == null || !me.owner()) {
+                    json(ex, 403, err(key.name + " can only be changed by the main account."));
+                    return;
+                }
             }
             Object parsed;
             try {
@@ -1931,17 +1952,40 @@ public final class WebUi {
      * outlive the change. This one is re-issued instead of being cut off — the
      * person who just changed it is the one who should stay in.
      */
+    /**
+     * Changes the password of whoever is asking, and nobody else's.
+     *
+     * <p>This route used to write the owner's password whatever account
+     * called it. Under one credential that was the same statement twice; with
+     * accounts it was a way for anybody holding Settings to take the owner's
+     * account, because the session it handed back was an owner session as
+     * well. Now it changes the caller's own, and the owner's password can only
+     * be set by the owner.
+     */
     private void handlePassword(HttpExchange ex) throws IOException {
         try {
             if (!requireAuthSecure(ex)) return;
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            Accounts.Account me = who(ex);
+            if (me == null) { json(ex, 401, "{\"error\":\"unauthorised\"}"); return; }
             JsonObject body = readBody(ex);
             String pw = body.has("password") ? body.get("password").getAsString() : "";
             if (pw.length() < 8) { json(ex, 400, err("Use at least 8 characters.")); return; }
+            if (!me.owner()) {
+                Accounts.Result r = Accounts.setPassword(me.id(), pw);
+                if (!r.ok()) { json(ex, 400, err(r.message())); return; }
+                // Only their own other tabs; everybody else stays signed in.
+                sessions.closeAccount(me.id());
+                String mine = sessions.open(AlminConfig.get().webSessionMinutes, me.id());
+                setSessionCookie(ex, mine, behindTls(ex));
+                AlminLog.info("[almin] {} changed their own panel password", me.username());
+                json(ex, 200, "{\"ok\":true}");
+                return;
+            }
             AlminConfig.get().webAdminPasswordHash = Passwords.hash(pw);
             AlminConfig.save();
             sessions.closeAll();
-            String id = sessions.open(AlminConfig.get().webSessionMinutes);
+            String id = sessions.open(AlminConfig.get().webSessionMinutes, "owner");
             setSessionCookie(ex, id, behindTls(ex));
             AlminLog.info("[almin] web admin password changed from the panel by {}", clientKey(ex));
             json(ex, 200, "{\"ok\":true}");

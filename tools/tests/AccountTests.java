@@ -204,6 +204,27 @@ public class AccountTests {
         check("every route belongs to a menu or is deliberately open: " + unclassified,
             unclassified.isEmpty());
 
+        // The password route changes the caller's own password, not the
+        // owner's. Before accounts there was one password and no difference;
+        // with them, writing the owner's from any Settings account was a way
+        // to take the owner's account outright.
+        String pwRoute = web.substring(web.indexOf("private void handlePassword"),
+            web.indexOf("private void handleUpdate"));
+        check("changing a password asks who is asking", pwRoute.contains("who(ex)"));
+        check("...and only the owner writes the owner's hash",
+            pwRoute.indexOf("!me.owner()") > 0
+                && pwRoute.indexOf("!me.owner()") < pwRoute.indexOf("webAdminPasswordHash"));
+        check("...and a non-owner's new session is their own, not the owner's",
+            pwRoute.contains("sessions.open(AlminConfig.get().webSessionMinutes, me.id())"));
+        check("the owner's own new session says so",
+            pwRoute.contains("sessions.open(AlminConfig.get().webSessionMinutes, \"owner\")"));
+
+        check("the owner's username cannot be changed by anybody else",
+            web.contains("OWNER_ONLY_KEYS") && web.contains("\"web-admin-username\""));
+        check("nor how long a watched account's record is kept",
+            web.substring(web.indexOf("OWNER_ONLY_KEYS"),
+                web.indexOf("OWNER_ONLY_KEYS") + 600).contains("panel-audit-days"));
+
         // And the open ones are open on purpose, not by omission.
         check("the login is reachable without an account", open.contains("/api/login"));
         check("account management is not in the table — it is owner-only in the handler",

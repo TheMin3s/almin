@@ -6652,8 +6652,12 @@ final class WebPage {
           }
           const body=document.createElement('div');
           body.innerHTML=
-            '<section id="s-almin"><h2>Admin password</h2>'+
-            '<p class="muted">Changing it signs every other session out. You stay logged in here.</p>'+
+            '<section id="s-almin"><h2>'+(me.owner?'Admin password':'Your password')+'</h2>'+
+            '<p class="muted">'+(me.owner
+              ? 'The main account\u2019s password. Changing it signs every other session '+
+                'out. You stay logged in here.'
+              : 'Your own password. Changing it signs out your other tabs and nobody '+
+                'else\u2019s.')+'</p>'+
             '<div class="term"><input id="s-pw" type="password" autocomplete="new-password" '+
             'placeholder="new password (8+ characters)">'+
             '<button class="btn" id="s-pwgo">Set</button></div>'+
