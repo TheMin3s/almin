@@ -180,7 +180,11 @@ const responses = {
       { name: 'update-repo', description: 'd', type: 'TEXT', min: 0, max: 0, value: 'a/b',
         editable: true, reloadsPanel: false },
       { name: 'web-start-command', description: 'd', type: 'TEXT', min: 0, max: 0, value: '',
-        editable: false, reloadsPanel: false }],
+        editable: false, reloadsPanel: false },
+      { name: 'activity-log', description: 'keep a record of what players do', type: 'BOOL',
+        min: 0, max: 0, value: 'true', editable: true, reloadsPanel: false },
+      { name: 'ai-model', description: 'which model', type: 'TEXT', min: 0, max: 0,
+        value: 'qwen2.5:3b', editable: true, reloadsPanel: false }],
     writableRoots: 'mods,config',
     deletableRoots: 'mods,config,resourcepacks,shared,world' },
   '/api/activity': { admins: { ok: true, includeAdmins: false, temporary: false,
@@ -438,7 +442,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'togglePlay', 'stopPlay', 'playerColor', 'marker', 'shotFor',
                     'loadBlueMapStatus', 'usingBlueMap', 'setBlueMapMode', 'paintBlueMap',
                     'resetBlueMapDialog',
-                    'blueMapPayload', 'openBlueScene', 'inspectBlueWorld']) {
+                    'blueMapPayload', 'openBlueScene', 'inspectBlueWorld',
+                    'fold', 'foldSetup', 'foldHint', 'paintKeys', 'cfgGroupOf']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -1638,6 +1643,82 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     if (!alminSide) return "Almin's own settings went missing";
     return serverSide ? true : 'the server tab drew nothing';
   });
+
+  // ---- folding ----
+  // Settings had become one scroll of everything Almin can be told to do, and
+  // you had to read past six things you did not want to reach the seventh.
+  // What matters about the fix is that the page starts shut, that shutting a
+  // part does not hide the answer it was holding, and that a search still
+  // reaches inside the shut ones.
+  {
+    sandbox.tab = 'settings';
+    sandbox.settingsTab = 'almin';
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 30));
+    // Built straight after saying who is looking, because a poll landing in
+    // between would put the page back to whoever it thought it was.
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                   audited: false };
+    const html = deepText(sandbox.settingsPanel());
+    await new Promise((r) => setTimeout(r, 30));
+
+    const parts = ['f-pw', 'f-people', 'f-version', 'f-relaunch', 'f-ai', 'f-keys'];
+    check('every part of Settings is a fold', () => {
+      const missing = parts.filter((id) => !html.includes('id="' + id + '"'));
+      return missing.length === 0 ? true : 'not folded: ' + missing.join(', ');
+    });
+    check('no <h2> headings are left behind in it', () =>
+      !/<h2>(Version|Restarting|People|Settings)</.test(html)
+        ? true : 'an old heading survived the change');
+    check('the page opens with all of them shut', () => {
+      const open = parts.filter((id) => byId.get(id).open !== false);
+      return open.length === 0 ? true : 'opened by itself: ' + open.join(', ');
+    });
+    check('a shut fold still says what is inside it', () =>
+      byId.get('f-keys-h').textContent === '6 settings'
+        ? true : 'the heading said "' + byId.get('f-keys-h').textContent + '"');
+
+    check('the settings themselves come in named groups', () => {
+      const kids = byId.get('s-keys').children;
+      const names = kids.map((k) => (k._html || '') +
+        (k.children || []).map((c) => c._html || '').join(''));
+      if (!kids.length) return 'no groups drawn';
+      if (!kids.every((k) => /fold sub/.test(k.className || ''))) return 'not folds';
+      const heads = names.join(' ');
+      return /Updates/.test(heads) && /Activity log/.test(heads)
+          && /The panel itself/.test(heads) && /Reading the log with a model/.test(heads)
+        ? true : 'groups came out as: ' + heads.replace(/<[^>]*>/g, ' ');
+    });
+    check('a group is shut until it is asked for', () =>
+      byId.get('s-keys').children.every((k) => k.open !== true)
+        ? true : 'a group opened by itself');
+
+    // Folding without a search would be worse than the wall it replaced: you
+    // would have to guess which of nine headings a setting lives under.
+    byId.get('s-find').value = 'activity';
+    sandbox.paintKeys();
+    check('a search reaches into the shut groups', () => {
+      const kids = byId.get('s-keys').children;
+      if (kids.length !== 1) return 'kept ' + kids.length + ' groups, wanted 1';
+      const head = kids[0].children[0]._html || '';
+      return /Activity log/.test(head) ? true : 'kept the wrong one: ' + head;
+    });
+    check('...and opens what it found', () =>
+      byId.get('s-keys').children[0].open === true
+        ? true : 'the match stayed folded away');
+
+    byId.get('s-find').value = 'not a setting anybody has';
+    sandbox.paintKeys();
+    check('a search that matches nothing says so', () =>
+      /Nothing here matches/.test(byId.get('s-keys')._html || '')
+        ? true : 'it drew an empty list instead');
+
+    byId.get('s-find').value = '';
+    sandbox.paintKeys();
+    check('clearing the search brings the groups back', () =>
+      byId.get('s-keys').children.length >= 4
+        ? true : 'the groups did not come back');
+  }
 
   check('changing one value arms Save and nothing else', () => {
     sandbox.settingsTab = 'server';

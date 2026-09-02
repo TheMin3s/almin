@@ -463,6 +463,33 @@ final class WebPage {
           .cfgctl{display:flex;gap:8px;align-items:center;flex:none}
           .cfgctl input{width:auto}
           section+section{margin-top:13px}
+
+          /* ---- folds ----
+             Settings is long, and nearly every line of it is set once and
+             never looked at again. Each part folds shut, so the page opens as
+             a list of headings instead of a wall, and whichever parts a
+             person opens are the ones they get back next time. */
+          details.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;
+                    gap:9px;user-select:none}
+          details.fold>summary::-webkit-details-marker{display:none}
+          details.fold>summary:hover .foldt{color:var(--ink)}
+          details.fold>summary:focus-visible{outline:2px solid var(--brand);
+                    outline-offset:3px;border-radius:5px}
+          details.fold[open]>summary{padding-bottom:11px;border-bottom:1px solid var(--line)}
+          .foldt{font-size:11px;text-transform:uppercase;letter-spacing:.9px;
+                    color:var(--brand);font-weight:700}
+          .foldh{margin-left:auto;color:var(--mute);font-size:12px;text-align:right;
+                    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+          .chev{color:currentColor;opacity:.6;font-size:11px;flex:none;transition:transform .13s}
+          details.fold[open]>summary .chev{transform:rotate(90deg)}
+          .foldb{padding-top:12px}
+          details.sub{border-top:1px solid var(--line);padding:9px 0}
+          details.sub:first-child{border-top:0;padding-top:0}
+          details.sub>summary .foldt{text-transform:none;letter-spacing:0;font-size:12.5px;
+                    color:var(--ink)}
+          details.sub[open]>summary{border-bottom:0;padding-bottom:0}
+          details.sub .foldb{padding-top:4px}
+          @media(max-width:620px){.foldh{display:none}}
           @media(max-width:620px){.cfgrow{flex-direction:column;align-items:stretch}
                                   .cfgctl{justify-content:flex-end}}
           /* The header holds a lot for its height; shed the least important
@@ -6620,6 +6647,109 @@ final class WebPage {
         // which is exactly the confusion worth avoiding.
         let settingsTab='almin';
 
+        /**
+         * A part of a page that folds shut.
+         *
+         * <p>Settings grew into one long scroll of everything Almin can be
+         * told to do, and the honest description of that page was that you
+         * had to read past six things you were not looking for to reach the
+         * seventh. Each part is now a heading you open.
+         *
+         * <p>Plain &lt;details&gt;, so the keyboard, find-in-page and the
+         * browser's own behaviour all work without being reimplemented here.
+         * The hint on the right is what the part would have told you if it
+         * were open \u2014 whether the model is on, how many accounts there
+         * are \u2014 so folding one shut does not cost you the answer.
+         */
+        function fold(id,title,hint){
+          return '<details class="fold" id="'+id+'"><summary>'+
+            '<span class="chev">\u25b8</span><span class="foldt">'+esc(title)+'</span>'+
+            '<span class="foldh" id="'+id+'-h">'+esc(hint||'')+'</span></summary>'+
+            '<div class="foldb">';
+        }
+        const FOLDEND='</div></details>';
+
+        /**
+         * Remembers whether this fold was open.
+         *
+         * <p>Kept in the browser rather than on the server: it is a fact
+         * about this person at this screen, not about the server, and two
+         * people sharing an account should not be folding each other's page.
+         */
+        function foldSetup(what,openByDefault){
+          const d=(typeof what==='string')?$(what):what;
+          if(!d) return;
+          let want=null;
+          try{ want=window.localStorage.getItem('almin.fold.'+d.id); }catch(e){}
+          d.open = (want===null||want===undefined) ? !!openByDefault : want==='1';
+          d.ontoggle=()=>{
+            try{ window.localStorage.setItem('almin.fold.'+d.id,d.open?'1':'0'); }catch(e){}
+          };
+        }
+
+        /** Puts a one-line answer on a shut fold's heading. */
+        function foldHint(id,text){
+          const h=$(id+'-h'); if(h) h.textContent=text||'';
+        }
+
+        /**
+         * The settings, in named groups.
+         *
+         * <p>There are more than fifty and nobody reads fifty of anything.
+         * Grouped they are nine headings. The filter is not optional next to
+         * that: a fold you have to guess the contents of is worse than the
+         * list it replaced, so typing here searches every group, opens the
+         * ones that match and hides the rest.
+         */
+        const CFG_GROUPS=[
+          ['Updates',/^(update-|auto-update)/],
+          ['Accounts and sessions',/^(web-admin-|web-session-|panel-audit-)/],
+          ['The panel itself',/^web-/],
+          ['Files',/^dir-/],
+          ['Activity log',/^activity-/],
+          ['Map',/^(map-|bluemap-)/],
+          ['Mods',/^(mods-|require-client-mod|client-)/],
+          ['Reading the log with a model',/^ai-/],
+          ['In game',/^spawn-/]
+        ];
+        function cfgGroupOf(name){
+          for(const g of CFG_GROUPS) if(g[1].test(name)) return g[0];
+          return 'Everything else';
+        }
+        function paintKeys(){
+          const box=$('s-keys'); if(!box) return;
+          const field=$('s-find');
+          const find=((field&&field.value)||'').trim().toLowerCase();
+          box.innerHTML='';
+          const groups=new Map();
+          for(const k of cfgKeys){
+            if(find && (k.name+' '+(k.description||'')).toLowerCase().indexOf(find)<0) continue;
+            const label=cfgGroupOf(k.name);
+            if(!groups.has(label)) groups.set(label,[]);
+            groups.get(label).push(k);
+          }
+          if(groups.size===0){
+            box.innerHTML='<div class="note">Nothing here matches \u201c'+esc(find)+'\u201d.</div>';
+            return;
+          }
+          for(const entry of groups){
+            const label=entry[0], keys=entry[1];
+            const d=document.createElement('details');
+            d.className='fold sub';
+            d.id='cg-'+label.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+            const head=document.createElement('summary');
+            head.innerHTML='<span class="chev">\u25b8</span><span class="foldt">'+
+              esc(label)+'</span><span class="foldh">'+keys.length+'</span>';
+            const body=document.createElement('div'); body.className='foldb';
+            for(const k of keys) body.appendChild(cfgRow(k));
+            d.append(head,body);
+            box.appendChild(d);
+            // A filter that leaves its own results folded away has not found
+            // anything, so a search opens what it matched.
+            if(find) d.open=true; else foldSetup(d,false);
+          }
+        }
+
         function settingsPanel(){
           const wrap=document.createElement('div');
           const strip=document.createElement('div');
@@ -6658,7 +6788,8 @@ final class WebPage {
           }
           const body=document.createElement('div');
           body.innerHTML=
-            '<section id="s-almin"><h2>'+(me.owner?'Admin password':'Your password')+'</h2>'+
+            '<section id="s-almin">'+
+            fold('f-pw',me.owner?'Admin password':'Your password')+
             '<p class="muted">'+(me.owner
               ? 'The main account\u2019s password. Changing it signs every other session '+
                 'out. You stay logged in here.'
@@ -6667,8 +6798,9 @@ final class WebPage {
             '<div class="term"><input id="s-pw" type="password" autocomplete="new-password" '+
             'placeholder="new password (8+ characters)">'+
             '<button class="btn" id="s-pwgo">Set</button></div>'+
-            '<div class="msg" id="s-pwmsg"></div></section>'+
-            ((me.owner||mayWrite('settings'))?'<section id="s-people"><h2>People</h2>'+
+            '<div class="msg" id="s-pwmsg"></div>'+FOLDEND+'</section>'+
+            ((me.owner||mayWrite('settings'))?'<section id="s-people">'+
+            fold('f-people','People','\u2026')+
             '<p class="muted">Accounts that can sign in to this panel, and what each of '+
             'them may reach. Every menu is separately <b>none</b>, <b>read</b> or '+
             '<b>write</b>; a new account starts with none of them. '+
@@ -6683,19 +6815,20 @@ final class WebPage {
             'autocomplete="new-password">'+
             '<button class="btn go" id="s-acadd">Add</button></div>'+
             '<div class="msg" id="s-acmsg"></div>'+
-            '<div id="s-aclist"><div class="note">\u2026</div></div></section>':'')+
-            '<section><h2>Version</h2><div id="s-update" class="muted">checking…</div>'+
+            '<div id="s-aclist"><div class="note">\u2026</div></div>'+FOLDEND+'</section>':'')+
+            '<section>'+fold('f-version','Version','checking\u2026')+
+            '<div id="s-update" class="muted">checking…</div>'+
             '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
             '<button class="btn" id="s-check">Check again</button>'+
             '<button class="btn go" id="s-apply" disabled>Download &amp; install</button>'+
             '<button class="btn" id="s-clearlog">Clear Almin log</button></div>'+
-            '<div class="msg" id="s-upmsg"></div></section>'+
-            '<section><h2>Restarting</h2>'+
+            '<div class="msg" id="s-upmsg"></div>'+FOLDEND+'</section>'+
+            '<section>'+fold('f-relaunch','Restarting','what Start and Restart run')+
             '<p class="muted">Restart and Start run this, from this machine. Almin reads it off '+
             'the running server, so it matches however this server was actually launched — '+
             'set <code>web-start-command</code> only if you want something else.</p>'+
-            '<div id="s-relaunch" class="note">…</div></section>'+
-            '<section><h2>Reading the log with a model</h2>'+
+            '<div id="s-relaunch" class="note">…</div>'+FOLDEND+'</section>'+
+            '<section>'+fold('f-ai','Reading the log with a model','\u2026')+
             '<p class="muted">Almin works out what happened on its own — trees felled, '+
             'shafts dug, fights, someone pacing the same twenty blocks for ten minutes — '+
             'and that costs nothing and never leaves this machine. A language model can '+
@@ -6741,13 +6874,17 @@ final class WebPage {
               '<button class="btn" id="s-aikeyclr">Forget the key</button>'+
             '</div>'+
             '<div class="msg" id="s-aimsg"></div>'+
-            '<div id="s-aidiagbox" style="display:none;margin-top:12px"></div></section>'+
-            '<section><h2>Settings</h2>'+
+            '<div id="s-aidiagbox" style="display:none;margin-top:12px"></div>'+FOLDEND+'</section>'+
+            '<section>'+fold('f-keys','All settings','\u2026')+
             '<p class="muted">Written to <code>config/almin/config.json</code> as you change them, '+
-            'and live immediately.</p>'+
+            'and live immediately. Grouped by what they are about \u2014 type below to '+
+            'search all of them at once.</p>'+
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;'+
+            'margin-bottom:12px">'+
+            '<input id="s-find" placeholder="filter settings" style="flex:1;min-width:180px">'+
+            '<button class="btn" id="s-reload">Reload from disk</button></div>'+
             '<div id="s-keys"><div class="note">loading…</div></div>'+
-            '<button class="btn" id="s-reload" style="margin-top:12px">Reload from disk</button>'+
-            '<div class="msg" id="s-msg"></div></section>';
+            '<div class="msg" id="s-msg"></div>'+FOLDEND+'</section>';
           wrap.appendChild(body);
           setTimeout(()=>{
             loadConfig(); loadUpdate(); showRelaunch(); showAi();
@@ -6766,6 +6903,7 @@ final class WebPage {
             if((me.owner||mayWrite('settings')) && $('s-acadd')){
               $('s-acadd').onclick=addAccount;
               $('s-acpw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); addAccount(); } };
+              foldSetup('f-people',false);
               loadAccounts();
             }
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
@@ -6773,6 +6911,11 @@ final class WebPage {
             $('s-apply').onclick=updateDialog;
             $('s-clearlog').onclick=clearLog;
             $('s-reload').onclick=reloadConfig;
+            $('s-find').oninput=paintKeys;
+            // Shut to begin with, every one of them. The point of the page is
+            // to be a short list of headings until somebody asks for more.
+            for(const id of ['f-pw','f-version','f-relaunch','f-ai','f-keys'])
+              foldSetup(id,false);
           },0);
           return wrap;
         }
@@ -6801,6 +6944,9 @@ final class WebPage {
         function paintAccounts(){
           const box=$('s-aclist'); if(!box) return;
           box.innerHTML='';
+          foldHint('f-people',accounts.length
+            ? (accounts.length+(accounts.length===1?' account':' accounts'))
+            : 'nobody else yet');
           if(!accounts.length){
             box.innerHTML='<div class="note">'+(myRank>0
               ? 'Nobody is below level '+myRank+'. Anyone you add here starts at level '+
@@ -7240,6 +7386,9 @@ final class WebPage {
             '<div style="margin-top:8px">'+leaves+'</div>'+
             (a.problem&&a.enabled
               ? '<div class="msg err" style="margin-top:8px">'+esc(a.problem)+'</div>':'');
+          foldHint('f-ai',a.enabled
+            ? ((a.problem?'not answering · ':'on · ')+(a.model||a.provider||''))
+            : 'off');
           aiFormChanged();
         }
 
@@ -7615,12 +7764,17 @@ final class WebPage {
           if(b.queued){
             box.innerHTML=head+' — <span class="state warn">v'+esc(b.queued)+
               ' queued</span> and will install after the last player leaves.';
-          } else if(b.status==='current'){ box.innerHTML=head+' — up to date.'; }
-          else if(b.status==='available'){
+            foldHint('f-version','v'+b.queued+' queued');
+          } else if(b.status==='current'){ box.innerHTML=head+' — up to date.';
+            foldHint('f-version','v'+b.current+' · up to date');
+          } else if(b.status==='available'){
             box.innerHTML=head+' — <span class="state warn">v'+esc(b.latest)+' available</span>'+
               (b.hasJar?'':' <span class="muted">(no jar attached to that release)</span>');
             if(apply) apply.disabled=!b.hasJar;
-          } else { box.innerHTML=head+' — check failed: '+esc(b.reason||'unknown'); }
+            foldHint('f-version','v'+b.latest+' available');
+          } else { box.innerHTML=head+' — check failed: '+esc(b.reason||'unknown');
+            foldHint('f-version','v'+b.current+' · check failed');
+          }
         }
         /**
          * The update dialog: what is about to happen, then a countdown.
@@ -7767,12 +7921,14 @@ final class WebPage {
           msg.textContent=r.status===200?'Reloaded from disk.':(r.body.error||'failed');
           loadConfig();
         }
+        let cfgKeys=[];
         async function loadConfig(){
           const box=$('s-keys'); if(!box) return;
           const r=await jget('/api/config');
           if(r.status!==200){ box.innerHTML='<div class="note">'+esc(r.body.error||'unavailable')+'</div>'; return; }
-          box.innerHTML='';
-          for(const k of (r.body.keys||[])) box.appendChild(cfgRow(k));
+          cfgKeys=r.body.keys||[];
+          foldHint('f-keys',cfgKeys.length+' settings');
+          paintKeys();
         }
         function cfgRow(k){
           const row=document.createElement('div'); row.className='cfgrow';
