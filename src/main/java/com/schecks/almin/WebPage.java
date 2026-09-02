@@ -666,7 +666,18 @@ final class WebPage {
             'Almin always sends one, so that came from something in front of it.';
           return fallback||'failed';
         }
+        """;
 
+    /**
+     * The rest of the first block.
+     *
+     * <p>Split off from {@link #PART1} for no reason but Java's 64 KB limit on
+     * one string constant. There is no seam in the page here; the two are
+     * joined back together with nothing between them, and where a piece of the
+     * panel lives is decided by what it is next to, not by which constant it
+     * happens to sit in.
+     */
+    private static final String PART1B = """
         // ---- shared pieces: faces, menus, overlays, formatting ----
 
         // A hue derived from the name, so a player with no skin still gets
@@ -996,6 +1007,10 @@ final class WebPage {
           setChrome();
           const m=$('main'); m.innerHTML='';
           if(!authed && tab!=='dash') tab='dash';
+          if(authed && tab==='activity' && me.audited){
+            m.appendChild(watchedNote());
+            warnWatched();
+          }
           if(authed && readOnly(tab)) m.appendChild(readOnlyNote(tab));
           if(tab==='dash') m.appendChild(dashPanel());
           else if(tab==='term') m.appendChild(termPanel());
@@ -1011,6 +1026,47 @@ final class WebPage {
         function menuLabel(menu){
           return ({dash:'Overview',term:'Console',activity:'Activity',files:'Files',
                    players:'Players',mods:'Mods',settings:'Settings'})[menu]||menu;
+        }
+
+        /**
+         * Told, every time, that this menu keeps a record of the visit.
+         *
+         * <p>The banner stays for as long as they are on the tab; the dialog
+         * is shown once per page load, because a warning that has to be
+         * dismissed on every poll is a warning people learn to click away
+         * without reading. Both say the same thing, and neither is optional:
+         * an account whose use is recorded is never not told.
+         */
+        let watchedTold=false;
+        function warnWatched(){
+          if(watchedTold) return;
+          watchedTold=true;
+          modal('This menu keeps a record',(body,close)=>{
+            const p=document.createElement('p');
+            p.textContent='The Activity menu shows what everybody on this server did, '+
+              'where they went, and what they said. Your use of it is recorded \u2014 '+
+              'what you looked at and when \u2014 and the main account can read that '+
+              'record.';
+            const q=document.createElement('p'); q.className='note';
+            q.textContent='This is not a warning about you. It is how the main account '+
+              'lends this menu out at all: the record is kept because the menu is '+
+              'powerful, and you are told because keeping one quietly would be worse '+
+              'than keeping none.';
+            const ok=document.createElement('button'); ok.className='btn go';
+            ok.textContent='Understood'; ok.onclick=close;
+            body.append(p,q,ok);
+            ok.focus();
+          });
+        }
+
+        function watchedNote(){
+          const box=document.createElement('div');
+          box.className='msg';
+          box.id='watched-note';
+          box.style.marginBottom='12px';
+          box.textContent='Your use of this menu is recorded. The main account can see '+
+            'what you looked at here and when.';
+          return box;
         }
 
         function readOnlyNote(menu){
@@ -6767,13 +6823,21 @@ final class WebPage {
           ren.onclick=()=>{ const v=prompt('Username for this account:',a.username);
             if(v===null) return; postAccount({action:'rename',id:a.id,username:v.trim()}); };
 
+          const rec=document.createElement('button'); rec.className='btn';
+          rec.textContent='Record';
+          rec.disabled=!a.auditActivity;
+          rec.title=a.auditActivity
+            ? 'What '+a.username+' has looked at in Activity'
+            : 'Nothing is recorded for '+a.username;
+          rec.onclick=()=>showRecord(a);
+
           const del=document.createElement('button'); del.className='btn danger';
           del.textContent='Remove';
           del.onclick=()=>{
             if(!confirm('Remove '+a.username+'? They are signed out immediately.')) return;
             postAccount({action:'delete',id:a.id});
           };
-          top.append(link,pw,ren,del);
+          top.append(rec,link,pw,ren,del);
           card.appendChild(top);
 
           const grid=document.createElement('div');
@@ -6922,6 +6986,51 @@ final class WebPage {
               paint();
             });
           });
+        }
+
+        /** What one watched account has been looking at, newest first. */
+        function showRecord(a){
+          modal('What '+a.username+' looked at',(body)=>{
+            const box=document.createElement('div');
+            box.className='note'; box.textContent='\u2026';
+            body.appendChild(box);
+            jget('/api/accounts?record='+encodeURIComponent(a.username)).then(r=>{
+              if(r.status!==200){ box.textContent=why(r); return; }
+              const rows=(r.body&&r.body.entries)||[];
+              if(!rows.length){
+                box.textContent='Nothing yet. This is filled in as they use the '+
+                  'Activity menu.';
+                return;
+              }
+              box.textContent='';
+              const keep=r.body.keepDays;
+              const head=document.createElement('p'); head.className='note';
+              head.textContent=rows.length+' entr'+(rows.length===1?'y':'ies')+
+                (keep>0?(', kept for '+keep+' days.'):', kept indefinitely.');
+              body.insertBefore(head,box);
+              for(const e of rows){
+                const row=document.createElement('div');
+                row.className='row';
+                row.style.gap='10px'; row.style.padding='5px 0';
+                row.style.borderBottom='1px solid var(--line)';
+                const when=document.createElement('span');
+                when.className='muted';
+                when.style.minWidth='120px';
+                when.textContent=fmtWhen(e.at);
+                const what=document.createElement('span');
+                what.style.marginRight='auto';
+                what.innerHTML=esc(e.what)+
+                  (e.detail?(' <span class="muted">'+esc(e.detail)+'</span>'):'');
+                row.append(when,what);
+                if(e.count>1){
+                  const n=document.createElement('span');
+                  n.className='muted'; n.textContent='\u00d7'+e.count;
+                  row.appendChild(n);
+                }
+                box.appendChild(row);
+              }
+            });
+          },{wide:true});
         }
 
         function accountSaid(r){
@@ -8407,6 +8516,6 @@ final class WebPage {
      * constant. The split points follow the page's own sections so that a
      * piece is a readable unit and not an arbitrary cut.
      */
-    static final String HTML = String.join("", PART1, PARTFILES, PART2, PARTMAP, PARTSEQ,
+    static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
         PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTSETTINGS);
 }

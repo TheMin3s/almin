@@ -129,6 +129,57 @@ public class AccountTests {
         check("removing something that is not there is refused",
             !Accounts.delete(back.id()).ok());
 
+        // ---- what a watched account did ----
+        // Two rules, and both fail dangerously if they are wrong: nothing is
+        // written for somebody who was not switched on, and the owner is never
+        // written at all.
+        com.schecks.almin.PanelAudit.init(dir);
+        Accounts.create("watched", "watched-password-1");
+        Accounts.create("unwatched", "unwatched-password");
+        Accounts.setAudit(Accounts.byUsername("watched").id(), true);
+        Accounts.Account seen = Accounts.byUsername("watched");
+        Accounts.Account unseen = Accounts.byUsername("unwatched");
+
+        com.schecks.almin.PanelAudit.note(unseen, "read the activity log", "");
+        check("an account nobody asked to watch is not recorded",
+            com.schecks.almin.PanelAudit.forUser("unwatched").isEmpty());
+
+        com.schecks.almin.PanelAudit.note(Accounts.owner(), "read the activity log", "");
+        check("the owner is never recorded",
+            com.schecks.almin.PanelAudit.forUser("admin").isEmpty());
+
+        com.schecks.almin.PanelAudit.note(seen, "read the activity log", "player=Steve");
+        check("a watched account is recorded",
+            com.schecks.almin.PanelAudit.forUser("watched").size() == 1);
+        check("...with what it was about",
+            com.schecks.almin.PanelAudit.forUser("watched").get(0).detail().equals("player=Steve"));
+
+        com.schecks.almin.PanelAudit.note(seen, "read the activity log", "player=Steve");
+        com.schecks.almin.PanelAudit.note(seen, "read the activity log", "player=Steve");
+        java.util.List<com.schecks.almin.PanelAudit.Entry> folded =
+            com.schecks.almin.PanelAudit.forUser("watched");
+        check("polling the same view folds into one entry", folded.size() == 1);
+        check("...that counts them", folded.get(0).count() == 3);
+
+        com.schecks.almin.PanelAudit.note(seen, "read the activity log", "player=Alex");
+        check("a different thing is its own entry",
+            com.schecks.almin.PanelAudit.forUser("watched").size() == 2);
+        check("the newest is first",
+            com.schecks.almin.PanelAudit.forUser("watched").get(0).detail().equals("player=Alex"));
+
+        check("routes are described in words a person reads",
+            com.schecks.almin.PanelAudit.describe("/api/insights").contains("model")
+                && com.schecks.almin.PanelAudit.describe("/api/reset").contains("cleared"));
+
+        com.schecks.almin.PanelAudit.flush();
+        com.schecks.almin.PanelAudit.init(dir);
+        check("the record survives a restart",
+            com.schecks.almin.PanelAudit.forUser("watched").size() == 2);
+
+        com.schecks.almin.PanelAudit.forget("watched");
+        check("removing the account takes its record with it",
+            com.schecks.almin.PanelAudit.forUser("watched").isEmpty());
+
         // ---- every route is classified ----
         // The check that matters over time: a route added later and not put
         // in ROUTE_MENU would be reachable by every account regardless of

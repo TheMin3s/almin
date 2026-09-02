@@ -3845,6 +3845,8 @@ public final class WebUi {
             if (!requireAuthSecure(ex)) return;
             if (!requireOwner(ex)) return;
             if ("GET".equals(ex.getRequestMethod())) {
+                String user = queryParam(ex, "record");
+                if (user != null && !user.isBlank()) { json(ex, 200, auditJson(user)); return; }
                 json(ex, 200, accountsJson());
                 return;
             }
@@ -3861,9 +3863,16 @@ public final class WebUi {
                 case "audit" -> Accounts.setAudit(id,
                     body.has("on") && body.get("on").getAsBoolean());
                 case "delete" -> {
+                    Accounts.Account going = Accounts.byId(id);
                     Accounts.Result done = Accounts.delete(id);
                     // Their open tabs are somebody else's now.
-                    if (done.ok()) sessions.closeAccount(id);
+                    if (done.ok()) {
+                        sessions.closeAccount(id);
+                        // The record was about a person who may use this panel;
+                        // once they cannot, keeping it is keeping a file on
+                        // somebody for no stated purpose.
+                        if (going != null) PanelAudit.forget(going.username());
+                    }
                     yield done;
                 }
                 default -> Accounts.Result.fail("Unknown action.");
@@ -3878,6 +3887,25 @@ public final class WebUi {
         } finally {
             ex.close();
         }
+    }
+
+    /** One account's record of using Activity, newest first. */
+    private String auditJson(String username) {
+        JsonObject root = new JsonObject();
+        JsonArray list = new JsonArray();
+        for (PanelAudit.Entry e : PanelAudit.forUser(username)) {
+            JsonObject o = new JsonObject();
+            o.addProperty("at", e.at());
+            o.addProperty("until", e.until());
+            o.addProperty("what", e.what());
+            o.addProperty("detail", e.detail());
+            o.addProperty("count", e.count());
+            list.add(o);
+        }
+        root.add("entries", list);
+        root.addProperty("username", username);
+        root.addProperty("keepDays", AlminConfig.get().panelAuditDays);
+        return root.toString();
     }
 
     private String accountsJson() {
@@ -3940,13 +3968,47 @@ public final class WebUi {
         // this route needs a session and answers in its own words.
         if (me == null) return true;
         boolean write = changing(ex.getRequestMethod());
-        if (write ? me.canWrite(menu) : me.canRead(menu)) return true;
+        if (write ? me.canWrite(menu) : me.canRead(menu)) {
+            // Recorded here rather than in the handlers for the same reason
+            // the check is here: one gate, and no route that forgot.
+            if (menu.equals("activity")) {
+                PanelAudit.note(me, PanelAudit.describe(route(ex)), about(ex));
+            }
+            return true;
+        }
         String said = me.canRead(menu)
             ? "You have " + Accounts.menuName(menu) + " as read-only."
             : "Your account cannot open " + Accounts.menuName(menu) + ".";
         json(ex, 403, err(said));
         ex.close();
         return false;
+    }
+
+    /** The registered path this request arrived on. */
+    private static String route(HttpExchange ex) {
+        try {
+            return ex.getHttpContext().getPath();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /**
+     * What a request was about, for the record.
+     *
+     * <p>The query string is what says which player, which place and which
+     * window somebody was looking at, which is the whole of what makes an
+     * entry worth keeping. Capped, and only the query — never a body, which
+     * may hold something nobody asked to have written down.
+     */
+    private static String about(HttpExchange ex) {
+        try {
+            String q = ex.getRequestURI().getQuery();
+            if (q == null || q.isBlank()) return "";
+            return q.length() > 160 ? q.substring(0, 160) : q;
+        } catch (Throwable t) {
+            return "";
+        }
     }
 
     /** 401s unless the caller may at least look at {@code menu}. */

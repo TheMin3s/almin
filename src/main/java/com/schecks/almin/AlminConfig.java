@@ -71,6 +71,8 @@ public final class AlminConfig {
      * any.
      */
     public String webAdminUsername = "admin";
+    /** How long a watched account's Activity use is kept. 0 keeps nothing. */
+    public int panelAuditDays = 30;
     /** How long a web login stays valid. */
     public int webSessionMinutes = 120;
     /**
@@ -415,6 +417,8 @@ public final class AlminConfig {
         // Listed so it shows in /almin config and can be cleared to "".
         textKey("web-admin-password-hash", "PBKDF2 hash of the web admin password (set via /almin op web password <pw>)",
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
+        intKey("panel-audit-days", "How long a watched account's use of the Activity menu is kept, in days", 0, 3650,
+            c -> c.panelAuditDays, (c, v) -> c.panelAuditDays = (Integer) v),
         textKey("web-admin-username", "Username for the owner account (its password is web-admin-password-hash)",
             c -> c.webAdminUsername, (c, v) -> c.webAdminUsername = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,

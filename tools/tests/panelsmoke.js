@@ -3397,6 +3397,32 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((noNote ? '  PASS  ' : '  FAIL  ') + 'a full account is not told it is read-only');
     if (!noNote) failures.push('read-only note shown to a full account');
 
+    // ---- being told the visit is recorded ----
+    sandbox.watchedTold = false;
+    sandbox.me = { username: 'watched', owner: false, access: { activity: 'read' },
+                   linkedPlayer: '', audited: true };
+    sandbox.tab = 'activity'; sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    const warned = (byId.get('main').children || [])
+      .some((k) => k.id === 'watched-note' && /recorded/.test(k.textContent || ''));
+    console.log((warned ? '  PASS  ' : '  FAIL  ') +
+      'a watched account is told the Activity menu keeps a record');
+    if (!warned) failures.push('no watched banner');
+
+    const dialog = deepText(document.body).includes('This menu keeps a record')
+      || sandbox.watchedTold === true;
+    console.log((dialog ? '  PASS  ' : '  FAIL  ') + '...and it is put in front of them once');
+    if (!dialog) failures.push('no watched dialog');
+
+    sandbox.me = { username: 'mod', owner: false, access: { activity: 'write' },
+                   linkedPlayer: '', audited: false };
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    const quiet = !(byId.get('main').children || []).some((k) => k.id === 'watched-note');
+    console.log((quiet ? '  PASS  ' : '  FAIL  ') +
+      'an account nobody is recording is not warned');
+    if (!quiet) failures.push('unwatched account warned');
+
     sandbox.me = realMe;
   } catch (e) {
     console.log('  FAIL  accounts  -> ' + e.message);

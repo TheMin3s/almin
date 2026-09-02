@@ -121,7 +121,11 @@ public final class WebFiles {
     static boolean secret(Path base, Path target) {
         Path dir = base.resolve("config").resolve("almin");
         return target.equals(dir.resolve(AiInsights.keyFileName()))
-            || target.equals(dir.resolve(Accounts.fileName()));
+            || target.equals(dir.resolve(Accounts.fileName()))
+            // Not a credential, but a record somebody has a reason to erase:
+            // whoever is being recorded could otherwise delete the recording
+            // through the file browser.
+            || target.equals(dir.resolve(PanelAudit.fileName()));
     }
 
     /**
