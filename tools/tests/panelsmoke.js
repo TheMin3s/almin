@@ -326,7 +326,11 @@ const responses = {
       elapsedMs: 120, error: '' }] },
   '/api/update': { current: '2.5.0', repo: 'a/b', status: 'available', latest: '2.6.0', hasJar: true },
   '/api/players': { online: [{ name: 'TheMines', uuid: 'u', mask: 'Ghost', sessionMillis: 60000,
-                              hasMod: true, reported: true }],
+                              hasMod: true, reported: true, protectedPlayer: true },
+                             { name: 'Griefer', uuid: 'g', mask: '', sessionMillis: 1000,
+                               hasMod: false, reported: false },
+                             { name: 'Repentant', uuid: 'r', mask: '', sessionMillis: 1000,
+                               hasMod: false, reported: false, banned: true }],
                     history: [{ uuid: 'u', name: 'TheMines', firstSeen: 1, lastSeen: Date.now(),
                                 joins: 4, playtimeMillis: 7200000, mask: 'Ghost' }],
                     maxPlayers: 20 },
@@ -3244,6 +3248,52 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   } catch (e) {
     console.log('  FAIL  saving the model settings  -> ' + e.message);
     failures.push('ai settings save: ' + e.message);
+  }
+
+  // ---- kicking and banning ----
+  try {
+    sandbox.tab = 'players'; sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    await sandbox.loadPlayers();
+
+    // One card per player; find each by the name printed on it.
+    const cards = [];
+    (function walk(el) {
+      if (!el || typeof el !== 'object') return;
+      if (el.className === 'pcard') cards.push(el);
+      for (const k of el.children || []) walk(k);
+    })(byId.get('p-online') || byId.get('players') || document.body);
+
+    function cardFor(name) {
+      return cards.find((c) => deepText(c).includes(name));
+    }
+    function labels(card) {
+      const out = [];
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        if (el.tagName === 'button') out.push(el.textContent);
+        for (const k of el.children || []) walk(k);
+      })(card);
+      return out;
+    }
+
+    const grief = labels(cardFor('Griefer') || {});
+    const canAct = grief.includes('Kick') && grief.includes('Ban');
+    console.log((canAct ? '  PASS  ' : '  FAIL  ') + 'an online player can be kicked or banned');
+    if (!canAct) failures.push('no kick/ban button: ' + grief.join(','));
+
+    const done = labels(cardFor('Repentant') || {});
+    const undo = done.includes('Unban') && !done.includes('Ban');
+    console.log((undo ? '  PASS  ' : '  FAIL  ') + 'a banned player is offered Unban instead');
+    if (!undo) failures.push('banned player offered: ' + done.join(','));
+
+    const owner = labels(cardFor('TheMines') || {});
+    const spared = !owner.includes('Kick') && !owner.includes('Ban');
+    console.log((spared ? '  PASS  ' : '  FAIL  ') + 'a trusted operator is offered neither');
+    if (!spared) failures.push('trusted op could be removed: ' + owner.join(','));
+  } catch (e) {
+    console.log('  FAIL  kicking and banning  -> ' + e.message);
+    failures.push('kick/ban: ' + e.message);
   }
 
   const missing = failures.filter((f) => f.startsWith('getElementById'));

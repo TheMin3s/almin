@@ -1616,6 +1616,7 @@ final class WebPage {
           row.append(badge,left,kit,see,set);
           if(p.mask){ const c=document.createElement('button'); c.className='btn danger'; c.textContent='Clear';
             c.onclick=()=>sendMask(p.name,'',true); row.appendChild(c); }
+          for(const b of banButtons(p,offline)) row.appendChild(b);
           card.appendChild(row);
 
           // The account they are wearing, as its own small row. A mask is
@@ -1639,6 +1640,102 @@ final class WebPage {
           strips.appendChild(pathMap(p.name,since,offline));
           card.appendChild(strips);
           return card;
+        }
+
+        /**
+         * Kick, ban and unban, for one player.
+         *
+         * <p>A kick is only offered to somebody who is here — kicking an
+         * offline player is a no-op that looks like it worked. A ban is
+         * offered either way, because banning somebody who left five minutes
+         * ago is the common case.
+         *
+         * <p>A trusted operator gets neither. The server refuses it as well;
+         * this only saves pressing a button that was always going to fail.
+         */
+        function banButtons(p,offline){
+          const out=[];
+          if(p.protectedPlayer) return out;
+          if(p.banned){
+            const un=document.createElement('button'); un.className='btn';
+            un.textContent='Unban';
+            un.title=p.name+' is banned';
+            un.onclick=()=>askPlayerAction('pardon',p.name);
+            out.push(un);
+            return out;
+          }
+          if(!offline){
+            const k=document.createElement('button'); k.className='btn';
+            k.textContent='Kick';
+            k.title='Disconnect '+p.name+' now. They can come straight back.';
+            k.onclick=()=>askPlayerAction('kick',p.name);
+            out.push(k);
+          }
+          const b=document.createElement('button'); b.className='btn danger';
+          b.textContent='Ban';
+          b.title='Ban '+p.name+' from this server';
+          b.onclick=()=>askPlayerAction('ban',p.name);
+          out.push(b);
+          return out;
+        }
+
+        /**
+         * Asks before doing it, and takes the reason while it is asking.
+         *
+         * <p>The reason is what the player sees on the disconnect screen, so
+         * the dialog says so: a ban with no words is the commonest complaint
+         * an admin gets afterwards.
+         */
+        function askPlayerAction(what,name){
+          const verb=what==='kick'?'Kick':what==='ban'?'Ban':'Unban';
+          modal(verb+' '+name,(body,close)=>{
+            const p=document.createElement('p'); p.className='note';
+            p.textContent=what==='kick'
+              ? name+' will be disconnected. Nothing stops them joining again.'
+              : what==='ban'
+                ? name+' will be disconnected and kept out until you unban them.'
+                : name+' will be able to join again.';
+            body.appendChild(p);
+            let reason=null;
+            if(what!=='pardon'){
+              const l=document.createElement('label');
+              l.innerHTML='<span>Reason</span>';
+              reason=document.createElement('input');
+              reason.placeholder=what==='ban'?'Griefing spawn':'Please stop';
+              reason.maxLength=120;
+              l.appendChild(reason);
+              body.appendChild(l);
+              const why=document.createElement('p'); why.className='note';
+              why.textContent='They see this on the disconnect screen. '+
+                'Leave it empty for the server\u2019s default.';
+              body.appendChild(why);
+            }
+            const msg=document.createElement('div'); msg.className='msg';
+            const go=document.createElement('button');
+            go.className='btn '+(what==='pardon'?'go':'danger');
+            go.textContent=verb;
+            go.onclick=async()=>{
+              go.disabled=true;
+              const r=await jpost('/api/players/action',
+                {action:what,name:name,reason:reason?reason.value:''});
+              if(r.status===200){
+                close();
+                const said=$('p-msg');
+                if(said){ said.className='msg ok';
+                  said.textContent=(r.body&&r.body.message)||'Done.'; }
+                loadPlayers();
+              } else {
+                go.disabled=false; msg.className='msg err'; msg.textContent=why(r);
+              }
+            };
+            const row=document.createElement('div'); row.className='row';
+            row.style.marginTop='10px';
+            const no=document.createElement('button'); no.className='btn';
+            no.textContent='Cancel'; no.onclick=close;
+            row.append(go,no);
+            body.append(row,msg);
+            if(reason) reason.focus();
+          });
         }
 
         /**

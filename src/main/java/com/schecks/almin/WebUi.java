@@ -313,6 +313,8 @@ public final class WebUi {
         http.createContext("/api/clearlog", guard("/api/clearlog", ui::handleClearLog));
         http.createContext("/api/reset", guard("/api/reset", ui::handleReset));
         http.createContext("/api/players", guard("/api/players", ui::handlePlayers));
+        http.createContext("/api/players/action",
+            guard("/api/players/action", ui::handlePlayerAction));
         http.createContext("/api/mask", guard("/api/mask", ui::handleMask));
         http.createContext("/api/file/upload", guard("/api/file/upload", ui::handleFileUpload));
         http.createContext("/api/file/download", guard("/api/file/download", ui::handleFileDownload));
@@ -3382,6 +3384,8 @@ public final class WebUi {
             o.addProperty("hasMod", net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
                 .canSend(p, ServerVersionPayload.TYPE));
             o.addProperty("reported", ClientProfiles.of(p.getUUID()) != null);
+            o.addProperty("banned", banned(p.getUUID(), p.getGameProfile().name()));
+            o.addProperty("protectedPlayer", TrustedOps.isTrusted(p.getUUID()));
             online.add(o);
         }
         root.add("online", online);
@@ -3403,6 +3407,8 @@ public final class WebUi {
                 // Somebody who is offline cannot be asked; what is known is
                 // whether they ever told us.
                 o.addProperty("reported", ClientProfiles.of(e.getKey()) != null);
+                o.addProperty("banned", banned(e.getKey(), v.name()));
+                o.addProperty("protectedPlayer", TrustedOps.isTrusted(e.getKey()));
                 history.add(o);
             }
         }
@@ -3592,6 +3598,137 @@ public final class WebUi {
         }, "Almin-web-reload");
         t.setDaemon(true);
         t.start();
+    }
+
+    // ---------- routes: kicking and banning ----------
+
+    /**
+     * A Minecraft account name. Nothing else is ever put into a command.
+     *
+     * <p>This is the whole of the injection defence for {@link
+     * #handlePlayerAction}: names are letters, digits and underscore, so a
+     * validated name cannot carry a space, a quote or a newline, and the
+     * command line that is built from one has exactly the shape it looks
+     * like.
+     */
+    private static final java.util.regex.Pattern MC_NAME =
+        java.util.regex.Pattern.compile("[A-Za-z0-9_]{1,16}");
+
+    /**
+     * Kicks, bans or pardons somebody.
+     *
+     * <h3>Why the vanilla commands rather than the API</h3>
+     * {@code /ban} does several things beyond adding a list entry: it writes
+     * banned-players.json, disconnects the player if they are on, announces it
+     * to operators, and works for somebody who has never joined. Reaching for
+     * {@code PlayerList} directly would mean reimplementing all of that and
+     * getting one of the parts subtly wrong. It also keeps this identical to
+     * what an admin typing in the console would get, which is the standard the
+     * rest of Almin's server control holds itself to.
+     */
+    private void handlePlayerAction(HttpExchange ex) throws IOException {
+        try {
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            if (!requireAuthSecure(ex)) return;
+            if (!requireServer(ex)) return;
+            JsonObject body = readBody(ex);
+            String what = text(body, "action");
+            String name = text(body, "name").trim();
+            String reason = reasonText(text(body, "reason"));
+            if (!MC_NAME.matcher(name).matches()) {
+                json(ex, 400, err("That is not a Minecraft account name.")); return;
+            }
+            if (!what.equals("kick") && !what.equals("ban") && !what.equals("pardon")) {
+                json(ex, 400, err("Unknown action.")); return;
+            }
+            // The owner cannot be locked out of their own server from a web
+            // page. A stolen session is exactly the situation in which this
+            // button would be the first one pressed.
+            if (!what.equals("pardon") && protectedName(name)) {
+                json(ex, 403, err(name + " is a trusted operator and cannot be "
+                    + what + "ed from the panel.")); return;
+            }
+            String command = switch (what) {
+                case "kick" -> "kick " + name + (reason.isEmpty() ? "" : " " + reason);
+                case "ban" -> "ban " + name + (reason.isEmpty() ? "" : " " + reason);
+                default -> "pardon " + name;
+            };
+            AlminLog.info("[almin] web panel: {} {}{}", what, name,
+                reason.isEmpty() ? "" : " (" + reason + ")");
+            Boolean ran = onServer(() -> {
+                server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), command);
+                return Boolean.TRUE;
+            }, null);
+            if (ran == null) { json(ex, 503, err("The server didn't answer in time.")); return; }
+            String said = switch (what) {
+                case "kick" -> name + " was kicked.";
+                case "ban" -> name + " was banned.";
+                default -> name + " was unbanned.";
+            };
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", true);
+            out.addProperty("message", said);
+            json(ex, 200, out.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * A reason safe to append to a command line.
+     *
+     * <p>Names are already checked against {@link #MC_NAME}; the reason is
+     * free text an admin typed, so newlines and control characters come out
+     * and the length is capped. It is the tail of the command, so it cannot
+     * change which command runs whatever it contains.
+     */
+    private static String reasonText(String raw) {
+        if (raw == null) return "";
+        StringBuilder b = new StringBuilder();
+        for (char c : raw.trim().toCharArray()) {
+            if (c >= ' ' && c != 127) b.append(c);
+            if (b.length() >= 120) break;
+        }
+        return b.toString().trim();
+    }
+
+    /** Whether this name belongs to a trusted operator, who cannot be removed here. */
+    private boolean protectedName(String name) {
+        try {
+            var p = server.getPlayerList().getPlayerByName(name);
+            if (p != null) return TrustedOps.isTrusted(p.getUUID());
+            PlayerHistory hist = PlayerHistory.get(server);
+            if (hist != null) {
+                for (Map.Entry<java.util.UUID, PlayerHistory.Entry> e : hist.snapshot().entrySet()) {
+                    if (name.equalsIgnoreCase(e.getValue().name())) return TrustedOps.isTrusted(e.getKey());
+                }
+            }
+        } catch (Throwable ignored) {
+            // A name we cannot resolve is not a trusted one.
+        }
+        return false;
+    }
+
+    /** A string field, or "" when it is absent or not a string. */
+    private static String text(JsonObject o, String field) {
+        try {
+            return o != null && o.has(field) && o.get(field).isJsonPrimitive()
+                ? o.get(field).getAsString() : "";
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** Whether this account is on the ban list. */
+    private boolean banned(java.util.UUID id, String name) {
+        try {
+            return server.getPlayerList().getBans()
+                .isBanned(new net.minecraft.server.players.NameAndId(id, name));
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ---------- gates ----------
