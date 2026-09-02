@@ -90,7 +90,7 @@ public final class Accounts {
      */
     public record Account(String id, String username, String hash, String mcName, String mcUuid,
                           Map<String, String> access, Map<String, String> folders,
-                          boolean auditActivity,
+                          boolean auditActivity, int rank,
                           long created, long lastLogin, boolean owner) {
 
         /** What this account may do with one menu. The owner may do everything. */
@@ -149,6 +149,21 @@ public final class Accounts {
         public boolean folderLimited() {
             return !owner && folders != null && !folders.isEmpty();
         }
+
+        /** Where this account sits. 0 is the owner; larger is further down. */
+        public int level() { return owner ? OWNER_RANK : Math.max(FIRST_RANK, rank); }
+
+        /**
+         * Whether this account may act on {@code other}.
+         *
+         * <p>Strictly above, never equal. Two accounts at the same rank are
+         * peers and neither may touch the other — which is also what stops an
+         * account acting on itself through this route, since its own rank is
+         * never strictly greater than its own.
+         */
+        public boolean outranks(Account other) {
+            return other != null && !other.owner() && level() < other.level();
+        }
     }
 
     /** What one attempt to change the list did. */
@@ -160,6 +175,13 @@ public final class Accounts {
 
     /** The filename, so {@link WebFiles#secret} can refuse it by name. */
     public static String fileName() { return "accounts.json"; }
+
+    /** The owner's rank. Nothing else may hold it. */
+    public static final int OWNER_RANK = 0;
+    /** The best rank an ordinary account can be given. */
+    public static final int FIRST_RANK = 1;
+    /** The worst, and the floor a new account lands on when its maker is deep. */
+    public static final int LAST_RANK = 999;
 
     private static final SecureRandom RNG = new SecureRandom();
     private static final int MAX_ACCOUNTS = 64;
@@ -224,6 +246,7 @@ public final class Accounts {
             str(o, "id").isBlank() ? newId() : str(o, "id"),
             username, str(o, "hash"), str(o, "mcName"), str(o, "mcUuid"),
             access, folders, o.has("auditActivity") && o.get("auditActivity").getAsBoolean(),
+            rankOf((int) num(o, "rank")),
             num(o, "created"), num(o, "lastLogin"), false);
     }
 
@@ -251,6 +274,7 @@ public final class Accounts {
         o.addProperty("mcName", a.mcName());
         o.addProperty("mcUuid", a.mcUuid());
         o.addProperty("auditActivity", a.auditActivity());
+        o.addProperty("rank", a.rank());
         o.addProperty("created", a.created());
         o.addProperty("lastLogin", a.lastLogin());
         JsonObject g = new JsonObject();
@@ -276,7 +300,7 @@ public final class Accounts {
         String name = cfg.webAdminUsername == null || cfg.webAdminUsername.isBlank()
             ? "admin" : cfg.webAdminUsername.trim();
         return new Account("owner", name, cfg.webAdminPasswordHash == null ? "" : cfg.webAdminPasswordHash,
-            "", "", Map.of(), Map.of(), false, 0, 0, true);
+            "", "", Map.of(), Map.of(), false, OWNER_RANK, 0, 0, true);
     }
 
     /** Every account except the owner, in the order they were made. */
@@ -316,6 +340,11 @@ public final class Accounts {
      * nobody can see.
      */
     public static synchronized Result create(String username, String password) {
+        return create(username, password, FIRST_RANK);
+    }
+
+    /** As above, at a given rank. */
+    public static synchronized Result create(String username, String password, int rank) {
         String name = username == null ? "" : username.trim();
         String bad = nameProblem(name);
         if (!bad.isEmpty()) return Result.fail(bad);
@@ -324,7 +353,7 @@ public final class Accounts {
         String pw = passwordProblem(password);
         if (!pw.isEmpty()) return Result.fail(pw);
         Account a = new Account(newId(), name, Passwords.hash(password), "", "",
-            new LinkedHashMap<>(), new LinkedHashMap<>(), false,
+            new LinkedHashMap<>(), new LinkedHashMap<>(), false, rankOf(rank),
             System.currentTimeMillis(), 0, false);
         byName.put(name.toLowerCase(Locale.ROOT), a);
         save();
@@ -339,7 +368,7 @@ public final class Accounts {
         String bad = passwordProblem(password);
         if (!bad.isEmpty()) return Result.fail(bad);
         put(a.username(), new Account(a.id(), a.username(), Passwords.hash(password), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + "'s password is changed.");
     }
@@ -353,7 +382,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) access.put(menu, level);
         else access.remove(menu);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            access, a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
+            access, a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + menuName(menu) + ".");
     }
@@ -383,7 +412,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) folders.put(f, level);
         else folders.remove(f);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), folders, a.auditActivity(), a.created(), a.lastLogin(), false));
+            a.access(), folders, a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + f + ".");
     }
@@ -393,9 +422,31 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.created(), a.lastLogin(), false));
+            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " can reach every folder the Files menu shows.");
+    }
+
+    /**
+     * Moves an account up or down the order.
+     *
+     * <p>Bounds only; who may do it is {@link #outranks} at the call site.
+     * The owner's rank is not a stored thing and cannot be set at all.
+     */
+    public static synchronized Result setRank(String id, int rank) {
+        Account a = stored(id);
+        if (a == null) return Result.fail("No such account.");
+        int want = rankOf(rank);
+        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
+            a.access(), a.folders(), a.auditActivity(), want, a.created(), a.lastLogin(), false));
+        save();
+        return Result.done(a.username() + " is now level " + want + ".");
+    }
+
+    /** Clamps a rank into what an ordinary account may hold. */
+    public static int rankOf(int rank) {
+        if (rank < FIRST_RANK) return FIRST_RANK;
+        return Math.min(rank, LAST_RANK);
     }
 
     /** Ties an account to the Minecraft player it belongs to. Blank name unlinks. */
@@ -408,7 +459,7 @@ public final class Accounts {
             return Result.fail("That is not a Minecraft account name.");
         }
         put(a.username(), new Account(a.id(), a.username(), a.hash(), n, n.isEmpty() ? "" : u,
-            a.access(), a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(n.isEmpty()
             ? a.username() + " is no longer linked to a player."
@@ -420,7 +471,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), on, a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), on, a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(on
             ? a.username() + "'s use of the Activity menu is recorded, and they are told so."
@@ -439,7 +490,7 @@ public final class Accounts {
         }
         byName.remove(a.username().toLowerCase(Locale.ROOT));
         byName.put(name.toLowerCase(Locale.ROOT), new Account(a.id(), name, a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done("Now called " + name + ".");
     }
@@ -458,7 +509,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return;
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.created(), System.currentTimeMillis(), false));
+            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), System.currentTimeMillis(), false));
         save();
     }
 

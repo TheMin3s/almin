@@ -325,10 +325,11 @@ const responses = {
       responseHeaders: ['content-type'], responseBody: '{"output_text":"hello"}',
       elapsedMs: 120, error: '' }] },
   '/api/update': { current: '2.5.0', repo: 'a/b', status: 'available', latest: '2.6.0', hasJar: true },
-  '/api/accounts': { ownerName: 'admin',
+  '/api/accounts': { ownerName: 'admin', myRank: 0, owner: true, lastRank: 999,
+      myAccess: { activity: 'write', files: 'write' },
       menus: [{ id: 'activity', name: 'Activity' }, { id: 'files', name: 'Files' }],
       accounts: [{ id: 'a1', username: 'moderator', mcName: 'Steve', mcUuid: 'u',
-                   auditActivity: true, created: 1, lastLogin: Date.now(),
+                   auditActivity: true, created: 1, lastLogin: Date.now(), rank: 2,
                    access: { activity: 'read', files: 'none' } }] },
   '/api/players': { online: [{ name: 'TheMines', uuid: 'u', mask: 'Ghost', sessionMillis: 60000,
                               hasMod: true, reported: true, protectedPlayer: true },
@@ -3344,14 +3345,16 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     // The People section belongs to the main account alone, and is not in
     // the page at all for anyone else — a hidden section still carries every
     // other account's username to somebody who should not have it.
-    sandbox.me = { username: 'mod', owner: false, access: { settings: 'write' },
+    // Settings as read-only is not permission to manage people, and the
+    // section is absent from the page rather than hidden in it.
+    sandbox.me = { username: 'mod', owner: false, access: { settings: 'read' },
                    linkedPlayer: '', audited: false };
     sandbox.settingsTab = 'almin';
     const asMod = deepText(sandbox.settingsPanel());
     const absent = !asMod.includes('s-people');
     console.log((absent ? '  PASS  ' : '  FAIL  ') +
-      'People is not in the page for anyone but the main account');
-    if (!absent) failures.push('People markup served to a non-owner');
+      'People is not in the page for an account that cannot manage anyone');
+    if (!absent) failures.push('People markup served to a non-manager');
 
     sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '', audited: false };
     const asOwner = deepText(sandbox.settingsPanel());
@@ -3396,6 +3399,68 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       .some((k) => k.id === 'ro-note');
     console.log((noNote ? '  PASS  ' : '  FAIL  ') + 'a full account is not told it is read-only');
     if (!noNote) failures.push('read-only note shown to a full account');
+
+    // ---- levels ----
+    // A manager who is not the owner still gets People, and the levels it
+    // offers stop above its own.
+    sandbox.me = { username: 'chief', owner: false, access: { settings: 'write' },
+                   linkedPlayer: '', audited: false };
+    sandbox.settingsTab = 'almin';
+    const asChief = deepText(sandbox.settingsPanel());
+    const chiefHasPeople = asChief.includes('s-people');
+    console.log((chiefHasPeople ? '  PASS  ' : '  FAIL  ') +
+      'an account that can change Settings can manage people');
+    if (!chiefHasPeople) failures.push('People withheld from a settings manager');
+
+    sandbox.myRank = 2; sandbox.lastRank = 999;
+    sandbox.myAccess = { activity: 'read', files: 'none', settings: 'write' };
+    sandbox.me = { username: 'chief', owner: false, access: { settings: 'write' },
+                   linkedPlayer: '', audited: false };
+    const levels = (function () {
+      const sel = sandbox.rankPicker({ id: 'x', rank: 4 });
+      const opts = [];
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        if ((el.tagName || '').toLowerCase() === 'option') opts.push(+el.value);
+        for (const k of el.children || []) walk(k);
+      })(sel);
+      return opts;
+    })();
+    const belowOnly = levels.length > 0 && levels.every((v) => v > 2);
+    console.log((belowOnly ? '  PASS  ' : '  FAIL  ') +
+      'only levels below your own are offered');
+    if (!belowOnly) failures.push('rank picker offered: ' + levels.join(','));
+
+    const offered = (function () {
+      const cell = sandbox.accessPicker({ id: 'x', access: {} }, { id: 'activity', name: 'Activity' });
+      const opts = [];
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        if ((el.tagName || '').toLowerCase() === 'option') opts.push(el.value);
+        for (const k of el.children || []) walk(k);
+      })(cell);
+      return opts;
+    })();
+    const noMoreThanMine = offered.includes('read') && !offered.includes('write');
+    console.log((noMoreThanMine ? '  PASS  ' : '  FAIL  ') +
+      'you cannot offer a level you do not hold yourself');
+    if (!noMoreThanMine) failures.push('access picker offered: ' + offered.join(','));
+
+    const shut = (function () {
+      const cell = sandbox.accessPicker({ id: 'x', access: {} }, { id: 'files', name: 'Files' });
+      const opts = [];
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        if ((el.tagName || '').toLowerCase() === 'option') opts.push(el.value);
+        for (const k of el.children || []) walk(k);
+      })(cell);
+      return opts;
+    })();
+    const onlyNone = shut.length === 1 && shut[0] === 'none';
+    console.log((onlyNone ? '  PASS  ' : '  FAIL  ') +
+      '...and a menu you have none of can only be given as none');
+    if (!onlyNone) failures.push('files picker offered: ' + shut.join(','));
+    sandbox.myRank = 0; sandbox.myAccess = {};
 
     // ---- being told the visit is recorded ----
     sandbox.watchedTold = false;

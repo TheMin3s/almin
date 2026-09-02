@@ -6662,11 +6662,15 @@ final class WebPage {
             'placeholder="new password (8+ characters)">'+
             '<button class="btn" id="s-pwgo">Set</button></div>'+
             '<div class="msg" id="s-pwmsg"></div></section>'+
-            (me.owner?'<section id="s-people"><h2>People</h2>'+
+            ((me.owner||mayWrite('settings'))?'<section id="s-people"><h2>People</h2>'+
             '<p class="muted">Accounts that can sign in to this panel, and what each of '+
             'them may reach. Every menu is separately <b>none</b>, <b>read</b> or '+
-            '<b>write</b>; a new account starts with none of them. This account is not in '+
-            'the list and cannot be edited from it \u2014 change its password above.</p>'+
+            '<b>write</b>; a new account starts with none of them. '+
+            (me.owner
+              ? 'This account is not in the list and cannot be edited from it \u2014 '+
+                'change its password above.'
+              : 'You see only the accounts below your own level, and you cannot give '+
+                'away more than you hold.')+'</p>'+
             '<div class="term"><input id="s-acnew" placeholder="new username" '+
             'autocomplete="off" maxlength="24">'+
             '<input id="s-acpw" type="password" placeholder="password (8+)" '+
@@ -6753,7 +6757,7 @@ final class WebPage {
             // Only the owner is served this section at all. Hiding it with
             // CSS would still put every other account's username into a page
             // somebody else is holding.
-            if(me.owner && $('s-acadd')){
+            if((me.owner||mayWrite('settings')) && $('s-acadd')){
               $('s-acadd').onclick=addAccount;
               $('s-acpw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); addAccount(); } };
               loadAccounts();
@@ -6769,6 +6773,7 @@ final class WebPage {
         // ---- accounts ----
 
         let accounts=[], accountMenus=[], accountFolders=[], writableRoots='';
+        let myRank=0, myAccess={}, lastRank=999;
 
         async function loadAccounts(){
           const box=$('s-aclist'); if(!box) return;
@@ -6781,6 +6786,9 @@ final class WebPage {
           accountMenus=r.body.menus||[];
           accountFolders=r.body.folders||[];
           writableRoots=r.body.writableRoots||'';
+          myRank=r.body.myRank||0;
+          myAccess=r.body.myAccess||{};
+          lastRank=r.body.lastRank||999;
           paintAccounts();
         }
 
@@ -6788,9 +6796,12 @@ final class WebPage {
           const box=$('s-aclist'); if(!box) return;
           box.innerHTML='';
           if(!accounts.length){
-            box.innerHTML='<div class="note">Nobody else has an account yet. '+
-              'Whoever you add here signs in with the username and password you give '+
-              'them, and sees nothing until you say what they may reach.</div>';
+            box.innerHTML='<div class="note">'+(myRank>0
+              ? 'Nobody is below level '+myRank+'. Anyone you add here starts at level '+
+                (myRank+1)+' and can be managed by you.'
+              : 'Nobody else has an account yet. Whoever you add here signs in with the '+
+                'username and password you give them, and sees nothing until you say '+
+                'what they may reach.')+'</div>';
             return;
           }
           for(const a of accounts) box.appendChild(accountCard(a));
@@ -6807,6 +6818,7 @@ final class WebPage {
           const who=document.createElement('span'); who.className='k';
           who.style.whiteSpace='normal';
           who.innerHTML='<b style="color:var(--ink)">'+esc(a.username)+'</b>'+
+            ' <span class="muted" style="font-size:12px">level '+(a.rank||1)+'</span>'+
             '<br><span class="muted" style="font-size:12px">'+
             (a.mcName?('plays as '+esc(a.mcName)):'not linked to a player')+
             (a.lastLogin?(' · last in '+esc(fmtWhen(a.lastLogin))):' · never signed in')+
@@ -6850,6 +6862,7 @@ final class WebPage {
           grid.className='row'; grid.style.flexWrap='wrap'; grid.style.gap='8px';
           grid.style.marginTop='10px';
           for(const m of accountMenus) grid.appendChild(accessPicker(a,m));
+          grid.appendChild(rankPicker(a));
           card.appendChild(grid);
 
           // Which folders they may reach, shown only when Files is theirs at
@@ -6935,7 +6948,44 @@ final class WebPage {
           return wrap;
         }
 
-        /** none / read / write for one menu, as a labelled select. */
+        /**
+         * Where this account sits, relative to yours.
+         *
+         * <p>Only levels below your own are offered. An account that could
+         * put somebody at its own level would have made a peer who could then
+         * act on it, and one that could promote itself would have made the
+         * order decorative.
+         */
+        function rankPicker(a){
+          const wrap=document.createElement('label');
+          wrap.style.display='flex'; wrap.style.flexDirection='column';
+          wrap.style.gap='3px'; wrap.style.fontSize='12px';
+          const name=document.createElement('span');
+          name.className='muted'; name.textContent='Level';
+          const sel=document.createElement('select');
+          const here=a.rank||1;
+          const options=new Set([here]);
+          for(let v=myRank+1; v<=Math.min(myRank+8,lastRank); v++) options.add(v);
+          for(const v of Array.from(options).sort((x,y)=>x-y)){
+            if(v<=myRank) continue;
+            const o=document.createElement('option'); o.value=String(v);
+            o.textContent=String(v); sel.appendChild(o);
+          }
+          sel.value=String(here);
+          sel.title='Lower is more senior. You are level '+myRank+
+            ', so you can only place people below that.';
+          sel.onchange=()=>postAccount({action:'rank',id:a.id,rank:parseInt(sel.value,10)});
+          wrap.append(name,sel);
+          return wrap;
+        }
+
+        /**
+         * none / read / write for one menu, as a labelled select.
+         *
+         * <p>A level you do not hold yourself is not offered: nobody gives
+         * away more than they have, or the order would be a ladder anybody
+         * could climb by making an account above themselves.
+         */
         function accessPicker(a,m){
           const wrap=document.createElement('label');
           wrap.style.display='flex'; wrap.style.flexDirection='column';
@@ -6943,11 +6993,15 @@ final class WebPage {
           const name=document.createElement('span');
           name.className='muted'; name.textContent=m.name;
           const sel=document.createElement('select');
+          const mine=me.owner?'write':(myAccess[m.id]||'none');
           for(const [v,label] of [['none','no access'],['read','read only'],['write','can change']]){
+            if(v==='write' && mine!=='write') continue;
+            if(v==='read' && mine==='none') continue;
             const o=document.createElement('option'); o.value=v; o.textContent=label;
             sel.appendChild(o);
           }
           sel.value=(a.access&&a.access[m.id])||'none';
+          if(mine==='none') sel.title='You do not have '+m.name+' yourself.';
           sel.onchange=()=>postAccount({action:'access',id:a.id,menu:m.id,level:sel.value});
           wrap.append(name,sel);
           return wrap;

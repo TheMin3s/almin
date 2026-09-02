@@ -129,6 +129,59 @@ public class AccountTests {
         check("removing something that is not there is refused",
             !Accounts.delete(back.id()).ok());
 
+        // ---- levels ----
+        // "Account 1 at level 1 controls accounts 2 and 3 at level 2 or more."
+        Accounts.create("chief", "chief-password-1", 1);
+        Accounts.create("deputy", "deputy-password-1", 2);
+        Accounts.create("helper2", "helper-password-1", 3);
+        Accounts.Account chief = Accounts.byUsername("chief");
+        Accounts.Account deputy = Accounts.byUsername("deputy");
+        Accounts.Account helper2 = Accounts.byUsername("helper2");
+
+        check("the owner is level 0", Accounts.owner().level() == Accounts.OWNER_RANK);
+        check("the owner outranks everybody", Accounts.owner().outranks(chief)
+            && Accounts.owner().outranks(deputy));
+        check("level 1 controls level 2 and 3",
+            chief.outranks(deputy) && chief.outranks(helper2));
+        check("level 2 controls level 3", deputy.outranks(helper2));
+        check("level 3 controls neither", !helper2.outranks(deputy) && !helper2.outranks(chief));
+        check("equals are peers, neither way", !deputy.outranks(Accounts.byUsername("deputy")));
+        check("nobody outranks themselves", !chief.outranks(chief));
+        check("nobody outranks the owner", !chief.outranks(Accounts.owner()));
+
+        check("a level cannot be better than the owner's",
+            Accounts.rankOf(0) == Accounts.FIRST_RANK
+                && Accounts.rankOf(-5) == Accounts.FIRST_RANK);
+        check("...nor worse than the last", Accounts.rankOf(99999) == Accounts.LAST_RANK);
+        Accounts.setRank(helper2.id(), 0);
+        check("a stored account can never hold the owner's level",
+            Accounts.byUsername("helper2").level() >= Accounts.FIRST_RANK);
+
+        Accounts.setRank(helper2.id(), 5);
+        check("a level can be changed", Accounts.byUsername("helper2").level() == 5);
+        check("...and survives a restart", reload(dir) && Accounts.byUsername("helper2").level() == 5);
+
+        // The gate is in WebUi; assert its shape, since that is where the
+        // escalation would be if it were missing.
+        String gate = Files.readString(Path.of("src/main/java/com/schecks/almin/WebUi.java"));
+        String people = gate.substring(gate.indexOf("private void handleAccounts"),
+            gate.indexOf("private String auditJson"));
+        check("managing people needs Settings or the owner",
+            people.contains("me.canWrite(\"settings\")"));
+        check("every action but create checks who it is acting on",
+            people.contains("!what.equals(\"create\")") && people.contains("me.outranks(target)"));
+        check("a new account is made below its maker",
+            people.contains("Accounts.rankOf(me.level() + 1)"));
+        check("a level is refused unless it is below yours",
+            people.contains("want <= me.level()"));
+        check("the listing shows only those below you", gate.contains("if (!me.outranks(a)) continue;"));
+        check("nobody hands out more than they hold",
+            gate.contains("private static boolean grantable"));
+
+        Accounts.delete(Accounts.byUsername("chief").id());
+        Accounts.delete(Accounts.byUsername("deputy").id());
+        Accounts.delete(Accounts.byUsername("helper2").id());
+
         // ---- which folders they may reach ----
         // This is a security rule, not a convenience: dir-writable-roots
         // includes config, and Almin's own settings are a file in there, so
@@ -288,6 +341,12 @@ public class AccountTests {
 
         System.out.println(failures == 0 ? "ACCOUNTS OK" : failures + " ACCOUNT FAILURES");
         if (failures > 0) System.exit(1);
+    }
+
+    /** Reads the file back from disk. Returns true so it reads well inline. */
+    static boolean reload(Path dir) {
+        Accounts.init(dir);
+        return true;
     }
 
     /** Points the config's owner account at a known name and password. */

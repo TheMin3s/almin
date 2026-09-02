@@ -3927,24 +3927,65 @@ public final class WebUi {
     private void handleAccounts(HttpExchange ex) throws IOException {
         try {
             if (!requireAuthSecure(ex)) return;
-            if (!requireOwner(ex)) return;
+            Accounts.Account me = who(ex);
+            if (me == null) { json(ex, 401, "{\"error\":\"unauthorised\"}"); return; }
+            // Managing people is part of Settings; the rank then says whom.
+            if (!me.owner() && !me.canWrite("settings")) {
+                json(ex, 403, err("Your account cannot manage people.")); return;
+            }
             if ("GET".equals(ex.getRequestMethod())) {
                 String user = queryParam(ex, "record");
-                if (user != null && !user.isBlank()) { json(ex, 200, auditJson(user)); return; }
-                json(ex, 200, accountsJson());
+                if (user != null && !user.isBlank()) {
+                    Accounts.Account subject = Accounts.byUsername(user);
+                    if (subject != null && !me.outranks(subject)) {
+                        json(ex, 403, err("That account is not below yours.")); return;
+                    }
+                    json(ex, 200, auditJson(user));
+                    return;
+                }
+                json(ex, 200, accountsJson(me));
                 return;
             }
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             JsonObject body = readBody(ex);
             String what = text(body, "action");
             String id = text(body, "id");
+            // Everything but "create" acts on somebody, and may only act on
+            // somebody strictly below. Equal ranks are peers: that is also
+            // what stops an account editing itself from here, since its own
+            // rank is never strictly greater than its own.
+            if (!what.equals("create")) {
+                Accounts.Account target = Accounts.byId(id);
+                if (target == null) { json(ex, 400, err("No such account.")); return; }
+                if (!me.outranks(target)) {
+                    json(ex, 403, err(target.owner()
+                        ? "The main account cannot be changed from here."
+                        : target.username() + " is not below you."));
+                    return;
+                }
+            }
             Accounts.Result r = switch (what) {
-                case "create" -> Accounts.create(text(body, "username"), text(body, "password"));
+                case "create" -> Accounts.create(text(body, "username"), text(body, "password"),
+                    Accounts.rankOf(me.level() + 1));
                 case "password" -> Accounts.setPassword(id, text(body, "password"));
                 case "rename" -> Accounts.rename(id, text(body, "username"));
-                case "access" -> Accounts.setAccess(id, text(body, "menu"), text(body, "level"));
-                case "folder" -> Accounts.setFolder(id, text(body, "folder"), text(body, "level"));
-                case "folders-clear" -> Accounts.clearFolders(id);
+                case "access" -> grantable(me, "menu", text(body, "menu"), text(body, "level"))
+                    ? Accounts.setAccess(id, text(body, "menu"), text(body, "level"))
+                    : Accounts.Result.fail("You cannot give away more than you hold.");
+                case "folder" -> grantable(me, "folder", text(body, "folder"), text(body, "level"))
+                    ? Accounts.setFolder(id, text(body, "folder"), text(body, "level"))
+                    : Accounts.Result.fail("You cannot give away more than you hold.");
+                case "folders-clear" -> me.folderLimited()
+                    ? Accounts.Result.fail("You cannot hand over every folder — you do not have "
+                        + "every folder yourself.")
+                    : Accounts.clearFolders(id);
+                case "rank" -> {
+                    int want = body.has("rank") ? body.get("rank").getAsInt() : 0;
+                    yield want <= me.level()
+                        ? Accounts.Result.fail("Level " + want + " is not below yours ("
+                            + me.level() + ").")
+                        : Accounts.setRank(id, want);
+                }
                 case "link" -> Accounts.link(id, text(body, "mcName"), text(body, "mcUuid"));
                 case "audit" -> Accounts.setAudit(id,
                     body.has("on") && body.get("on").getAsBoolean());
@@ -3994,16 +4035,37 @@ public final class WebUi {
         return root.toString();
     }
 
-    private String accountsJson() {
+    /**
+     * Whether {@code me} may hand this level out.
+     *
+     * <p>Nobody gives away more than they hold. Without this, an account with
+     * Files as read-only could make an account with Files as write and sign in
+     * as it — the rank order would be respected the whole way and the
+     * permissions would still have grown.
+     */
+    private static boolean grantable(Accounts.Account me, String kind, String key, String level) {
+        if (me.owner()) return true;
+        if (level.equals(Accounts.NONE)) return true;
+        String mine = kind.equals("menu") ? me.level(key) : me.folderLevel(key);
+        if (mine.equals(Accounts.WRITE)) return true;
+        return mine.equals(Accounts.READ) && level.equals(Accounts.READ);
+    }
+
+    private String accountsJson(Accounts.Account me) {
         JsonObject root = new JsonObject();
         JsonArray list = new JsonArray();
         for (Accounts.Account a : Accounts.all()) {
+            // Only the people below you. Somebody at or above your level is
+            // not yours to see here, which is the same rule that made the
+            // owner invisible before there were levels at all.
+            if (!me.outranks(a)) continue;
             JsonObject o = new JsonObject();
             o.addProperty("id", a.id());
             o.addProperty("username", a.username());
             o.addProperty("mcName", a.mcName());
             o.addProperty("mcUuid", a.mcUuid());
             o.addProperty("auditActivity", a.auditActivity());
+            o.addProperty("rank", a.level());
             o.addProperty("created", a.created());
             o.addProperty("lastLogin", a.lastLogin());
             JsonObject access = new JsonObject();
@@ -4026,6 +4088,14 @@ public final class WebUi {
         }
         root.add("menus", menus);
         root.addProperty("ownerName", Accounts.owner().username());
+        root.addProperty("myRank", me.level());
+        root.addProperty("owner", me.owner());
+        root.addProperty("lastRank", Accounts.LAST_RANK);
+        // What this account itself holds, so the page can refuse to offer a
+        // level it would only be told off for choosing.
+        JsonObject mine = new JsonObject();
+        for (String menu : Accounts.MENUS) mine.addProperty(menu, me.level(menu));
+        root.add("myAccess", mine);
         // The folders that actually exist, so the owner picks from what is
         // there rather than typing a name and hoping.
         JsonArray folders = new JsonArray();
