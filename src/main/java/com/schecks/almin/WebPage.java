@@ -976,11 +976,17 @@ final class WebPage {
           txt.textContent=serverRunning?'Online':'Stopped';
           st.title=serverRunning?'Minecraft server is running':'Minecraft server is stopped';
           $('logout').style.display=authed?'':'none';
-          $('srvstop').style.display=(authed&&serverRunning)?'':'none';
-          $('srvrestart').style.display=(authed&&serverRunning)?'':'none';
+          // Stopping and starting the server is Overview's to give. These
+          // buttons sit in the header rather than in a tab, so filtering the
+          // tabs never reached them: an account without Overview could see
+          // Start and Restart and be refused by the server on the press,
+          // which is the exact thing the panel is supposed to spare people.
+          const mayRun=authed&&mayWrite('dash');
+          $('srvstop').style.display=(mayRun&&serverRunning)?'':'none';
+          $('srvrestart').style.display=(mayRun&&serverRunning)?'':'none';
           $('srvrestart').title=canStart?('Stop, then start it again here: '+startCommand)
                                         :'Stops the server; your wrapper starts it again';
-          $('srvstart').style.display=(authed&&!serverRunning)?'':'none';
+          $('srvstart').style.display=(mayRun&&!serverRunning)?'':'none';
           $('srvstart').disabled=!canStart;
           $('srvstart').title=canStart?('Runs: '+startCommand)
                                       :(startProblem||'No way to start the server from here');

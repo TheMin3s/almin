@@ -3400,6 +3400,43 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((noNote ? '  PASS  ' : '  FAIL  ') + 'a full account is not told it is read-only');
     if (!noNote) failures.push('read-only note shown to a full account');
 
+    // ---- the header's server controls ----
+    // They are not in a tab, so filtering the tabs never reached them.
+    sandbox.authed = true; sandbox.serverRunning = true; sandbox.canStart = true;
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '', audited: false };
+    sandbox.setChrome();
+    const ownerSees = byId.get('srvrestart').style.display !== 'none'
+      && byId.get('srvstop').style.display !== 'none';
+    console.log((ownerSees ? '  PASS  ' : '  FAIL  ') +
+      'the main account can still stop and restart the server');
+    if (!ownerSees) failures.push('owner lost the server controls');
+
+    sandbox.me = { username: 'watcher', owner: false, access: { activity: 'read' },
+                   linkedPlayer: '', audited: false };
+    sandbox.setChrome();
+    const hidden = byId.get('srvrestart').style.display === 'none'
+      && byId.get('srvstop').style.display === 'none';
+    console.log((hidden ? '  PASS  ' : '  FAIL  ') +
+      'an account without Overview is not offered them');
+    if (!hidden) failures.push('server controls shown to an account without dash');
+
+    sandbox.me = { username: 'looker', owner: false, access: { dash: 'read' },
+                   linkedPlayer: '', audited: false };
+    sandbox.setChrome();
+    const readerHidden = byId.get('srvrestart').style.display === 'none';
+    console.log((readerHidden ? '  PASS  ' : '  FAIL  ') +
+      '...nor one that only reads it');
+    if (!readerHidden) failures.push('server controls shown to a dash reader');
+
+    sandbox.serverRunning = false;
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '', audited: false };
+    sandbox.setChrome();
+    const startBack = byId.get('srvstart').style.display !== 'none';
+    console.log((startBack ? '  PASS  ' : '  FAIL  ') +
+      'and Start comes back for the main account when the server is down');
+    if (!startBack) failures.push('owner cannot start a stopped server');
+    sandbox.serverRunning = true;
+
     // ---- levels ----
     // A manager who is not the owner still gets People, and the levels it
     // offers stop above its own.

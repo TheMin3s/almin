@@ -50,6 +50,8 @@ public class PanelApiTests {
 
         for (String[] r : new String[][]{
                 {"/api/login", "handleLogin"},
+                {"/api/server", "handleServerControl"},
+                {"/api/state", "handleState"},
                 {"/api/session", "handleSession"},
                 {"/api/head", "handleHead"},
                 {"/api/mods", "handleMods"},
@@ -78,6 +80,7 @@ public class PanelApiTests {
 
         gates();
         login();
+        controls();
         heads();
         modIcons();
         mkdir();
@@ -112,6 +115,27 @@ public class PanelApiTests {
         var r = send("POST", "/api/login", "{\"password\":\"pw12345678\"}", null);
         ck("login succeeds", r.statusCode() == 200, r.body());
         cookie = r.headers().firstValue("set-cookie").orElse("").split(";")[0];
+    }
+
+    /**
+     * The owner is not refused by the permission gate.
+     *
+     * <p>Starting and restarting go through the same route table as every
+     * other menu now, so a mistake there stops the server being startable
+     * from the panel — which is the one thing the panel has to be able to do
+     * when the server is down.
+     */
+    static void controls() throws Exception {
+        for (String action : new String[]{"start", "restart", "stop"}) {
+            var r = send("POST", "/api/server", "{\"action\":\"" + action + "\"}", cookie);
+            ck("the main account is not refused " + action + " (" + r.statusCode() + ")",
+                r.statusCode() != 401 && r.statusCode() != 403, r.body());
+        }
+        var st = send("GET", "/api/state", null, cookie);
+        ck("...nor the state the header reads (" + st.statusCode() + ")",
+            st.statusCode() != 401 && st.statusCode() != 403, st.body());
+        var out = send("POST", "/api/server", "{\"action\":\"start\"}", null);
+        ck("a stranger still is", out.statusCode() == 401, out.body());
     }
 
     static void heads() throws Exception {
