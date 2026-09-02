@@ -129,6 +129,62 @@ public class AccountTests {
         check("removing something that is not there is refused",
             !Accounts.delete(back.id()).ok());
 
+        // ---- which folders they may reach ----
+        // This is a security rule, not a convenience: dir-writable-roots
+        // includes config, and Almin's own settings are a file in there, so
+        // "may edit files" was "may set the owner's password" until the tree
+        // could be narrowed.
+        Accounts.create("filer", "filer-password-1");
+        Accounts.Account fr = Accounts.byUsername("filer");
+        Accounts.setAccess(fr.id(), "files", Accounts.WRITE);
+        fr = Accounts.byUsername("filer");
+
+        check("an account nobody narrowed reaches everything",
+            fr.canSeePath("config/almin/config.json") && fr.canWritePath("mods/x.jar"));
+        check("...and is not marked as narrowed", !fr.folderLimited());
+
+        Accounts.setFolder(fr.id(), "mods", Accounts.WRITE);
+        fr = Accounts.byUsername("filer");
+        check("naming one folder shuts the rest", !fr.canSeePath("config/almin/config.json"));
+        check("...including for writes", !fr.canWritePath("config/almin/config.json"));
+        check("the named folder is reachable", fr.canSeePath("mods/sodium.jar"));
+        check("...and writable", fr.canWritePath("mods/sodium.jar"));
+        check("...at any depth", fr.canWritePath("mods/nested/deep/thing.json"));
+        check("the account is marked as narrowed", fr.folderLimited());
+
+        Accounts.setFolder(fr.id(), "logs", Accounts.READ);
+        fr = Accounts.byUsername("filer");
+        check("a read folder can be seen", fr.canSeePath("logs/latest.log"));
+        check("...and not written", !fr.canWritePath("logs/latest.log"));
+
+        check("the root itself stays listable", fr.canSeePath(""));
+        check("...but is never writable, so nothing lands beside the folders",
+            !fr.canWritePath(""));
+        check("a backslash cannot smuggle a path past the top-level check",
+            !fr.canSeePath("config\\almin\\config.json"));
+        check("nor a leading slash", !fr.canSeePath("/config/almin/config.json"));
+        check("a folder name with a slash in it is refused",
+            !Accounts.setFolder(fr.id(), "config/almin", Accounts.WRITE).ok());
+        check("so is one that climbs", !Accounts.setFolder(fr.id(), "..", Accounts.WRITE).ok());
+
+        Accounts.clearFolders(fr.id());
+        fr = Accounts.byUsername("filer");
+        check("the whole tree can be handed back",
+            fr.canWritePath("config/almin/config.json") && !fr.folderLimited());
+
+        Accounts.setFolder(fr.id(), "mods", Accounts.WRITE);
+        Accounts.init(dir);
+        check("the narrowing survives a restart",
+            !Accounts.byUsername("filer").canSeePath("config/x"));
+        check("the owner is never narrowed",
+            Accounts.owner().canWritePath("config/almin/config.json"));
+        Accounts.delete(Accounts.byUsername("filer").id());
+
+        // Every file route asks before it acts.
+        String webSrc = Files.readString(Path.of("src/main/java/com/schecks/almin/WebUi.java"));
+        int guards = webSrc.split("allowedPath\\(ex", -1).length - 1;
+        check("every file route checks the folder first (" + guards + " calls)", guards >= 8);
+
         // ---- what a watched account did ----
         // Two rules, and both fail dangerously if they are wrong: nothing is
         // written for somebody who was not switched on, and the owner is never

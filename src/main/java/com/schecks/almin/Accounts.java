@@ -89,7 +89,8 @@ public final class Accounts {
      * @param owner       true only for the synthesised owner, never on disk
      */
     public record Account(String id, String username, String hash, String mcName, String mcUuid,
-                          Map<String, String> access, boolean auditActivity,
+                          Map<String, String> access, Map<String, String> folders,
+                          boolean auditActivity,
                           long created, long lastLogin, boolean owner) {
 
         /** What this account may do with one menu. The owner may do everything. */
@@ -101,6 +102,53 @@ public final class Accounts {
 
         public boolean canRead(String menu) { return !level(menu).equals(NONE); }
         public boolean canWrite(String menu) { return level(menu).equals(WRITE); }
+
+        /**
+         * What this account may do with one top-level folder.
+         *
+         * <p>An empty map means the folder list was never narrowed, and the
+         * Files menu behaves as it always did — everything the panel shows,
+         * writable wherever {@code dir-writable-roots} allows. The moment one
+         * folder is named, the list is the whole of what they may reach and
+         * anything unnamed is invisible: a narrowing that left the rest open
+         * would be a narrowing that did nothing.
+         */
+        public String folderLevel(String folder) {
+            if (owner) return WRITE;
+            if (folders == null || folders.isEmpty()) return WRITE;
+            String v = folders.get(folder);
+            return v == null ? NONE : v;
+        }
+
+        /** The top-level folder a panel-relative path is in, or "" for the root. */
+        public static String topOf(String rel) {
+            if (rel == null) return "";
+            String r = rel.replace('\\', '/');
+            while (r.startsWith("/")) r = r.substring(1);
+            if (r.isEmpty()) return "";
+            int slash = r.indexOf('/');
+            return slash < 0 ? r : r.substring(0, slash);
+        }
+
+        /** Whether this path is inside something they may look at. */
+        public boolean canSeePath(String rel) {
+            String top = topOf(rel);
+            // The root itself is always listable; what is in it is filtered.
+            if (top.isEmpty()) return true;
+            return !folderLevel(top).equals(NONE);
+        }
+
+        /** Whether this path is inside something they may change. */
+        public boolean canWritePath(String rel) {
+            String top = topOf(rel);
+            if (top.isEmpty()) return false;
+            return folderLevel(top).equals(WRITE);
+        }
+
+        /** Whether the folder list has been narrowed at all. */
+        public boolean folderLimited() {
+            return !owner && folders != null && !folders.isEmpty();
+        }
     }
 
     /** What one attempt to change the list did. */
@@ -164,10 +212,18 @@ public final class Accounts {
                 if (v.equals(READ) || v.equals(WRITE)) access.put(menu, v);
             }
         }
+        Map<String, String> folders = new LinkedHashMap<>();
+        if (o.has("folders") && o.get("folders").isJsonObject()) {
+            JsonObject g = o.getAsJsonObject("folders");
+            for (String key : g.keySet()) {
+                String v = str(g, key);
+                if (v.equals(READ) || v.equals(WRITE)) folders.put(key, v);
+            }
+        }
         return new Account(
             str(o, "id").isBlank() ? newId() : str(o, "id"),
             username, str(o, "hash"), str(o, "mcName"), str(o, "mcUuid"),
-            access, o.has("auditActivity") && o.get("auditActivity").getAsBoolean(),
+            access, folders, o.has("auditActivity") && o.get("auditActivity").getAsBoolean(),
             num(o, "created"), num(o, "lastLogin"), false);
     }
 
@@ -200,6 +256,9 @@ public final class Accounts {
         JsonObject g = new JsonObject();
         for (Map.Entry<String, String> e : a.access().entrySet()) g.addProperty(e.getKey(), e.getValue());
         o.add("access", g);
+        JsonObject f = new JsonObject();
+        for (Map.Entry<String, String> e : a.folders().entrySet()) f.addProperty(e.getKey(), e.getValue());
+        o.add("folders", f);
         return o;
     }
 
@@ -217,7 +276,7 @@ public final class Accounts {
         String name = cfg.webAdminUsername == null || cfg.webAdminUsername.isBlank()
             ? "admin" : cfg.webAdminUsername.trim();
         return new Account("owner", name, cfg.webAdminPasswordHash == null ? "" : cfg.webAdminPasswordHash,
-            "", "", Map.of(), false, 0, 0, true);
+            "", "", Map.of(), Map.of(), false, 0, 0, true);
     }
 
     /** Every account except the owner, in the order they were made. */
@@ -265,7 +324,8 @@ public final class Accounts {
         String pw = passwordProblem(password);
         if (!pw.isEmpty()) return Result.fail(pw);
         Account a = new Account(newId(), name, Passwords.hash(password), "", "",
-            new LinkedHashMap<>(), false, System.currentTimeMillis(), 0, false);
+            new LinkedHashMap<>(), new LinkedHashMap<>(), false,
+            System.currentTimeMillis(), 0, false);
         byName.put(name.toLowerCase(Locale.ROOT), a);
         save();
         AlminLog.info("[almin] panel account created: {}", name);
@@ -278,8 +338,8 @@ public final class Accounts {
         if (a == null) return Result.fail("No such account.");
         String bad = passwordProblem(password);
         if (!bad.isEmpty()) return Result.fail(bad);
-        put(a.username(), new Account(a.id(), a.username(), Passwords.hash(password), a.mcName(),
-            a.mcUuid(), a.access(), a.auditActivity(), a.created(), a.lastLogin(), false));
+        put(a.username(), new Account(a.id(), a.username(), Passwords.hash(password), a.mcName(), a.mcUuid(),
+            a.access(), a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + "'s password is changed.");
     }
@@ -293,7 +353,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) access.put(menu, level);
         else access.remove(menu);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            access, a.auditActivity(), a.created(), a.lastLogin(), false));
+            access, a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + menuName(menu) + ".");
     }
@@ -306,6 +366,38 @@ public final class Accounts {
         };
     }
 
+    /**
+     * Says which top-level folders an account may see, and which it may change.
+     *
+     * <p>Passing nothing clears the narrowing and hands back the whole tree,
+     * which is what an account has until somebody says otherwise.
+     */
+    public static synchronized Result setFolder(String id, String folder, String level) {
+        Account a = stored(id);
+        if (a == null) return Result.fail("No such account.");
+        String f = folder == null ? "" : folder.trim();
+        if (f.isEmpty() || f.contains("/") || f.contains("\\") || f.contains("..")) {
+            return Result.fail("That is not a folder name.");
+        }
+        Map<String, String> folders = new LinkedHashMap<>(a.folders());
+        if (level.equals(READ) || level.equals(WRITE)) folders.put(f, level);
+        else folders.remove(f);
+        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
+            a.access(), folders, a.auditActivity(), a.created(), a.lastLogin(), false));
+        save();
+        return Result.done(a.username() + " " + describe(level) + " " + f + ".");
+    }
+
+    /** Hands the whole tree back, as it is for a new account. */
+    public static synchronized Result clearFolders(String id) {
+        Account a = stored(id);
+        if (a == null) return Result.fail("No such account.");
+        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
+            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.created(), a.lastLogin(), false));
+        save();
+        return Result.done(a.username() + " can reach every folder the Files menu shows.");
+    }
+
     /** Ties an account to the Minecraft player it belongs to. Blank name unlinks. */
     public static synchronized Result link(String id, String mcName, String mcUuid) {
         Account a = stored(id);
@@ -316,7 +408,7 @@ public final class Accounts {
             return Result.fail("That is not a Minecraft account name.");
         }
         put(a.username(), new Account(a.id(), a.username(), a.hash(), n, n.isEmpty() ? "" : u,
-            a.access(), a.auditActivity(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(n.isEmpty()
             ? a.username() + " is no longer linked to a player."
@@ -328,7 +420,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), on, a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), on, a.created(), a.lastLogin(), false));
         save();
         return Result.done(on
             ? a.username() + "'s use of the Activity menu is recorded, and they are told so."
@@ -346,8 +438,8 @@ public final class Accounts {
             return Result.fail("There is already an account called " + name + ".");
         }
         byName.remove(a.username().toLowerCase(Locale.ROOT));
-        byName.put(name.toLowerCase(Locale.ROOT), new Account(a.id(), name, a.hash(), a.mcName(),
-            a.mcUuid(), a.access(), a.auditActivity(), a.created(), a.lastLogin(), false));
+        byName.put(name.toLowerCase(Locale.ROOT), new Account(a.id(), name, a.hash(), a.mcName(), a.mcUuid(),
+            a.access(), a.folders(), a.auditActivity(), a.created(), a.lastLogin(), false));
         save();
         return Result.done("Now called " + name + ".");
     }
@@ -366,7 +458,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return;
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.auditActivity(), a.created(), System.currentTimeMillis(), false));
+            a.access(), a.folders(), a.auditActivity(), a.created(), System.currentTimeMillis(), false));
         save();
     }
 

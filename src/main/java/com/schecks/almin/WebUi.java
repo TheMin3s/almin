@@ -1241,11 +1241,35 @@ public final class WebUi {
 
     // ---------- routes: files ----------
 
+    /**
+     * Whether this account may reach this path, and say so if not.
+     *
+     * <p>The menu level says whether somebody has Files at all; this says
+     * which part of the tree. It exists because the writable roots include
+     * {@code config}, and Almin's own configuration is a file in there — so
+     * "can edit files" and "can set the owner's password" were the same
+     * permission until this was here.
+     *
+     * <p>Every file route calls it, and a test reads this source and fails if
+     * one of them stops.
+     */
+    private boolean allowedPath(HttpExchange ex, String rel, boolean forWrite) throws IOException {
+        Accounts.Account me = who(ex);
+        if (me == null) return true;                     // handled by requireAuth
+        if (forWrite ? me.canWritePath(rel) : me.canSeePath(rel)) return true;
+        String top = Accounts.Account.topOf(rel);
+        json(ex, 403, err(me.canSeePath(rel)
+            ? (top.isEmpty() ? "You cannot change anything here." : top + " is read-only for you.")
+            : "Your account cannot open " + (top.isEmpty() ? "that" : top) + "."));
+        return false;
+    }
+
     private void handleFiles(HttpExchange ex) throws IOException {
         try {
             if (!requireAuth(ex)) return;
             if (!requireServer(ex)) return;
             String rel = queryParam(ex, "path");
+            if (!allowedPath(ex, rel, false)) return;
             WebFiles.Listing listing = onServer(() -> {
                 try { return WebFiles.list(server, rel); }
                 catch (IOException e) { return new WebFiles.Listing(rel, false, -1,
@@ -1257,7 +1281,15 @@ public final class WebUi {
             o.addProperty("isDir", listing.isDir());
             o.addProperty("fileSize", listing.fileSize());
             JsonArray arr = new JsonArray();
+            // A folder somebody may not open is not listed either. Showing the
+            // name and refusing the click tells them what is there, which is
+            // most of what hiding it was for.
+            Accounts.Account me = who(ex);
             for (WebFiles.Entry e : listing.entries()) {
+                if (me != null && me.folderLimited() && !e.name().startsWith("!error:")) {
+                    String child = rel == null || rel.isBlank() ? e.name() : rel + "/" + e.name();
+                    if (!me.canSeePath(child)) continue;
+                }
                 JsonObject je = new JsonObject();
                 je.addProperty("name", e.name());
                 je.addProperty("directory", e.directory());
@@ -1287,6 +1319,7 @@ public final class WebUi {
                 if (!requireAuth(ex)) return;
                 if (!requireServer(ex)) return;
                 String rel = queryParam(ex, "path");
+                if (!allowedPath(ex, rel, false)) return;
                 String[] out = onServer(() -> {
                     try { return new String[]{ WebFiles.read(server, rel), null }; }
                     catch (IOException e) { return new String[]{ null, e.getMessage() }; }
@@ -1302,6 +1335,7 @@ public final class WebUi {
                 JsonObject body = readBody(ex);
                 String rel = body.has("path") ? body.get("path").getAsString() : "";
                 String content = body.has("content") ? body.get("content").getAsString() : "";
+                if (!allowedPath(ex, rel, true)) return;
                 WebFiles.Result r = onServer(() -> WebFiles.write(server, rel, content),
                     WebFiles.Result.fail("timeout"));
                 AlminLog.info("[almin] web wrote {} ({})", rel, r.ok() ? "ok" : r.message());
@@ -1323,6 +1357,7 @@ public final class WebUi {
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             JsonObject body = readBody(ex);
             String rel = body.has("path") ? body.get("path").getAsString() : "";
+            if (!allowedPath(ex, rel, true)) return;
             WebFiles.Result r = onServer(() -> WebFiles.delete(server, rel), WebFiles.Result.fail("timeout"));
             AlminLog.info("[almin] web delete {} ({})", rel, r.message());
             json(ex, r.ok() ? 200 : 400, result(r));
@@ -1341,6 +1376,7 @@ public final class WebUi {
             JsonObject body = readBody(ex);
             String rel = body.has("path") ? body.get("path").getAsString() : "";
             String name = body.has("name") ? body.get("name").getAsString() : "";
+            if (!allowedPath(ex, rel, true)) return;
             WebFiles.Result r = onServer(() -> WebFiles.rename(server, rel, name), WebFiles.Result.fail("timeout"));
             AlminLog.info("[almin] web renamed {} -> {} ({})", rel, name, r.ok() ? "ok" : r.message());
             json(ex, r.ok() ? 200 : 400, result(r));
@@ -1365,6 +1401,7 @@ public final class WebUi {
             JsonObject body = readBody(ex);
             String parent = body.has("path") ? body.get("path").getAsString() : "";
             String name = body.has("name") ? body.get("name").getAsString().trim() : "";
+            if (!allowedPath(ex, parent, true)) return;
             WebFiles.Result r = onServer(() -> WebFiles.mkdir(server, parent, name),
                 WebFiles.Result.fail("The server didn't answer in time."));
             if (r.ok()) AlminLog.info("[almin] web created folder {}/{}", parent, name);
@@ -3621,6 +3658,7 @@ public final class WebUi {
             // Resolved here rather than on the server thread: it is path
             // arithmetic and the config, so the hop only added a way to time
             // out and blame the server for a rejected filename.
+            if (!allowedPath(ex, rel, true)) return;
             WebFiles.Target t = WebFiles.uploadTarget(server, rel);
             if (!t.ok()) { json(ex, 403, err(t.problem())); return; }
 
@@ -3668,6 +3706,7 @@ public final class WebUi {
             if (!"GET".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
             String rel = queryParam(ex, "path");
             if (rel == null || rel.isBlank()) { json(ex, 400, err("No path given.")); return; }
+            if (!allowedPath(ex, rel, false)) return;
             Path file = WebFiles.downloadable(server, rel);
             if (file == null) { json(ex, 404, err("No such file: " + rel)); return; }
             long size = Files.size(file);
@@ -3709,6 +3748,7 @@ public final class WebUi {
             String rel = dest.endsWith("/")
                 ? dest + FileFetcher.basenameFromUrl(url)
                 : dest;
+            if (!allowedPath(ex, rel, true)) return;
             WebFiles.Target t = WebFiles.uploadTarget(server, rel);
             if (!t.ok()) { json(ex, 403, err(t.problem())); return; }
 
@@ -3903,6 +3943,8 @@ public final class WebUi {
                 case "password" -> Accounts.setPassword(id, text(body, "password"));
                 case "rename" -> Accounts.rename(id, text(body, "username"));
                 case "access" -> Accounts.setAccess(id, text(body, "menu"), text(body, "level"));
+                case "folder" -> Accounts.setFolder(id, text(body, "folder"), text(body, "level"));
+                case "folders-clear" -> Accounts.clearFolders(id);
                 case "link" -> Accounts.link(id, text(body, "mcName"), text(body, "mcUuid"));
                 case "audit" -> Accounts.setAudit(id,
                     body.has("on") && body.get("on").getAsBoolean());
@@ -3967,6 +4009,11 @@ public final class WebUi {
             JsonObject access = new JsonObject();
             for (String menu : Accounts.MENUS) access.addProperty(menu, a.level(menu));
             o.add("access", access);
+            JsonObject folders = new JsonObject();
+            for (Map.Entry<String, String> f : a.folders().entrySet()) {
+                folders.addProperty(f.getKey(), f.getValue());
+            }
+            o.add("folders", folders);
             list.add(o);
         }
         root.add("accounts", list);
@@ -3979,6 +4026,17 @@ public final class WebUi {
         }
         root.add("menus", menus);
         root.addProperty("ownerName", Accounts.owner().username());
+        // The folders that actually exist, so the owner picks from what is
+        // there rather than typing a name and hoping.
+        JsonArray folders = new JsonArray();
+        try {
+            WebFiles.Listing top = WebFiles.list(server, "");
+            for (WebFiles.Entry e : top.entries()) if (e.directory()) folders.add(e.name());
+        } catch (Exception ignored) {
+            // No list is better than no page; the owner can still type one.
+        }
+        root.add("folders", folders);
+        root.addProperty("writableRoots", AlminConfig.get().dirWritableRoots);
         return root.toString();
     }
 

@@ -6768,7 +6768,7 @@ final class WebPage {
         }
         // ---- accounts ----
 
-        let accounts=[], accountMenus=[];
+        let accounts=[], accountMenus=[], accountFolders=[], writableRoots='';
 
         async function loadAccounts(){
           const box=$('s-aclist'); if(!box) return;
@@ -6779,6 +6779,8 @@ final class WebPage {
           }
           accounts=r.body.accounts||[];
           accountMenus=r.body.menus||[];
+          accountFolders=r.body.folders||[];
+          writableRoots=r.body.writableRoots||'';
           paintAccounts();
         }
 
@@ -6850,6 +6852,12 @@ final class WebPage {
           for(const m of accountMenus) grid.appendChild(accessPicker(a,m));
           card.appendChild(grid);
 
+          // Which folders they may reach, shown only when Files is theirs at
+          // all — a folder list under a menu they cannot open is noise.
+          if(a.access && a.access.files && a.access.files!=='none'){
+            card.appendChild(folderRow(a));
+          }
+
           // Recording somebody's use of the Activity menu is a decision about
           // watching a person, so it is spelled out rather than being a bare
           // switch, and it says that they are told.
@@ -6866,6 +6874,65 @@ final class WebPage {
           audit.append(box,t);
           card.appendChild(audit);
           return card;
+        }
+
+        /**
+         * Which folders this account may reach in Files.
+         *
+         * <p>Worth having on its own because the writable roots include
+         * <code>config</code>, and Almin's own settings are a file in there.
+         * Without this, "may edit files" and "may set the main account's
+         * password" were the same permission.
+         */
+        function folderRow(a){
+          const wrap=document.createElement('div');
+          wrap.style.marginTop='10px';
+          const limited=a.folders && Object.keys(a.folders).length>0;
+          const head=document.createElement('div');
+          head.className='note';
+          head.textContent=limited
+            ? 'Only these folders. Anything not listed is invisible to them.'
+            : 'Every folder the Files menu shows. Name one below to narrow it.';
+          wrap.appendChild(head);
+          const grid=document.createElement('div');
+          grid.className='row'; grid.style.flexWrap='wrap'; grid.style.gap='8px';
+          grid.style.marginTop='6px';
+          const named=new Set(Object.keys(a.folders||{}));
+          for(const f of accountFolders) named.add(f);
+          for(const f of Array.from(named).sort()){
+            const cell=document.createElement('label');
+            cell.style.display='flex'; cell.style.flexDirection='column';
+            cell.style.gap='3px'; cell.style.fontSize='12px';
+            const name=document.createElement('span');
+            name.className='muted'; name.textContent=f;
+            const sel=document.createElement('select');
+            for(const [v,label] of [['none','hidden'],['read','read only'],['write','can change']]){
+              const o=document.createElement('option'); o.value=v; o.textContent=label;
+              sel.appendChild(o);
+            }
+            // With nothing named yet they have the lot, so that is what the
+            // controls should say before anybody touches them.
+            sel.value=limited?((a.folders&&a.folders[f])||'none'):'write';
+            sel.onchange=()=>postAccount({action:'folder',id:a.id,folder:f,level:sel.value});
+            cell.append(name,sel);
+            grid.appendChild(cell);
+          }
+          wrap.appendChild(grid);
+          if(limited){
+            const all=document.createElement('button'); all.className='btn';
+            all.textContent='Give them every folder back';
+            all.style.marginTop='8px';
+            all.onclick=()=>postAccount({action:'folders-clear',id:a.id});
+            wrap.appendChild(all);
+          }
+          if(writableRoots){
+            const note=document.createElement('div'); note.className='note';
+            note.style.marginTop='6px';
+            note.textContent='Writes are limited server-wide to: '+writableRoots+
+              '. Granting change here cannot go beyond that.';
+            wrap.appendChild(note);
+          }
+          return wrap;
         }
 
         /** none / read / write for one menu, as a labelled select. */
