@@ -309,6 +309,7 @@ public final class WebUi {
         http.createContext("/api/config", guard("/api/config", ui::handleConfig));
         http.createContext("/api/config/reload", guard("/api/config/reload", ui::handleConfigReload));
         http.createContext("/api/password", guard("/api/password", ui::handlePassword));
+        http.createContext("/api/accounts", guard("/api/accounts", ui::handleAccounts));
         http.createContext("/api/update", guard("/api/update", ui::handleUpdate));
         http.createContext("/api/clearlog", guard("/api/clearlog", ui::handleClearLog));
         http.createContext("/api/reset", guard("/api/reset", ui::handleReset));
@@ -895,6 +896,19 @@ public final class WebUi {
                 // request one per row and take a 404 each time on a server that
                 // has them turned off.
                 o.addProperty("heads", cfg.webPlayerHeads);
+                // Who is signed in and what they may reach. The panel draws
+                // itself from this, so a menu somebody cannot open is a menu
+                // that is not there rather than one that errors when pressed.
+                Accounts.Account me = who(ex);
+                if (me != null) {
+                    o.addProperty("username", me.username());
+                    o.addProperty("owner", me.owner());
+                    o.addProperty("linkedPlayer", me.mcName());
+                    o.addProperty("audited", me.auditActivity());
+                    JsonObject access = new JsonObject();
+                    for (String menu : Accounts.MENUS) access.addProperty(menu, me.level(menu));
+                    o.add("access", access);
+                }
             }
             json(ex, 200, o.toString());
         } catch (Throwable t) {
@@ -967,12 +981,19 @@ public final class WebUi {
                 json(ex, 429, "{\"error\":\"locked\",\"minutes\":" + sessions.lockoutMinutes() + "}"); return;
             }
             JsonObject body = readBody(ex);
-            String pw = body.has("password") ? body.get("password").getAsString() : "";
-            if (Passwords.verify(pw, cfg.webAdminPasswordHash)) {
+            String pw = text(body, "password");
+            // A blank username is the owner. That is what every existing
+            // bookmark, script and muscle memory sends, and an upgrade that
+            // demanded a username nobody had been told about would lock the
+            // owner out of their own panel.
+            String who = text(body, "username").trim();
+            Accounts.Account account = who.isEmpty() ? Accounts.owner() : Accounts.byUsername(who);
+            if (account != null && !account.hash().isBlank() && Passwords.verify(pw, account.hash())) {
                 sessions.recordSuccess(key);
-                String id = sessions.open(cfg.webSessionMinutes);
+                String id = sessions.open(cfg.webSessionMinutes, account.id());
                 setSessionCookie(ex, id, behindTls(ex));
-                AlminLog.info("[almin] web login succeeded for {}", key);
+                if (!account.owner()) Accounts.noteLogin(account.id());
+                AlminLog.info("[almin] web login succeeded for {} as {}", key, account.username());
                 json(ex, 200, "{\"ok\":true}");
             } else {
                 int remaining = sessions.recordFailure(key);
@@ -3729,6 +3750,132 @@ public final class WebUi {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    // ---------- routes: accounts ----------
+
+    /**
+     * Lists and edits the panel's accounts. Owner only, always.
+     *
+     * <p>The owner is never in the list this returns. That is the user's own
+     * rule and it is a sound one: an account that can see the owner's row can
+     * see the owner's username, which is half of the only credential that
+     * holds every permission on the server. The owner changes their own
+     * password through /api/password, the same route as before.
+     */
+    private void handleAccounts(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!requireOwner(ex)) return;
+            if ("GET".equals(ex.getRequestMethod())) {
+                json(ex, 200, accountsJson());
+                return;
+            }
+            if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            JsonObject body = readBody(ex);
+            String what = text(body, "action");
+            String id = text(body, "id");
+            Accounts.Result r = switch (what) {
+                case "create" -> Accounts.create(text(body, "username"), text(body, "password"));
+                case "password" -> Accounts.setPassword(id, text(body, "password"));
+                case "rename" -> Accounts.rename(id, text(body, "username"));
+                case "access" -> Accounts.setAccess(id, text(body, "menu"), text(body, "level"));
+                case "link" -> Accounts.link(id, text(body, "mcName"), text(body, "mcUuid"));
+                case "audit" -> Accounts.setAudit(id,
+                    body.has("on") && body.get("on").getAsBoolean());
+                case "delete" -> {
+                    Accounts.Result done = Accounts.delete(id);
+                    // Their open tabs are somebody else's now.
+                    if (done.ok()) sessions.closeAccount(id);
+                    yield done;
+                }
+                default -> Accounts.Result.fail("Unknown action.");
+            };
+            JsonObject out = new JsonObject();
+            out.addProperty("ok", r.ok());
+            out.addProperty("message", r.message());
+            if (!r.ok()) out.addProperty("error", r.message());
+            json(ex, r.ok() ? 200 : 400, out.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    private String accountsJson() {
+        JsonObject root = new JsonObject();
+        JsonArray list = new JsonArray();
+        for (Accounts.Account a : Accounts.all()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("id", a.id());
+            o.addProperty("username", a.username());
+            o.addProperty("mcName", a.mcName());
+            o.addProperty("mcUuid", a.mcUuid());
+            o.addProperty("auditActivity", a.auditActivity());
+            o.addProperty("created", a.created());
+            o.addProperty("lastLogin", a.lastLogin());
+            JsonObject access = new JsonObject();
+            for (String menu : Accounts.MENUS) access.addProperty(menu, a.level(menu));
+            o.add("access", access);
+            list.add(o);
+        }
+        root.add("accounts", list);
+        JsonArray menus = new JsonArray();
+        for (String menu : Accounts.MENUS) {
+            JsonObject m = new JsonObject();
+            m.addProperty("id", menu);
+            m.addProperty("name", Accounts.menuName(menu));
+            menus.add(m);
+        }
+        root.add("menus", menus);
+        root.addProperty("ownerName", Accounts.owner().username());
+        return root.toString();
+    }
+
+    // ---------- who is asking ----------
+
+    /**
+     * The account behind this request, or null if there is no live session.
+     *
+     * <p>Resolved from the session on every request rather than remembered
+     * from login, so a grant taken away is gone on the next click instead of
+     * at the next sign-in. An account deleted mid-session resolves to null and
+     * the request is refused like any other stranger's.
+     */
+    private Accounts.Account who(HttpExchange ex) {
+        String id = sessions.accountOf(cookie(ex, SESSION_COOKIE));
+        if (id == null) return null;
+        return id.equals("owner") ? Accounts.owner() : Accounts.byId(id);
+    }
+
+    /** 401s unless the caller may at least look at {@code menu}. */
+    private boolean requireRead(HttpExchange ex, String menu) throws IOException {
+        Accounts.Account a = who(ex);
+        if (a == null) { json(ex, 401, "{\"error\":\"unauthorised\"}"); return false; }
+        if (a.canRead(menu)) return true;
+        json(ex, 403, err("Your account cannot open " + Accounts.menuName(menu) + "."));
+        return false;
+    }
+
+    /** 403s unless the caller may change things in {@code menu}. */
+    private boolean requireWrite(HttpExchange ex, String menu) throws IOException {
+        Accounts.Account a = who(ex);
+        if (a == null) { json(ex, 401, "{\"error\":\"unauthorised\"}"); return false; }
+        if (a.canWrite(menu)) return true;
+        json(ex, 403, err(a.canRead(menu)
+            ? "You have " + Accounts.menuName(menu) + " as read-only."
+            : "Your account cannot open " + Accounts.menuName(menu) + "."));
+        return false;
+    }
+
+    /** 403s unless the caller is the owner. Account management is owner-only. */
+    private boolean requireOwner(HttpExchange ex) throws IOException {
+        Accounts.Account a = who(ex);
+        if (a == null) { json(ex, 401, "{\"error\":\"unauthorised\"}"); return false; }
+        if (a.owner()) return true;
+        json(ex, 403, err("Only the main account can do that."));
+        return false;
     }
 
     // ---------- gates ----------

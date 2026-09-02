@@ -325,6 +325,11 @@ const responses = {
       responseHeaders: ['content-type'], responseBody: '{"output_text":"hello"}',
       elapsedMs: 120, error: '' }] },
   '/api/update': { current: '2.5.0', repo: 'a/b', status: 'available', latest: '2.6.0', hasJar: true },
+  '/api/accounts': { ownerName: 'admin',
+      menus: [{ id: 'activity', name: 'Activity' }, { id: 'files', name: 'Files' }],
+      accounts: [{ id: 'a1', username: 'moderator', mcName: 'Steve', mcUuid: 'u',
+                   auditActivity: true, created: 1, lastLogin: Date.now(),
+                   access: { activity: 'read', files: 'none' } }] },
   '/api/players': { online: [{ name: 'TheMines', uuid: 'u', mask: 'Ghost', sessionMillis: 60000,
                               hasMod: true, reported: true, protectedPlayer: true },
                              { name: 'Griefer', uuid: 'g', mask: '', sessionMillis: 1000,
@@ -3294,6 +3299,70 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   } catch (e) {
     console.log('  FAIL  kicking and banning  -> ' + e.message);
     failures.push('kick/ban: ' + e.message);
+  }
+
+  // ---- accounts and what each of them may reach ----
+  try {
+    const realMe = sandbox.me;
+
+    function navLabels() {
+      sandbox.authed = true;
+      sandbox.setChrome();
+      return (byId.get('nav').children || []).map((b) => b.textContent || b._html || '');
+    }
+
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '', audited: false };
+    const ownerTabs = navLabels();
+    const sawAll = ['Overview', 'Console', 'Activity', 'Files', 'Players', 'Mods']
+      .every((t) => ownerTabs.some((x) => x.includes(t)));
+    console.log((sawAll ? '  PASS  ' : '  FAIL  ') + 'the main account sees every menu');
+    if (!sawAll) failures.push('owner missing tabs: ' + ownerTabs.join(','));
+
+    sandbox.me = { username: 'mod', owner: false, access: { activity: 'read', players: 'write' },
+                   linkedPlayer: '', audited: false };
+    sandbox.tab = 'files';
+    const modTabs = navLabels();
+    const only = modTabs.length === 2
+      && modTabs.some((t) => t.includes('Activity')) && modTabs.some((t) => t.includes('Players'));
+    console.log((only ? '  PASS  ' : '  FAIL  ') + 'a limited account sees only its own menus');
+    if (!only) failures.push('limited account tabs: ' + modTabs.join(','));
+
+    const noSettings = !modTabs.some((t) => t.includes('Settings'));
+    console.log((noSettings ? '  PASS  ' : '  FAIL  ') + 'a menu it cannot open is not drawn at all');
+    if (!noSettings) failures.push('settings drawn for an account without it');
+
+    // It was looking at Files, which it may not open; it must not stay there.
+    const moved = sandbox.tab !== 'files';
+    console.log((moved ? '  PASS  ' : '  FAIL  ') +
+      'it is moved off a menu it is no longer allowed to see');
+    if (!moved) failures.push('stayed on a forbidden tab');
+
+    const readOnly = sandbox.readOnly('activity') && !sandbox.readOnly('players');
+    console.log((readOnly ? '  PASS  ' : '  FAIL  ') + 'read-only is told apart from write');
+    if (!readOnly) failures.push('readOnly() wrong');
+
+    // The People section belongs to the main account alone, and is not in
+    // the page at all for anyone else — a hidden section still carries every
+    // other account's username to somebody who should not have it.
+    sandbox.me = { username: 'mod', owner: false, access: { settings: 'write' },
+                   linkedPlayer: '', audited: false };
+    sandbox.settingsTab = 'almin';
+    const asMod = deepText(sandbox.settingsPanel());
+    const absent = !asMod.includes('s-people');
+    console.log((absent ? '  PASS  ' : '  FAIL  ') +
+      'People is not in the page for anyone but the main account');
+    if (!absent) failures.push('People markup served to a non-owner');
+
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '', audited: false };
+    const asOwner = deepText(sandbox.settingsPanel());
+    const there = asOwner.includes('s-people') && asOwner.includes('s-acadd');
+    console.log((there ? '  PASS  ' : '  FAIL  ') + '...and is there for it');
+    if (!there) failures.push('People missing for the owner');
+
+    sandbox.me = realMe;
+  } catch (e) {
+    console.log('  FAIL  accounts  -> ' + e.message);
+    failures.push('accounts: ' + e.message);
   }
 
   const missing = failures.filter((f) => f.startsWith('getElementById'));

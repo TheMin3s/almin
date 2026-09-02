@@ -61,6 +61,16 @@ public final class AlminConfig {
     public boolean webPublicMetrics = true;
     /** PBKDF2 hash of the admin password. Empty = login disabled (no full access). */
     public String webAdminPasswordHash = "";
+    /**
+     * What the owner types in the username box.
+     *
+     * <p>The owner's account is this name plus {@link #webAdminPasswordHash};
+     * it is not in accounts.json and cannot be edited or removed from the
+     * panel. A blank username still signs the owner in, so a panel that has
+     * never made a second account works exactly as it did before there were
+     * any.
+     */
+    public String webAdminUsername = "admin";
     /** How long a web login stays valid. */
     public int webSessionMinutes = 120;
     /**
@@ -405,6 +415,8 @@ public final class AlminConfig {
         // Listed so it shows in /almin config and can be cleared to "".
         textKey("web-admin-password-hash", "PBKDF2 hash of the web admin password (set via /almin op web password <pw>)",
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
+        textKey("web-admin-username", "Username for the owner account (its password is web-admin-password-hash)",
+            c -> c.webAdminUsername, (c, v) -> c.webAdminUsername = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
             c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
         boolKey("web-supervisor", "Keep the entire website up while the server is stopped, so it can be started from the browser",

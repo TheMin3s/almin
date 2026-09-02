@@ -20,7 +20,14 @@ public final class WebSessions {
     private static final long LOCKOUT_MS = 15 * 60_000L;
     private static final SecureRandom RNG = new SecureRandom();
 
-    private record Session(long expiresAt) {}
+    /**
+     * @param accountId whose session this is — {@code "owner"} for the
+     *                  config's own admin password, or an id from
+     *                  {@link Accounts}. Held here rather than in a cookie so
+     *                  that changing what somebody may reach takes effect on
+     *                  their next request rather than their next login.
+     */
+    private record Session(long expiresAt, String accountId) {}
     private record Attempts(int count, long since) {}
 
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
@@ -28,11 +35,35 @@ public final class WebSessions {
 
     /** Creates a session valid for {@code minutes} and returns its id. */
     public String open(int minutes) {
+        return open(minutes, "owner");
+    }
+
+    /** Creates a session belonging to {@code accountId} and returns its id. */
+    public String open(int minutes, String accountId) {
         byte[] raw = new byte[32];
         RNG.nextBytes(raw);
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
-        sessions.put(id, new Session(System.currentTimeMillis() + minutes * 60_000L));
+        sessions.put(id, new Session(System.currentTimeMillis() + minutes * 60_000L,
+            accountId == null ? "owner" : accountId));
         return id;
+    }
+
+    /** Whose session this is, or null if it is not a live one. */
+    public String accountOf(String id) {
+        if (id == null) return null;
+        Session s = sessions.get(id);
+        if (s == null) return null;
+        if (System.currentTimeMillis() >= s.expiresAt()) {
+            sessions.remove(id);
+            return null;
+        }
+        return s.accountId();
+    }
+
+    /** Ends every session belonging to one account — used when it is deleted. */
+    public void closeAccount(String accountId) {
+        if (accountId == null) return;
+        sessions.entrySet().removeIf(e -> accountId.equals(e.getValue().accountId()));
     }
 
     /** True if {@code id} names a live session; expired ones are dropped here. */

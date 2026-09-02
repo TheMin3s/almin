@@ -602,6 +602,22 @@ final class WebPage {
         <script>
         const $ = id => document.getElementById(id);
         let authed=false, secure=false, encrypted=false, pwSet=false, publicMetrics=true;
+        /**
+         * Who is signed in, and what they may reach.
+         *
+         * <p>`me.access` maps a tab id to 'none', 'read' or 'write'. The owner
+         * arrives with write on everything and `me.owner` true. Until the
+         * session says otherwise nobody may see anything, so a panel that is
+         * still loading does not flash a menu somebody is not allowed to open.
+         */
+        let me={username:'',owner:false,access:{},linkedPlayer:'',audited:false};
+        function mayRead(menu){
+          if(me.owner) return true;
+          const v=me.access?me.access[menu]:'';
+          return v==='read'||v==='write';
+        }
+        function mayWrite(menu){ return me.owner || (me.access&&me.access[menu]==='write'); }
+        function readOnly(menu){ return mayRead(menu) && !mayWrite(menu); }
         let serverRunning=true, canStart=false, supervisor=false;
         // Whether to ask the server for player faces at all. Off means the
         // lists draw initials instead and nothing is requested.
@@ -958,10 +974,14 @@ final class WebPage {
           $('srvstart').title=canStart?('Runs: '+startCommand)
                                       :(startProblem||'No way to start the server from here');
           const nav=$('nav'); nav.innerHTML='';
-          const tabs = authed ? [['dash','Overview'],['term','Console'],
-                                 ['activity','Activity'],['files','Files'],['players','Players'],
-                                 ['mods','Mods'],['settings','Settings']]
-                              : [['dash','Overview']];
+          const all = [['dash','Overview'],['term','Console'],
+                       ['activity','Activity'],['files','Files'],['players','Players'],
+                       ['mods','Mods'],['settings','Settings']];
+          // A menu somebody may not open is not drawn at all. A disabled tab
+          // would still tell them what exists and invite them to ask why.
+          const tabs = authed ? all.filter(t=>mayRead(t[0])) : [['dash','Overview']];
+          // Whatever they were looking at may have just been taken away.
+          if(authed && tabs.length && !tabs.some(t=>t[0]===tab)) tab=tabs[0][0];
           for(const [id,label] of tabs){
             const b=document.createElement('button'); b.className=(id===tab?'on':'');
             // Settings is the one tab that is a place rather than a subject,
@@ -1042,21 +1062,32 @@ final class WebPage {
             '<p class="muted" style="color:#ffcc55">This connection is plain HTTP &mdash; your password '+
             'will cross the network unencrypted. Fine on a trusted LAN; put TLS in front before '+
             'exposing this to the internet.</p>'); }
-          const pw=document.createElement('input'); pw.type='password'; pw.placeholder='Admin password';
+          // Left empty this signs in the main account, which is how every
+          // existing bookmark and habit works. It is only filled in by the
+          // people the owner has since added.
+          const user=document.createElement('input'); user.type='text';
+          user.id='login-user';
+          user.placeholder='Username (leave empty for the main account)';
+          user.autocomplete='username';
+          const pw=document.createElement('input'); pw.type='password'; pw.placeholder='Password';
           pw.autocomplete='current-password';
           const btn=document.createElement('button'); btn.className='btn'; btn.textContent='Log in';
           const msg=document.createElement('div'); msg.className='msg err';
-          pw.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); doLogin(pw.value,msg); } };
-          btn.onclick=()=>doLogin(pw.value,msg);
-          box.append(pw,btn,msg);
+          const go=()=>doLogin(pw.value,msg,user.value);
+          user.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); pw.focus(); } };
+          pw.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } };
+          btn.onclick=go;
+          box.append(user,pw,btn,msg);
           return box;
         }
-        async function doLogin(pw,msg){
+        async function doLogin(pw,msg,user){
           msg.textContent='';
-          const r=await jpost('/api/login',{password:pw});
+          const r=await jpost('/api/login',{password:pw,username:user||''});
           if(r.status===200){ authed=true; await refreshOnce(); tab='dash'; render(); }
           else if(r.status===429) msg.textContent='Too many attempts — locked out for '+(r.body.minutes||15)+' min.';
-          else if(r.body&&r.body.remaining!=null) msg.textContent='Wrong password. '+r.body.remaining+' attempt(s) left.';
+          else if(r.body&&r.body.remaining!=null)
+            msg.textContent='That username and password do not match. '+
+              r.body.remaining+' attempt(s) left.';
           else msg.textContent='Login failed.';
         }
 
@@ -6527,6 +6558,18 @@ final class WebPage {
             'placeholder="new password (8+ characters)">'+
             '<button class="btn" id="s-pwgo">Set</button></div>'+
             '<div class="msg" id="s-pwmsg"></div></section>'+
+            (me.owner?'<section id="s-people"><h2>People</h2>'+
+            '<p class="muted">Accounts that can sign in to this panel, and what each of '+
+            'them may reach. Every menu is separately <b>none</b>, <b>read</b> or '+
+            '<b>write</b>; a new account starts with none of them. This account is not in '+
+            'the list and cannot be edited from it \u2014 change its password above.</p>'+
+            '<div class="term"><input id="s-acnew" placeholder="new username" '+
+            'autocomplete="off" maxlength="24">'+
+            '<input id="s-acpw" type="password" placeholder="password (8+)" '+
+            'autocomplete="new-password">'+
+            '<button class="btn go" id="s-acadd">Add</button></div>'+
+            '<div class="msg" id="s-acmsg"></div>'+
+            '<div id="s-aclist"><div class="note">\u2026</div></div></section>':'')+
             '<section><h2>Version</h2><div id="s-update" class="muted">checking…</div>'+
             '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
             '<button class="btn" id="s-check">Check again</button>'+
@@ -6603,6 +6646,14 @@ final class WebPage {
             for(const id of ['s-aiurl','s-aitimeout','s-aimodel','s-aikey','s-aiimage'])
               $(id).oninput=aiFormChanged;
             $('s-pwgo').onclick=setPassword;
+            // Only the owner is served this section at all. Hiding it with
+            // CSS would still put every other account's username into a page
+            // somebody else is holding.
+            if(me.owner && $('s-acadd')){
+              $('s-acadd').onclick=addAccount;
+              $('s-acpw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); addAccount(); } };
+              loadAccounts();
+            }
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
             $('s-apply').onclick=updateDialog;
@@ -6611,6 +6662,237 @@ final class WebPage {
           },0);
           return wrap;
         }
+        // ---- accounts ----
+
+        let accounts=[], accountMenus=[];
+
+        async function loadAccounts(){
+          const box=$('s-aclist'); if(!box) return;
+          const r=await jget('/api/accounts');
+          if(r.status!==200){
+            box.innerHTML='<div class="note">'+esc(why(r))+'</div>';
+            return;
+          }
+          accounts=r.body.accounts||[];
+          accountMenus=r.body.menus||[];
+          paintAccounts();
+        }
+
+        function paintAccounts(){
+          const box=$('s-aclist'); if(!box) return;
+          box.innerHTML='';
+          if(!accounts.length){
+            box.innerHTML='<div class="note">Nobody else has an account yet. '+
+              'Whoever you add here signs in with the username and password you give '+
+              'them, and sees nothing until you say what they may reach.</div>';
+            return;
+          }
+          for(const a of accounts) box.appendChild(accountCard(a));
+        }
+
+        /**
+         * One account: who they are, who they are in game, and a row of
+         * three-way switches, one per menu.
+         */
+        function accountCard(a){
+          const card=document.createElement('div'); card.className='pcard';
+          const top=document.createElement('div'); top.className='row';
+          top.style.alignItems='center'; top.style.gap='10px';
+          const who=document.createElement('span'); who.className='k';
+          who.style.whiteSpace='normal';
+          who.innerHTML='<b style="color:var(--ink)">'+esc(a.username)+'</b>'+
+            '<br><span class="muted" style="font-size:12px">'+
+            (a.mcName?('plays as '+esc(a.mcName)):'not linked to a player')+
+            (a.lastLogin?(' · last in '+esc(fmtWhen(a.lastLogin))):' · never signed in')+
+            '</span>';
+          who.style.marginRight='auto';
+          top.appendChild(who);
+          if(a.mcName) top.insertBefore(avatar(a.mcName,a.mcUuid||'','lg'),who);
+
+          const link=document.createElement('button'); link.className='btn';
+          link.textContent=a.mcName?'Change player':'Link player';
+          link.title='Find the Minecraft account this person plays on';
+          link.onclick=()=>linkAccountDialog(a);
+
+          const pw=document.createElement('button'); pw.className='btn';
+          pw.textContent='Password';
+          pw.onclick=()=>accountPasswordDialog(a);
+
+          const ren=document.createElement('button'); ren.className='btn';
+          ren.textContent='Rename';
+          ren.onclick=()=>{ const v=prompt('Username for this account:',a.username);
+            if(v===null) return; postAccount({action:'rename',id:a.id,username:v.trim()}); };
+
+          const del=document.createElement('button'); del.className='btn danger';
+          del.textContent='Remove';
+          del.onclick=()=>{
+            if(!confirm('Remove '+a.username+'? They are signed out immediately.')) return;
+            postAccount({action:'delete',id:a.id});
+          };
+          top.append(link,pw,ren,del);
+          card.appendChild(top);
+
+          const grid=document.createElement('div');
+          grid.className='row'; grid.style.flexWrap='wrap'; grid.style.gap='8px';
+          grid.style.marginTop='10px';
+          for(const m of accountMenus) grid.appendChild(accessPicker(a,m));
+          card.appendChild(grid);
+
+          // Recording somebody's use of the Activity menu is a decision about
+          // watching a person, so it is spelled out rather than being a bare
+          // switch, and it says that they are told.
+          const audit=document.createElement('label');
+          audit.className='note';
+          audit.style.display='flex'; audit.style.alignItems='center'; audit.style.gap='8px';
+          audit.style.marginTop='10px';
+          const box=document.createElement('input'); box.type='checkbox';
+          box.checked=!!a.auditActivity;
+          box.onchange=()=>postAccount({action:'audit',id:a.id,on:box.checked});
+          const t=document.createElement('span');
+          t.textContent='Record what '+a.username+' looks at in Activity, and tell them '+
+            'it is recorded when they open it.';
+          audit.append(box,t);
+          card.appendChild(audit);
+          return card;
+        }
+
+        /** none / read / write for one menu, as a labelled select. */
+        function accessPicker(a,m){
+          const wrap=document.createElement('label');
+          wrap.style.display='flex'; wrap.style.flexDirection='column';
+          wrap.style.gap='3px'; wrap.style.fontSize='12px';
+          const name=document.createElement('span');
+          name.className='muted'; name.textContent=m.name;
+          const sel=document.createElement('select');
+          for(const [v,label] of [['none','no access'],['read','read only'],['write','can change']]){
+            const o=document.createElement('option'); o.value=v; o.textContent=label;
+            sel.appendChild(o);
+          }
+          sel.value=(a.access&&a.access[m.id])||'none';
+          sel.onchange=()=>postAccount({action:'access',id:a.id,menu:m.id,level:sel.value});
+          wrap.append(name,sel);
+          return wrap;
+        }
+
+        async function addAccount(){
+          const name=$('s-acnew'), pw=$('s-acpw');
+          const ok=await postAccount({action:'create',username:name.value.trim(),
+                                      password:pw.value});
+          if(ok){ name.value=''; pw.value=''; }
+        }
+
+        function accountPasswordDialog(a){
+          modal('Password for '+a.username,(body,close)=>{
+            const p=document.createElement('p'); p.className='note';
+            p.textContent='They are not signed out; the new password applies the next '+
+              'time they sign in.';
+            const pw=document.createElement('input'); pw.type='password';
+            pw.placeholder='new password (8+ characters)';
+            pw.autocomplete='new-password';
+            const msg=document.createElement('div'); msg.className='msg';
+            const go=document.createElement('button'); go.className='btn go';
+            go.textContent='Set';
+            go.onclick=async()=>{
+              const r=await jpost('/api/accounts',{action:'password',id:a.id,password:pw.value});
+              if(r.status===200){ close(); accountSaid(r); loadAccounts(); }
+              else { msg.className='msg err'; msg.textContent=why(r); }
+            };
+            pw.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); go.click(); } };
+            body.append(p,pw,go,msg);
+            pw.focus();
+          });
+        }
+
+        /**
+         * Finds the Minecraft account somebody plays on, by typing part of it.
+         *
+         * <p>Searched against the players this server has actually seen rather
+         * than left as free text, so a linked name is one that exists and its
+         * UUID comes along with it. Typing a name the server has never seen is
+         * still allowed — somebody can be given an account before they first
+         * join — it just gets no face and no UUID.
+         */
+        function linkAccountDialog(a){
+          modal('Link '+a.username+' to a player',(body,close)=>{
+            const p=document.createElement('p'); p.className='note';
+            p.textContent='Type part of a Minecraft name. The list is the players this '+
+              'server has seen.';
+            const find=document.createElement('input');
+            find.placeholder='name'; find.value=a.mcName||'';
+            const hits=document.createElement('div');
+            hits.style.maxHeight='240px'; hits.style.overflowY='auto';
+            hits.style.marginTop='8px';
+            const msg=document.createElement('div'); msg.className='msg';
+            const choose=async(name,uuid)=>{
+              const r=await jpost('/api/accounts',{action:'link',id:a.id,mcName:name,mcUuid:uuid||''});
+              if(r.status===200){ close(); accountSaid(r); loadAccounts(); }
+              else { msg.className='msg err'; msg.textContent=why(r); }
+            };
+            // Fetched here rather than read from the Players tab, because
+            // Settings can be opened without ever going there.
+            let known={online:[],history:[]};
+            const paint=()=>{
+              const q=(find.value||'').trim().toLowerCase();
+              hits.innerHTML='';
+              const seen=new Set(); const rows=[];
+              for(const src of [known.online||[],known.history||[]]){
+                for(const p of src){
+                  if(!p.name || seen.has(p.name.toLowerCase())) continue;
+                  if(q && !p.name.toLowerCase().includes(q)) continue;
+                  seen.add(p.name.toLowerCase()); rows.push(p);
+                  if(rows.length>=40) break;
+                }
+              }
+              if(!rows.length){
+                const none=document.createElement('div'); none.className='note';
+                none.textContent=q?('No player here matches “'+q+'”.')
+                                  :'This server has not seen anybody yet.';
+                hits.appendChild(none);
+              }
+              for(const pl of rows){
+                const row=document.createElement('div'); row.className='row';
+                row.style.alignItems='center'; row.style.gap='8px';
+                row.style.padding='4px 0';
+                row.appendChild(avatar(pl.name,pl.uuid||'','sm'));
+                const nm=document.createElement('span');
+                nm.textContent=pl.name; nm.style.marginRight='auto';
+                const pick=document.createElement('button'); pick.className='btn';
+                pick.textContent='Link'; pick.onclick=()=>choose(pl.name,pl.uuid||'');
+                row.append(nm,pick);
+                hits.appendChild(row);
+              }
+            };
+            find.oninput=paint;
+            find.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault();
+              choose((find.value||'').trim(),''); } };
+            body.append(p,find,hits,msg);
+            if(a.mcName){
+              const un=document.createElement('button'); un.className='btn danger';
+              un.textContent='Unlink'; un.style.marginTop='10px';
+              un.onclick=()=>choose('','');
+              body.appendChild(un);
+            }
+            paint(); find.focus();
+            jget('/api/players').then(r=>{
+              if(r.status===200) known=r.body||known;
+              paint();
+            });
+          });
+        }
+
+        function accountSaid(r){
+          const msg=$('s-acmsg'); if(!msg) return;
+          msg.className='msg '+(r.status===200?'ok':'err');
+          msg.textContent=r.status===200?((r.body&&r.body.message)||'Done.'):why(r);
+        }
+
+        async function postAccount(payload){
+          const r=await jpost('/api/accounts',payload);
+          accountSaid(r);
+          if(r.status===200){ await loadAccounts(); return true; }
+          return false;
+        }
+
         // What will actually happen when someone presses Restart. A restart
         // that quietly cannot restart is the failure worth naming here.
         function showRelaunch(){
@@ -7996,6 +8278,9 @@ final class WebPage {
           const s=await jget('/api/session');
           if(s.status!==200) return;
           authed=!!s.body.authed; secure=!!s.body.secure; pwSet=!!s.body.passwordSet;
+          me={username:s.body.username||'', owner:!!s.body.owner,
+              access:s.body.access||{}, linkedPlayer:s.body.linkedPlayer||'',
+              audited:!!s.body.audited};
           encrypted=!!s.body.encrypted;
           publicMetrics=!!s.body.publicMetrics; canStart=!!s.body.canStart;
           supervisor=!!s.body.supervisor;

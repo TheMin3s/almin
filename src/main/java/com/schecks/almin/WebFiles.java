@@ -107,7 +107,8 @@ public final class WebFiles {
      * Files the browser will not open, even for an admin who is allowed to
      * open everything else.
      *
-     * <p>Only one so far: the AI provider's API key. It is a credential, and
+     * <p>Two: the AI provider's API key, and the panel's account list, which
+     * holds password hashes. Both are credentials, and
      * the browser both displays a file's contents and downloads it — so
      * "readable by an admin" here means "in a browser tab, in a proxy log, and
      * in whatever they paste into a bug report". Refusing it by path is a
@@ -118,8 +119,9 @@ public final class WebFiles {
      * there is no route that forgot.
      */
     static boolean secret(Path base, Path target) {
-        return target.equals(base.resolve("config").resolve("almin")
-            .resolve(AiInsights.keyFileName()));
+        Path dir = base.resolve("config").resolve("almin");
+        return target.equals(dir.resolve(AiInsights.keyFileName()))
+            || target.equals(dir.resolve(Accounts.fileName()));
     }
 
     /**
