@@ -284,66 +284,66 @@ public final class WebUi {
         HttpServer http = HttpServer.create(new InetSocketAddress(bind, port), 32);
         ExecutorService pool = Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor));
         WebUi ui = new WebUi(http, pool, server, bind, port);
-        http.createContext("/", guard("/", ui::handleRoot));
-        http.createContext("/api/session", guard("/api/session", ui::handleSession));
-        http.createContext("/api/public", guard("/api/public", ui::handlePublic));
-        http.createContext("/api/login", guard("/api/login", ui::handleLogin));
-        http.createContext("/api/logout", guard("/api/logout", ui::handleLogout));
-        http.createContext("/api/state", guard("/api/state", ui::handleState));
-        http.createContext("/api/console", guard("/api/console", ui::handleConsole));
-        http.createContext("/api/exec", guard("/api/exec", ui::handleExec));
-        http.createContext("/api/files", guard("/api/files", ui::handleFiles));
-        http.createContext("/api/file", guard("/api/file", ui::handleFile));
-        http.createContext("/api/file/delete", guard("/api/file/delete", ui::handleFileDelete));
-        http.createContext("/api/file/rename", guard("/api/file/rename", ui::handleFileRename));
-        http.createContext("/api/file/mkdir", guard("/api/file/mkdir", ui::handleFileMkdir));
-        http.createContext("/api/server", guard("/api/server", ui::handleServerControl));
-        http.createContext("/api/mods", guard("/api/mods", ui::handleMods));
-        http.createContext("/api/mods/save", guard("/api/mods/save", ui::handleModSave));
-        http.createContext("/api/mods/delete", guard("/api/mods/delete", ui::handleModDelete));
-        http.createContext("/api/mods/files", guard("/api/mods/files", ui::handleModFiles));
-        http.createContext("/api/mods/upload", guard("/api/mods/upload", ui::handleModUpload));
-        http.createContext("/api/mods/files/delete", guard("/api/mods/files/delete", ui::handleModFileDelete));
-        http.createContext("/api/mods/modrinth", guard("/api/mods/modrinth", ui::handleModrinth));
-        http.createContext("/api/mods/icon", guard("/api/mods/icon", ui::handleModIcon));
-        http.createContext("/api/config", guard("/api/config", ui::handleConfig));
-        http.createContext("/api/config/reload", guard("/api/config/reload", ui::handleConfigReload));
-        http.createContext("/api/password", guard("/api/password", ui::handlePassword));
-        http.createContext("/api/accounts", guard("/api/accounts", ui::handleAccounts));
-        http.createContext("/api/update", guard("/api/update", ui::handleUpdate));
-        http.createContext("/api/clearlog", guard("/api/clearlog", ui::handleClearLog));
-        http.createContext("/api/reset", guard("/api/reset", ui::handleReset));
-        http.createContext("/api/players", guard("/api/players", ui::handlePlayers));
+        http.createContext("/", ui.guard("/", ui::handleRoot));
+        http.createContext("/api/session", ui.guard("/api/session", ui::handleSession));
+        http.createContext("/api/public", ui.guard("/api/public", ui::handlePublic));
+        http.createContext("/api/login", ui.guard("/api/login", ui::handleLogin));
+        http.createContext("/api/logout", ui.guard("/api/logout", ui::handleLogout));
+        http.createContext("/api/state", ui.guard("/api/state", ui::handleState));
+        http.createContext("/api/console", ui.guard("/api/console", ui::handleConsole));
+        http.createContext("/api/exec", ui.guard("/api/exec", ui::handleExec));
+        http.createContext("/api/files", ui.guard("/api/files", ui::handleFiles));
+        http.createContext("/api/file", ui.guard("/api/file", ui::handleFile));
+        http.createContext("/api/file/delete", ui.guard("/api/file/delete", ui::handleFileDelete));
+        http.createContext("/api/file/rename", ui.guard("/api/file/rename", ui::handleFileRename));
+        http.createContext("/api/file/mkdir", ui.guard("/api/file/mkdir", ui::handleFileMkdir));
+        http.createContext("/api/server", ui.guard("/api/server", ui::handleServerControl));
+        http.createContext("/api/mods", ui.guard("/api/mods", ui::handleMods));
+        http.createContext("/api/mods/save", ui.guard("/api/mods/save", ui::handleModSave));
+        http.createContext("/api/mods/delete", ui.guard("/api/mods/delete", ui::handleModDelete));
+        http.createContext("/api/mods/files", ui.guard("/api/mods/files", ui::handleModFiles));
+        http.createContext("/api/mods/upload", ui.guard("/api/mods/upload", ui::handleModUpload));
+        http.createContext("/api/mods/files/delete", ui.guard("/api/mods/files/delete", ui::handleModFileDelete));
+        http.createContext("/api/mods/modrinth", ui.guard("/api/mods/modrinth", ui::handleModrinth));
+        http.createContext("/api/mods/icon", ui.guard("/api/mods/icon", ui::handleModIcon));
+        http.createContext("/api/config", ui.guard("/api/config", ui::handleConfig));
+        http.createContext("/api/config/reload", ui.guard("/api/config/reload", ui::handleConfigReload));
+        http.createContext("/api/password", ui.guard("/api/password", ui::handlePassword));
+        http.createContext("/api/accounts", ui.guard("/api/accounts", ui::handleAccounts));
+        http.createContext("/api/update", ui.guard("/api/update", ui::handleUpdate));
+        http.createContext("/api/clearlog", ui.guard("/api/clearlog", ui::handleClearLog));
+        http.createContext("/api/reset", ui.guard("/api/reset", ui::handleReset));
+        http.createContext("/api/players", ui.guard("/api/players", ui::handlePlayers));
         http.createContext("/api/players/action",
-            guard("/api/players/action", ui::handlePlayerAction));
-        http.createContext("/api/mask", guard("/api/mask", ui::handleMask));
-        http.createContext("/api/file/upload", guard("/api/file/upload", ui::handleFileUpload));
-        http.createContext("/api/file/download", guard("/api/file/download", ui::handleFileDownload));
-        http.createContext("/api/fetch", guard("/api/fetch", ui::handleFetch));
-        http.createContext("/api/activity", guard("/api/activity", ui::handleActivity));
-        http.createContext("/api/track", guard("/api/track", ui::handleTrack));
-        http.createContext("/api/map", guard("/api/map", ui::handleMap));
-        http.createContext("/api/bluemap", guard("/api/bluemap", ui::handleBlueMap));
-        http.createContext("/bluemap", guard("/bluemap", ui::handleBlueMapProxy));
+            ui.guard("/api/players/action", ui::handlePlayerAction));
+        http.createContext("/api/mask", ui.guard("/api/mask", ui::handleMask));
+        http.createContext("/api/file/upload", ui.guard("/api/file/upload", ui::handleFileUpload));
+        http.createContext("/api/file/download", ui.guard("/api/file/download", ui::handleFileDownload));
+        http.createContext("/api/fetch", ui.guard("/api/fetch", ui::handleFetch));
+        http.createContext("/api/activity", ui.guard("/api/activity", ui::handleActivity));
+        http.createContext("/api/track", ui.guard("/api/track", ui::handleTrack));
+        http.createContext("/api/map", ui.guard("/api/map", ui::handleMap));
+        http.createContext("/api/bluemap", ui.guard("/api/bluemap", ui::handleBlueMap));
+        http.createContext("/bluemap", ui.guard("/bluemap", ui::handleBlueMapProxy));
         http.createContext("/api/scene/context",
-            guard("/api/scene/context", ui::handleSceneContext));
-        http.createContext("/api/head", guard("/api/head", ui::handleHead));
-        http.createContext("/api/insights", guard("/api/insights", ui::handleInsights));
-        http.createContext("/api/insights/find", guard("/api/insights/find", ui::handleFind));
-        http.createContext("/api/ai/key", guard("/api/ai/key", ui::handleAiKey));
+            ui.guard("/api/scene/context", ui::handleSceneContext));
+        http.createContext("/api/head", ui.guard("/api/head", ui::handleHead));
+        http.createContext("/api/insights", ui.guard("/api/insights", ui::handleInsights));
+        http.createContext("/api/insights/find", ui.guard("/api/insights/find", ui::handleFind));
+        http.createContext("/api/ai/key", ui.guard("/api/ai/key", ui::handleAiKey));
         http.createContext("/api/ai/diagnostics",
-            guard("/api/ai/diagnostics", ui::handleAiDiagnostics));
-        http.createContext("/api/client/review", guard("/api/client/review", ui::handleModReview));
-        http.createContext("/api/servermods", guard("/api/servermods", ui::handleServerMods));
+            ui.guard("/api/ai/diagnostics", ui::handleAiDiagnostics));
+        http.createContext("/api/client/review", ui.guard("/api/client/review", ui::handleModReview));
+        http.createContext("/api/servermods", ui.guard("/api/servermods", ui::handleServerMods));
         http.createContext("/api/servermods/upload",
-            guard("/api/servermods/upload", ui::handleServerModUpload));
+            ui.guard("/api/servermods/upload", ui::handleServerModUpload));
         http.createContext("/api/servermods/change",
-            guard("/api/servermods/change", ui::handleServerModChange));
-        http.createContext("/api/properties", guard("/api/properties", ui::handleProperties));
-        http.createContext("/api/blocks", guard("/api/blocks", ui::handleBlocks));
-        http.createContext("/api/block", guard("/api/block", ui::handleBlock));
-        http.createContext("/api/item", guard("/api/item", ui::handleItem));
-        http.createContext("/api/client", guard("/api/client", ui::handleClient));
+            ui.guard("/api/servermods/change", ui::handleServerModChange));
+        http.createContext("/api/properties", ui.guard("/api/properties", ui::handleProperties));
+        http.createContext("/api/blocks", ui.guard("/api/blocks", ui::handleBlocks));
+        http.createContext("/api/block", ui.guard("/api/block", ui::handleBlock));
+        http.createContext("/api/item", ui.guard("/api/item", ui::handleItem));
+        http.createContext("/api/client", ui.guard("/api/client", ui::handleClient));
         // In supervisor mode the web threads must be non-daemon, or the JVM
         // exits the moment the server thread ends and takes the panel with it.
         http.setExecutor(pool);
@@ -441,12 +441,89 @@ public final class WebUi {
      *
      * <p>Now the reason reaches the person who caused it, and the log.
      */
-    private static com.sun.net.httpserver.HttpHandler guard(
+    /**
+     * What each route belongs to, and therefore who may reach it.
+     *
+     * <p>The permission check lives here rather than in the handlers for the
+     * same reason {@link WebFiles#secret} lives in the resolver: there are
+     * fifty-odd routes and a check written out fifty times is a check that
+     * one route forgot. A path that is not in this table needs a session and
+     * nothing more — that is the login, the logout, the session description,
+     * the public metrics page and the head renderer, which every menu draws
+     * from.
+     *
+     * <p>The method decides read from write. GET and HEAD look; POST, PUT and
+     * DELETE change. That falls out right almost everywhere, and where a route
+     * does both it does them under those two verbs already — GET /api/insights
+     * returns the summary that exists, POST /api/insights asks the model for a
+     * new one, which spends the owner's money and sends player data to a third
+     * party. A read-only account gets the first and not the second.
+     */
+    private static final java.util.Map<String, String> ROUTE_MENU = java.util.Map.ofEntries(
+        java.util.Map.entry("/api/console", "term"),
+        java.util.Map.entry("/api/exec", "term"),
+        java.util.Map.entry("/api/files", "files"),
+        java.util.Map.entry("/api/file", "files"),
+        java.util.Map.entry("/api/file/delete", "files"),
+        java.util.Map.entry("/api/file/rename", "files"),
+        java.util.Map.entry("/api/file/mkdir", "files"),
+        java.util.Map.entry("/api/file/upload", "files"),
+        java.util.Map.entry("/api/file/download", "files"),
+        java.util.Map.entry("/api/fetch", "files"),
+        java.util.Map.entry("/api/mods", "mods"),
+        java.util.Map.entry("/api/mods/save", "mods"),
+        java.util.Map.entry("/api/mods/delete", "mods"),
+        java.util.Map.entry("/api/mods/files", "mods"),
+        java.util.Map.entry("/api/mods/upload", "mods"),
+        java.util.Map.entry("/api/mods/files/delete", "mods"),
+        java.util.Map.entry("/api/mods/modrinth", "mods"),
+        java.util.Map.entry("/api/mods/icon", "mods"),
+        java.util.Map.entry("/api/servermods", "mods"),
+        java.util.Map.entry("/api/servermods/upload", "mods"),
+        java.util.Map.entry("/api/servermods/change", "mods"),
+        java.util.Map.entry("/api/players", "players"),
+        java.util.Map.entry("/api/players/action", "players"),
+        java.util.Map.entry("/api/mask", "players"),
+        java.util.Map.entry("/api/client", "players"),
+        java.util.Map.entry("/api/client/review", "players"),
+        java.util.Map.entry("/api/activity", "activity"),
+        java.util.Map.entry("/api/track", "activity"),
+        java.util.Map.entry("/api/map", "activity"),
+        java.util.Map.entry("/api/bluemap", "activity"),
+        java.util.Map.entry("/bluemap", "activity"),
+        java.util.Map.entry("/api/scene/context", "activity"),
+        java.util.Map.entry("/api/blocks", "activity"),
+        java.util.Map.entry("/api/block", "activity"),
+        java.util.Map.entry("/api/item", "activity"),
+        java.util.Map.entry("/api/insights", "activity"),
+        java.util.Map.entry("/api/insights/find", "activity"),
+        // Clearing the log is offered under "Start again" on the Activity tab,
+        // and it is the most destructive thing that tab can do.
+        java.util.Map.entry("/api/reset", "activity"),
+        java.util.Map.entry("/api/config", "settings"),
+        java.util.Map.entry("/api/config/reload", "settings"),
+        java.util.Map.entry("/api/password", "settings"),
+        java.util.Map.entry("/api/properties", "settings"),
+        java.util.Map.entry("/api/update", "settings"),
+        java.util.Map.entry("/api/clearlog", "settings"),
+        java.util.Map.entry("/api/ai/key", "settings"),
+        java.util.Map.entry("/api/ai/diagnostics", "settings"),
+        java.util.Map.entry("/api/state", "dash"),
+        java.util.Map.entry("/api/server", "dash"));
+
+    /** Whether this method is asking to change something. */
+    private static boolean changing(String method) {
+        return !("GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method));
+    }
+
+    private com.sun.net.httpserver.HttpHandler guard(
             String route, com.sun.net.httpserver.HttpHandler inner) {
-        // route is only for readability at the call sites; fault() reads the
-        // real path off the exchange.
+        // route is the registered path; it names which menu this belongs to,
+        // and fault() reads the real path off the exchange.
+        String menu = ROUTE_MENU.get(route);
         return ex -> {
             try {
+                if (menu != null && !allowed(ex, menu)) return;
                 inner.handle(ex);
             } catch (Throwable t) {
                 // Belt to the routes' own braces: this catches anything thrown
@@ -3847,6 +3924,29 @@ public final class WebUi {
         String id = sessions.accountOf(cookie(ex, SESSION_COOKIE));
         if (id == null) return null;
         return id.equals("owner") ? Accounts.owner() : Accounts.byId(id);
+    }
+
+    /**
+     * The gate every menu-owning route passes through.
+     *
+     * <p>Answers the request itself and returns false when the caller may not
+     * have it, so the caller only has to not continue. An unauthenticated
+     * request falls through to the handler's own {@code requireAuth}, which
+     * still runs — this adds a check, it never removes one.
+     */
+    private boolean allowed(HttpExchange ex, String menu) throws IOException {
+        Accounts.Account me = who(ex);
+        // Not signed in at all: leave it to the handler, which knows whether
+        // this route needs a session and answers in its own words.
+        if (me == null) return true;
+        boolean write = changing(ex.getRequestMethod());
+        if (write ? me.canWrite(menu) : me.canRead(menu)) return true;
+        String said = me.canRead(menu)
+            ? "You have " + Accounts.menuName(menu) + " as read-only."
+            : "Your account cannot open " + Accounts.menuName(menu) + ".";
+        json(ex, 403, err(said));
+        ex.close();
+        return false;
     }
 
     /** 401s unless the caller may at least look at {@code menu}. */

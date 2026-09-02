@@ -129,6 +129,35 @@ public class AccountTests {
         check("removing something that is not there is refused",
             !Accounts.delete(back.id()).ok());
 
+        // ---- every route is classified ----
+        // The check that matters over time: a route added later and not put
+        // in ROUTE_MENU would be reachable by every account regardless of
+        // what they were granted. This reads the source rather than the
+        // running server, because that is where the omission would be.
+        String web = Files.readString(Path.of("src/main/java/com/schecks/almin/WebUi.java"));
+        java.util.List<String> open = List.of("/", "/api/session", "/api/public", "/api/login",
+            "/api/logout", "/api/accounts", "/api/head");
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("createContext\\(\"([^\"]+)\"").matcher(web);
+        String table = web.substring(web.indexOf("ROUTE_MENU = "),
+            web.indexOf("/** Whether this method is asking to change something. */"));
+        java.util.List<String> unclassified = new java.util.ArrayList<>();
+        int routes = 0;
+        while (m.find()) {
+            String path = m.group(1);
+            routes++;
+            if (open.contains(path)) continue;
+            if (!table.contains("\"" + path + "\"")) unclassified.add(path);
+        }
+        check("every route was found (" + routes + ")", routes > 40);
+        check("every route belongs to a menu or is deliberately open: " + unclassified,
+            unclassified.isEmpty());
+
+        // And the open ones are open on purpose, not by omission.
+        check("the login is reachable without an account", open.contains("/api/login"));
+        check("account management is not in the table — it is owner-only in the handler",
+            !table.contains("\"/api/accounts\""));
+
         System.out.println(failures == 0 ? "ACCOUNTS OK" : failures + " ACCOUNT FAILURES");
         if (failures > 0) System.exit(1);
     }

@@ -113,7 +113,7 @@ public class BlueMapTests {
                     && !integration.contains("Class.forName(\"de.bluecolored")
                     && !proxy.contains("de.bluecolored"), "BlueMap Java linkage found");
             check("every proxied tile is behind the Almin session",
-                web.contains("/bluemap\", guard(\"/bluemap\", ui::handleBlueMapProxy)")
+                web.contains("/bluemap\", ui.guard(\"/bluemap\", ui::handleBlueMapProxy)")
                     && section(web, "private void handleBlueMapProxy", 500)
                         .contains("requireAuth(ex)"), "proxy route is public");
             check("download acceptance requires an explicit panel action",

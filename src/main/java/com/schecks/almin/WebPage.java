@@ -996,6 +996,7 @@ final class WebPage {
           setChrome();
           const m=$('main'); m.innerHTML='';
           if(!authed && tab!=='dash') tab='dash';
+          if(authed && readOnly(tab)) m.appendChild(readOnlyNote(tab));
           if(tab==='dash') m.appendChild(dashPanel());
           else if(tab==='term') m.appendChild(termPanel());
           else if(tab==='files') m.appendChild(filesPanel());
@@ -1003,6 +1004,49 @@ final class WebPage {
           else if(tab==='players') m.appendChild(playersPanel());
           else if(tab==='activity') m.appendChild(activityPanel());
           else if(tab==='settings') m.appendChild(settingsPanel());
+          if(authed) lockWrites(m,tab);
+        }
+
+        /** What a tab is called, matching the server's own names. */
+        function menuLabel(menu){
+          return ({dash:'Overview',term:'Console',activity:'Activity',files:'Files',
+                   players:'Players',mods:'Mods',settings:'Settings'})[menu]||menu;
+        }
+
+        function readOnlyNote(menu){
+          const box=document.createElement('div');
+          box.className='msg';
+          box.id='ro-note';
+          box.style.marginBottom='12px';
+          box.textContent='You have '+menuLabel(menu)+' as read-only. You can see '+
+            'everything here; anything that would change it is turned off.';
+          return box;
+        }
+
+        /**
+         * Turns off the controls that do something, on a read-only tab.
+         *
+         * <p>This is a courtesy, not the enforcement — the server refuses the
+         * request whatever the page does, and says why. What it is for is the
+         * button that looks pressable and is not.
+         *
+         * <p>It disables the two classes this panel uses for acting on
+         * something, `go` and `danger`, and deliberately leaves plain buttons
+         * alone: entering a folder, opening a player, switching a sub-tab and
+         * changing the time window are all plain buttons, and a read-only
+         * Files tab you cannot browse would be worse than useless.
+         */
+        function lockWrites(root,menu){
+          if(!readOnly(menu)) return;
+          const why='You have '+menuLabel(menu)+' as read-only.';
+          (function walk(el){
+            if(!el||typeof el!=='object') return;
+            const tag=(el.tagName||'').toLowerCase();
+            if(tag==='button' && /(^|\s)(go|danger)(\s|$)/.test(el.className||'')){
+              el.disabled=true; el.title=why;
+            }
+            for(const k of el.children||[]) walk(k);
+          })(root);
         }
 
         function dashPanel(){
@@ -6706,8 +6750,8 @@ final class WebPage {
             (a.lastLogin?(' · last in '+esc(fmtWhen(a.lastLogin))):' · never signed in')+
             '</span>';
           who.style.marginRight='auto';
+          if(a.mcName) top.appendChild(avatar(a.mcName,a.mcUuid||'','lg'));
           top.appendChild(who);
-          if(a.mcName) top.insertBefore(avatar(a.mcName,a.mcUuid||'','lg'),who);
 
           const link=document.createElement('button'); link.className='btn';
           link.textContent=a.mcName?'Change player':'Link player';

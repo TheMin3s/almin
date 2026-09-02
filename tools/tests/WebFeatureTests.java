@@ -78,7 +78,7 @@ public class WebFeatureTests {
                 }
                 catch (Exception e) { throw new RuntimeException(e); }
             };
-            http.createContext(r[0], (com.sun.net.httpserver.HttpHandler) g.invoke(null, r[0], raw));
+            http.createContext(r[0], (com.sun.net.httpserver.HttpHandler) g.invoke(ui, r[0], raw));
         }
         http.setExecutor(Executors.newFixedThreadPool(4));
         http.start();

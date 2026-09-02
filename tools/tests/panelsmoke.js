@@ -3359,6 +3359,44 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((there ? '  PASS  ' : '  FAIL  ') + '...and is there for it');
     if (!there) failures.push('People missing for the owner');
 
+    // ---- read-only ----
+    sandbox.me = { username: 'mod', owner: false, access: { players: 'read' },
+                   linkedPlayer: '', audited: false };
+    sandbox.tab = 'players'; sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    const note = byId.get('ro-note');
+    const told = note && /read-only/.test(note.textContent || '');
+    console.log((told ? '  PASS  ' : '  FAIL  ') + 'a read-only tab says so at the top');
+    if (!told) failures.push('no read-only note');
+
+    // The acting buttons are off; the ones that only move around are not.
+    const main = byId.get('main');
+    const acting = [], plain = [];
+    (function walk(el) {
+      if (!el || typeof el !== 'object') return;
+      if ((el.tagName || '').toLowerCase() === 'button') {
+        (/(^|\s)(go|danger)(\s|$)/.test(el.className || '') ? acting : plain).push(el);
+      }
+      for (const k of el.children || []) walk(k);
+    })(main);
+    const offed = acting.length === 0 || acting.every((b) => b.disabled);
+    console.log((offed ? '  PASS  ' : '  FAIL  ') + 'the controls that act are turned off');
+    if (!offed) failures.push('an acting button stayed enabled while read-only');
+    const browsing = plain.every((b) => !b.disabled || b.almWasDisabled);
+    console.log((browsing ? '  PASS  ' : '  FAIL  ') +
+      '...and the ones that only look around are left alone');
+    if (!browsing) failures.push('read-only disabled a plain button');
+
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '', audited: false };
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    // byId keeps a node after main.innerHTML clears it, so ask the tree that
+    // is actually on screen rather than the id map.
+    const noNote = !(byId.get('main').children || [])
+      .some((k) => k.id === 'ro-note');
+    console.log((noNote ? '  PASS  ' : '  FAIL  ') + 'a full account is not told it is read-only');
+    if (!noNote) failures.push('read-only note shown to a full account');
+
     sandbox.me = realMe;
   } catch (e) {
     console.log('  FAIL  accounts  -> ' + e.message);
