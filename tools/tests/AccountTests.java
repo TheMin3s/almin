@@ -1,4 +1,5 @@
 import com.schecks.almin.Accounts;
+import com.schecks.almin.Coords;
 import com.schecks.almin.Passwords;
 
 import java.lang.reflect.Field;
@@ -107,6 +108,34 @@ public class AccountTests {
         Accounts.setAudit(mod.id(), true);
         check("...and can be turned on", Accounts.byUsername("moderator").auditActivity());
 
+        // ---- not being shown where ----
+        check("coordinates are shown to begin with",
+            !Accounts.byUsername("moderator").coordsHidden());
+        Accounts.setHideCoords(mod.id(), true);
+        check("...and can be kept from one account",
+            Accounts.byUsername("moderator").coordsHidden());
+        check("the main account cannot be narrowed this way",
+            !Accounts.owner().coordsHidden());
+        check("...without taking the Activity menu away from them",
+            Accounts.byUsername("moderator").canRead("activity"));
+
+        // What it is for: a sentence a model wrote, on its way to that account.
+        check("a grid reference in prose is taken out",
+            Coords.scrub("Steve mined at 120,64,-77 for an hour")
+                .equals("Steve mined at somewhere for an hour"));
+        check("...in the panel's own spelling too",
+            Coords.scrub("a chest at X 12 / Y 70 / Z -4 was opened")
+                .equals("a chest at somewhere was opened"));
+        check("...and one axis at a time",
+            Coords.scrub("near x=120 and z=-77").equals("near somewhere and somewhere"));
+        check("a sentence with no position in it is left alone",
+            Coords.scrub("Alex placed 12 oak planks").equals("Alex placed 12 oak planks"));
+        check("...and an account that is shown coordinates gets the words as written",
+            Coords.scrubFor(Accounts.owner(), "at 1,2,3").equals("at 1,2,3"));
+        check("...while a restricted one does not",
+            Coords.scrubFor(Accounts.byUsername("moderator"), "at 1,2,3").equals("at somewhere"));
+        Accounts.setHideCoords(mod.id(), false);
+
         // ---- handing over a shell, deliberately ----
         // What a restart runs is a command line on the host, so it is not part
         // of Settings: an account can hold all of Settings and still not be
@@ -135,6 +164,7 @@ public class AccountTests {
         check("...with its grants", back.canRead("files") && !back.canWrite("files"));
         check("...and its recording setting", back.auditActivity());
         check("...and the start-command grant", back.canStartCommand());
+        check("...and whether coordinates are kept from them", !back.coordsHidden());
         check("...and its password still verifies",
             Passwords.verify("hunter2hunter2", back.hash()));
 

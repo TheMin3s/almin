@@ -142,6 +142,28 @@ public class RelaunchTests {
         ck("a slow failure is never run again",
             !slow.contains("cannot cd to /nope") && slow.contains("Nothing else is known"), slow);
 
+        // The one mistake that is checkable, and the one people make: a path
+        // copied off the host of a container, which is real somewhere and not
+        // anywhere this process can reach.
+        ck("a start command that begins by cd-ing nowhere is called out",
+            ServerRelaunch.problemWith(
+                "cd /hdd/var/mcservers/school && java -jar server.jar", dir)
+                .contains("There is no directory /hdd/var/mcservers/school"),
+            ServerRelaunch.problemWith("cd /nope && java -jar s.jar", dir));
+        ck("...and told where it would have started anyway",
+            ServerRelaunch.problemWith("cd /nope && java -jar s.jar", dir)
+                .contains(ServerRelaunch.workingDirectory(dir).toString()), "");
+        ck("a cd to somewhere that exists is left alone",
+            ServerRelaunch.problemWith("cd " + dir + " && java -jar s.jar", dir).isEmpty(),
+            ServerRelaunch.problemWith("cd " + dir + " && java -jar s.jar", dir));
+        ck("...as is a quoted one",
+            ServerRelaunch.problemWith("cd \"" + dir + "\" && java -jar s.jar", dir).isEmpty(),
+            ServerRelaunch.problemWith("cd \"" + dir + "\" && java -jar s.jar", dir));
+        ck("a command that does not start with cd is not guessed at",
+            ServerRelaunch.problemWith("java -Xmx4G -jar server.jar", dir).isEmpty(), "");
+        ck("...and neither is an empty one",
+            ServerRelaunch.problemWith("", dir).isEmpty(), "");
+
         ck("a command with a heap size is told the old one is still holding its own",
             ((String) heap.invoke(null, new ServerRelaunch.Plan(List.of("x"),
                 "java -Xmx8G -jar server.jar", "web-start-command", "")))

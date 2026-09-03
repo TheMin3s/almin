@@ -89,12 +89,29 @@ public final class Accounts {
      * @param startCommand  whether they may change what a restart runs, which
      *                      is a command on the host OS and so is granted on its
      *                      own rather than with the rest of Settings
+     * @param hideCoords    whether the Activity menu keeps the numbers to
+     *                      itself for them: they see what happened and who,
+     *                      and not where on the map it is
      * @param owner       true only for the synthesised owner, never on disk
      */
     public record Account(String id, String username, String hash, String mcName, String mcUuid,
                           Map<String, String> access, Map<String, String> folders,
-                          boolean auditActivity, boolean startCommand, int rank,
-                          long created, long lastLogin, boolean owner) {
+                          boolean auditActivity, boolean startCommand, boolean hideCoords,
+                          int rank, long created, long lastLogin, boolean owner) {
+
+        /**
+         * Whether coordinates are kept from this account.
+         *
+         * <p>Somebody moderating chat, or reading who logged in when, does not
+         * need everyone's base locations to do it, and the Activity menu hands
+         * those over by the thousand. The map still draws — the shape of a
+         * night's walking is the thing that answers questions — it simply
+         * stops being a list of grid references anybody can copy out.
+         *
+         * <p>Never the owner: this narrows what a delegate is shown, and an
+         * owner who wanted less could simply not look.
+         */
+        public boolean coordsHidden() { return !owner && hideCoords; }
 
         /**
          * Whether this account may set {@code web-start-command}.
@@ -261,6 +278,7 @@ public final class Accounts {
             username, str(o, "hash"), str(o, "mcName"), str(o, "mcUuid"),
             access, folders, o.has("auditActivity") && o.get("auditActivity").getAsBoolean(),
             o.has("startCommand") && o.get("startCommand").getAsBoolean(),
+            o.has("hideCoords") && o.get("hideCoords").getAsBoolean(),
             rankOf((int) num(o, "rank")),
             num(o, "created"), num(o, "lastLogin"), false);
     }
@@ -290,6 +308,7 @@ public final class Accounts {
         o.addProperty("mcUuid", a.mcUuid());
         o.addProperty("auditActivity", a.auditActivity());
         o.addProperty("startCommand", a.startCommand());
+        o.addProperty("hideCoords", a.hideCoords());
         o.addProperty("rank", a.rank());
         o.addProperty("created", a.created());
         o.addProperty("lastLogin", a.lastLogin());
@@ -316,7 +335,7 @@ public final class Accounts {
         String name = cfg.webAdminUsername == null || cfg.webAdminUsername.isBlank()
             ? "admin" : cfg.webAdminUsername.trim();
         return new Account("owner", name, cfg.webAdminPasswordHash == null ? "" : cfg.webAdminPasswordHash,
-            "", "", Map.of(), Map.of(), false, true, OWNER_RANK, 0, 0, true);
+            "", "", Map.of(), Map.of(), false, true, false, OWNER_RANK, 0, 0, true);
     }
 
     /** Every account except the owner, in the order they were made. */
@@ -369,7 +388,7 @@ public final class Accounts {
         String pw = passwordProblem(password);
         if (!pw.isEmpty()) return Result.fail(pw);
         Account a = new Account(newId(), name, Passwords.hash(password), "", "",
-            new LinkedHashMap<>(), new LinkedHashMap<>(), false, false, rankOf(rank),
+            new LinkedHashMap<>(), new LinkedHashMap<>(), false, false, false, rankOf(rank),
             System.currentTimeMillis(), 0, false);
         byName.put(name.toLowerCase(Locale.ROOT), a);
         save();
@@ -384,7 +403,7 @@ public final class Accounts {
         String bad = passwordProblem(password);
         if (!bad.isEmpty()) return Result.fail(bad);
         put(a.username(), new Account(a.id(), a.username(), Passwords.hash(password), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + "'s password is changed.");
     }
@@ -398,7 +417,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) access.put(menu, level);
         else access.remove(menu);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            access, a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
+            access, a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + menuName(menu) + ".");
     }
@@ -428,7 +447,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) folders.put(f, level);
         else folders.remove(f);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), folders, a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), folders, a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + f + ".");
     }
@@ -438,7 +457,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " can reach every folder the Files menu shows.");
     }
@@ -454,7 +473,7 @@ public final class Accounts {
         if (a == null) return Result.fail("No such account.");
         int want = rankOf(rank);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), want, a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), want, a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " is now level " + want + ".");
     }
@@ -475,7 +494,7 @@ public final class Accounts {
             return Result.fail("That is not a Minecraft account name.");
         }
         put(a.username(), new Account(a.id(), a.username(), a.hash(), n, n.isEmpty() ? "" : u,
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(n.isEmpty()
             ? a.username() + " is no longer linked to a player."
@@ -493,7 +512,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), on, a.rank(), a.created(),
+            a.access(), a.folders(), a.auditActivity(), on, a.hideCoords(), a.rank(), a.created(),
             a.lastLogin(), false));
         save();
         return Result.done(on
@@ -501,12 +520,25 @@ public final class Accounts {
             : a.username() + " can no longer change what a restart runs.");
     }
 
+    /** Keeps coordinates out of the Activity menu for one account, or puts them back. */
+    public static synchronized Result setHideCoords(String id, boolean on) {
+        Account a = stored(id);
+        if (a == null) return Result.fail("No such account.");
+        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), on, a.rank(),
+            a.created(), a.lastLogin(), false));
+        save();
+        return Result.done(on
+            ? a.username() + " is shown the Activity menu without coordinates."
+            : a.username() + " is shown coordinates in the Activity menu again.");
+    }
+
     /** Turns Activity-menu recording on or off for one account. */
     public static synchronized Result setAudit(String id, boolean on) {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), on, a.startCommand(), a.rank(), a.created(),
+            a.access(), a.folders(), on, a.startCommand(), a.hideCoords(), a.rank(), a.created(),
             a.lastLogin(), false));
         save();
         return Result.done(on
@@ -526,7 +558,7 @@ public final class Accounts {
         }
         byName.remove(a.username().toLowerCase(Locale.ROOT));
         byName.put(name.toLowerCase(Locale.ROOT), new Account(a.id(), name, a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done("Now called " + name + ".");
     }
@@ -545,7 +577,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return;
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), System.currentTimeMillis(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), System.currentTimeMillis(), false));
         save();
     }
 

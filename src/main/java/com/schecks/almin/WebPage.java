@@ -707,7 +707,7 @@ final class WebPage {
          * still loading does not flash a menu somebody is not allowed to open.
          */
         let me={username:'',owner:false,access:{},linkedPlayer:'',audited:false,
-                canSetStart:false};
+                canSetStart:false,noCoords:false};
         function mayRead(menu){
           if(me.owner) return true;
           const v=me.access?me.access[menu]:'';
@@ -719,6 +719,40 @@ final class WebPage {
         // Whether to ask the server for player faces at all. Off means the
         // lists draw initials instead and nothing is requested.
         let headsOn=true;
+        // Whether opening the 3D map is something to be asked about first.
+        let warn3d=false, agreed3d=false;
+
+        /**
+         * Where something happened, in words — or nothing at all.
+         *
+         * <p>Every place in this page that used to write out a grid reference
+         * goes through here, so "this account is not shown coordinates" is one
+         * decision rather than forty of them, and a new readout added later
+         * cannot quietly be the one that leaks.
+         *
+         * <p>What is hidden is the numbers, not the map. A restricted account
+         * still sees the paths, the marks, who did what and when — which is
+         * what the menu is for — and cannot copy a base's location out of a
+         * tooltip.
+         */
+        function noCoords(){ return !!me.noCoords; }
+        function coords(x,y,z){
+          if(noCoords()) return '';
+          return 'X '+x+' / Y '+y+' / Z '+z;
+        }
+        /** The same thing, in the terse form the denser lists use. */
+        function coordsTight(x,y,z){
+          return noCoords()?'':(x+','+y+','+z);
+        }
+        /** A " \u00b7 X / Y / Z" tail that disappears entirely when hidden. */
+        function atTail(x,y,z){
+          const c=coords(x,y,z);
+          return c?' \u00b7 '+c:'';
+        }
+        function tightTail(x,y,z){
+          const c=coordsTight(x,y,z);
+          return c?' \u00b7 '+c:'';
+        }
         let tab='dash', last=null, stuck=true, tpsHistory=[];
         // The panel is served out of the mod jar, so an update replaces it.
         // These track the version this page came from and whether we are
@@ -726,7 +760,7 @@ final class WebPage {
         // an open tab put itself onto the new panel instead of sitting there
         // showing an old one.
         let version=null, restarting=false, awaitingReturn=false, wasReachable=true;
-        let startCommand='', startProblem='', startSource='';
+        let startCommand='', startProblem='', startSource='', startWarning='';
         let relaunchError='', waitingSince=0;
         // Long enough for a big world to boot; short enough that a restart
         // which is never coming back stops pretending it is.
@@ -1111,6 +1145,10 @@ final class WebPage {
           setChrome();
           const m=$('main'); m.innerHTML='';
           if(!authed && tab!=='dash') tab='dash';
+          // Said rather than simply done. An empty tooltip where a position
+          // used to be reads as a bug; a line at the top saying the numbers
+          // are not shown to this account reads as a decision somebody made.
+          if(authed && tab==='activity' && noCoords()) m.appendChild(noCoordsNote());
           if(authed && tab==='activity' && me.audited){
             m.appendChild(watchedNote());
             warnWatched();
@@ -1235,6 +1273,16 @@ final class WebPage {
           box.textContent='Your use of this menu is recorded \u2014 what you select, '+
             'what you search for and how long you are here. The main account can read '+
             'that record.';
+          return box;
+        }
+
+        function noCoordsNote(){
+          const box=document.createElement('div');
+          box.className='msg';
+          box.id='nocoords-note';
+          box.style.marginBottom='12px';
+          box.textContent='Coordinates are not shown to this account. The map, the paths '+
+            'and the log are all here \u2014 where they are on the world grid is not.';
           return box;
         }
 
@@ -3921,7 +3969,9 @@ final class WebPage {
               '" height="'+h.toFixed(1)+
               '" preserveAspectRatio="none" style="image-rendering:pixelated"/>');
           }
-          const grid=mapOpts.grid?coordGrid(W,H,span,sx,sz):[];
+          // A grid of world coordinates is a coordinate readout with lines
+          // through it, so it goes with the numbers rather than with the map.
+          const grid=(mapOpts.grid&&!noCoords())?coordGrid(W,H,span,sx,sz):[];
 
           const groundImage=patches.length
             ? patches.join('')+
@@ -4615,7 +4665,8 @@ final class WebPage {
             const el=document.createElement('span');
             el.className='who'+(w.afk?' afk':'')+(focusPlayer===w.name?' on':'');
             el.title=(w.afk?'Away — no movement since '+fmtAgo(w.stillSince)
-                           :'Playing')+' · '+w.dim+' '+w.x+','+w.y+','+w.z+
+                           :'Playing')+' · '+w.dim+
+                     (noCoords()?'':' '+coordsTight(w.x,w.y,w.z))+
                      '\\n(click to show only this player)';
             el.appendChild(avatar(w.name,w.uuid,'sm'));
             const t=document.createElement('span');
@@ -5172,7 +5223,7 @@ final class WebPage {
               if(!a) return;
               tip.textContent=(a.mask?a.mask+' ('+a.player+')':a.player)+' · '+a.action+
                 (a.count>1?' x'+a.count:'')+(a.detail?' · '+a.detail:'')+
-                ' · '+a.x+','+a.y+','+a.z+' · '+fmtAgo(a.at);
+                tightTail(a.x,a.y,a.z)+' · '+fmtAgo(a.at);
               placeTip(tip,el,svg,box);
             });
             el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
@@ -5794,8 +5845,8 @@ final class WebPage {
           loadSceneContext(e,built);
           modal('What was built here', body=>{
             body.innerHTML='<p class="muted" style="margin:0 0 10px">'+
-              esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+' '+built.cx+','+
-              built.contextMinY+','+built.cz+
+              esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+
+              (noCoords()?'':' '+coordsTight(built.cx,built.contextMinY,built.cz))+
               '</p>'+
               '<div class="scene" id="sc-box"></div>'+
               '<div class="scenebar">'+
@@ -6075,7 +6126,10 @@ final class WebPage {
             '" x2="'+b[0].toFixed(1)+'" y2="'+b[1].toFixed(1)+
             '" stroke="'+(kind==='y'?'#f4b860':'#7f91aa')+'" stroke-opacity="'+
             (kind==='major'?'.54':'.32')+'" stroke-width="1" vector-effect="non-scaling-stroke"/>';
-          const label=(p,text,anchor)=>'<text x="'+p[0].toFixed(1)+'" y="'+
+          // The lines stay, the numbers on them do not: the grid is also
+          // what gives a scene its sense of scale, and that survives without
+          // saying which block of the world it is over.
+          const label=(p,text,anchor)=>noCoords()?'':'<text x="'+p[0].toFixed(1)+'" y="'+
             (p[1]-3).toFixed(1)+'" fill="#aeb9c8" font-size="9" text-anchor="'+anchor+
             '" paint-order="stroke" stroke="#0b0d11" stroke-width="3">'+esc(text)+'</text>';
           const out=[];
@@ -6259,7 +6313,8 @@ final class WebPage {
           const right=[[ox,oy+half],[ox+half,oy+quarter],[ox+half,oy+quarter+half],[ox,oy+half+half]];
           const pts=a=>a.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
           const title='<title>'+esc((c.put?'placed ':'broke ')+(c.what||'a block')+
-            (c.n>1?' \u00d7'+c.n:'')+' at '+c.wx+','+c.y+','+c.wz)+'</title>';
+            (c.n>1?' \u00d7'+c.n:'')+
+            (noCoords()?'':' at '+coordsTight(c.wx,c.y,c.wz)))+'</title>';
           const base=blockRgb(c.what);
           const edge=c.put?'#ffd34d':'#ff5a5a';
           const line=Math.max(0.35,S*0.045);
@@ -6311,8 +6366,8 @@ final class WebPage {
             sceneTextureFace(c,pts(left),'side','.84','.22')+
             '<polygon points="'+pts(right)+'" fill="'+shadeHex(base,0.54)+'"/>'+
             sceneTextureFace(c,pts(right),'side','.76','.36')+
-            '<title>'+esc((c.what||'a block')+' in the world now at '+
-              c.wx+','+c.y+','+c.wz)+'</title></g>';
+            '<title>'+esc((c.what||'a block')+' in the world now'+
+              (noCoords()?'':' at '+coordsTight(c.wx,c.y,c.wz)))+'</title></g>';
         }
 
         /** Resource-pack textures, shared by every cube of the same block. */
@@ -6434,7 +6489,7 @@ final class WebPage {
         function scenePlayer(x,y,z,S,p){
           const fx=isoX(x,z,S), fy=isoY(x,y,z,S)+S/2;
           const hy=fy-S*0.92, colour=playerColor(p.player);
-          const label=p.player+' \u00b7 '+p.wx+','+p.y+','+p.wz;
+          const label=p.player+tightTail(p.wx,p.y,p.wz);
           return '<g '+sceneAttrs(p,'recorded player','sc-player')+'>'+
             '<line x1="'+fx.toFixed(1)+'" y1="'+fy.toFixed(1)+'" x2="'+fx.toFixed(1)+
               '" y2="'+hy.toFixed(1)+'" stroke="#0b0d11" stroke-width="5"/>'+
@@ -6466,7 +6521,7 @@ final class WebPage {
               scene.picked=info;
               const picked=$('sc-picked');
               if(picked) picked.innerHTML='<strong>'+esc(info.what)+'</strong> \u00b7 '+
-                esc(info.state)+' \u00b7 X '+esc(info.x)+' / Y '+esc(info.y)+' / Z '+esc(info.z);
+                esc(info.state)+atTail(esc(info.x),esc(info.y),esc(info.z));
             };
           });
         }
@@ -6631,7 +6686,7 @@ final class WebPage {
             el.addEventListener('mouseenter',e=>{
               const a=A[+el.getAttribute('data-i')];
               tip.textContent=a.action+(a.count>1?' ×'+a.count:'')+
-                (a.detail?' · '+a.detail:'')+' · '+a.x+','+a.y+','+a.z+' · '+fmtAgo(a.at);
+                (a.detail?' · '+a.detail:'')+tightTail(a.x,a.y,a.z)+' · '+fmtAgo(a.at);
               const r=svg.getBoundingClientRect(), b=box.getBoundingClientRect();
               tip.style.left=(r.left-b.left+(+el.getAttribute('cx'))/W*r.width)+'px';
               tip.style.top=(r.top-b.top+(+el.getAttribute('cy'))/H*r.height-26)+'px';
@@ -6802,6 +6857,10 @@ final class WebPage {
         catch(e){ /* one screen's preference only */ }
 
         function usingBlueMap(){
+          // The gate is here rather than only on the button, so that a browser
+          // that chose 3D last week, and a server where 3D is simply the
+          // default, both still start on the flat map and ask.
+          if(warn3d && !agreed3d) return false;
           return !!(blueMapStatus&&blueMapStatus.ready&&blueMapMode!=='legacy');
         }
 
@@ -6820,10 +6879,49 @@ final class WebPage {
         }
 
         function setBlueMapMode(mode){
+          // The 3D view can be put behind a question. It is the part of this
+          // menu that is the world rather than a picture of it — a camera you
+          // can fly, with positions on everything — so a server that wants
+          // opening it to be a deliberate act can say so here.
+          if(mode!=='legacy' && warn3d && !agreed3d){ open3dDialog(); return; }
           blueMapMode=mode;
           try { localStorage.setItem('almin.mapMode',mode); } catch(e){}
           blueFrameReady=false; blueCamera=null; blueFrameBox=null;
           paintBlueMapChoice(); paintAll();
+        }
+
+        /**
+         * What the 3D view is, before it is opened.
+         *
+         * <p>Asked once per visit rather than once ever: the point is that
+         * somebody chose it just now, and a box ticked last month is not that.
+         * Agreeing is written down as its own line in the record, separately
+         * from having the Activity menu open, so the record can answer "did
+         * they go looking at the world" and not only "were they in here".
+         */
+        function open3dDialog(){
+          modal('Open the 3D world map?',(body,close)=>{
+            body.innerHTML=
+              '<p>The 3D view puts Almin\u2019s activity into the rendered world, with a '+
+              'camera you can fly anywhere in it.</p>'+
+              '<p class="muted"><b>It shows exact coordinates.</b> The flat map shows shapes '+
+              'over a picture of the ground; this one is the world itself, and BlueMap\u2019s '+
+              'own readouts show where you are looking.</p>'+
+              (me.audited
+                ? '<p class="muted"><b>Opening it is written down on its own</b>, separately '+
+                  'from opening the Activity menu, in the record you were told about.</p>'
+                : '<p class="muted">Opening it is recorded separately from opening the '+
+                  'Activity menu for accounts whose use of this menu is recorded.</p>')+
+              '<div class="row2"><button class="btn go" id="td-go">Open it</button>'+
+              '<button class="btn" id="td-no">Stay on the flat map</button></div>';
+            $('td-no').onclick=close;
+            $('td-go').onclick=()=>{
+              agreed3d=true;
+              noteWatch('map3d','');
+              close();
+              setBlueMapMode('world');
+            };
+          });
         }
 
         function paintBlueMapChoice(){
@@ -6957,7 +7055,7 @@ final class WebPage {
           live=false; stopPlay(); cursorAt=e.to; cursorSet=true;
           allDim=e.dim; focusBlueMap(e.x,e.y,e.z,Math.max(55,built.radius*3.5));
           bluePicked='<strong>'+esc(e.player)+'</strong> · '+esc(e.headline)+
-            ' · shown in the world at X '+e.x+' / Y '+e.y+' / Z '+e.z;
+            (noCoords()?'':' · shown in the world at '+coords(e.x,e.y,e.z));
           paintAll();
           const map=$('t-map'); if(map&&map.scrollIntoView)
             map.scrollIntoView({block:'center',behavior:'smooth'});
@@ -7079,7 +7177,7 @@ final class WebPage {
                 text:blueActionGlyph(a.action),
                 title:(a.mask?a.mask+' ('+a.player+')':a.player)+' · '+a.action+
                   (a.count>1?' ×'+a.count:'')+(a.detail?' · '+a.detail:'')+
-                  ' · X '+a.x+' / Y '+a.y+' / Z '+a.z+' · '+fmtAgo(a.at)});
+                  atTail(a.x,a.y,a.z)+' · '+fmtAgo(a.at)});
               blueRefs.set(id,{type:'action',data:a});
             } else {
               const total=group.reduce((v,a)=>v+Math.max(1,a.count||1),0);
@@ -7089,8 +7187,9 @@ final class WebPage {
               markers.push({id:id,kind:'cluster',x:sx/group.length+.5,y:sy/group.length+1.5,
                 z:sz/group.length+.5,color:colour(fresh),size:mapOpts.mark*.72,
                 shape:'cluster',text:total>999?'999+':String(total),
-                title:total+' actions around X '+Math.round(sx/group.length)+' / Y '+
-                  Math.round(sy/group.length)+' / Z '+Math.round(sz/group.length)});
+                title:total+' actions'+(noCoords()?'':' around '+
+                  coords(Math.round(sx/group.length),Math.round(sy/group.length),
+                         Math.round(sz/group.length)))});
               blueRefs.set(id,{type:'cluster',data:group});
             }
           }
@@ -7134,7 +7233,7 @@ final class WebPage {
               text:who+(idle?' · afk':''),icon:icon,
               title:who+(gone?' · left at '+fmtWhen(leftAt):
                 idle?' · not moving for '+humanSeconds(Math.round(stillFor/1000)):'')+
-                ' · X '+last.x+' / Y '+last.y+' / Z '+last.z+' · '+fmtAgo(last.at)});
+                atTail(last.x,last.y,last.z)+' · '+fmtAgo(last.at)});
             blueRefs.set(id,{type:'player',data:{name:who,point:last}});
           }
 
@@ -7144,7 +7243,7 @@ final class WebPage {
             scenes.push({id:id,type:'marker',kind:'episode',shape:'scene',
               text:(hasShape(e)?'3D ':'')+e.kind,
               x:e.x+.5,y:e.y+2.2,z:e.z+.5,color:SEQUENCE_COLOR[e.kind]||'#ffab33',size:1,
-              title:e.player+' · '+e.headline+' · X '+e.x+' / Y '+e.y+' / Z '+e.z});
+              title:e.player+' · '+e.headline+atTail(e.x,e.y,e.z)});
             blueRefs.set(id,{type:'episode',data:e});
           }
 
@@ -7158,7 +7257,7 @@ final class WebPage {
               color:c.put?'#48df6b':'#ff565d',fill:c.put?.16:.12,
               opacity:opts.opacity==null?1:opts.opacity,
               label:c.put?'Placed block':'Broken block',detail:(c.put?'Placed ':'Broke ')+
-                (c.what||'block')+' at '+c.wx+','+c.y+','+c.wz});
+                (c.what||'block')+(noCoords()?'':' at '+coordsTight(c.wx,c.y,c.wz))});
           };
           // BlueMap's world coordinates let individual edits be useful without
           // opening a generated event first. Keep only the newest edit at a
@@ -7201,8 +7300,8 @@ final class WebPage {
               let q=0;
               for(const m of built.marks.slice(0,500)) scenes.push({id:'fight'+(q++),
                 type:'marker',kind:'fight',shape:'dot',text:'',x:m.wx+.5,y:m.y+1,z:m.wz+.5,
-                color:'#ff3d6e',size:1,title:m.kind+(m.what?' · '+m.what:'')+' · X '+m.wx+
-                  ' / Y '+m.y+' / Z '+m.wz});
+                color:'#ff3d6e',size:1,
+                title:m.kind+(m.what?' · '+m.what:'')+atTail(m.wx,m.y,m.wz)});
               q=0;
               for(const p of (mapOpts.players?built.players||[]:[])
                     .filter(p=>Math.abs(p.x)<=built.radius&&Math.abs(p.z)<=built.radius)
@@ -7210,8 +7309,8 @@ final class WebPage {
                 const id='near'+(q++);
                 scenes.push({id:id,type:'marker',kind:'scene-player',shape:'cluster',
                   text:p.player.charAt(0),x:p.wx+.5,y:p.y+1.9,z:p.wz+.5,
-                  color:playerColor(p.player),size:.72,title:p.player+' nearby · X '+p.wx+
-                    ' / Y '+p.y+' / Z '+p.wz+' · '+fmtAgo(p.at)});
+                  color:playerColor(p.player),size:.72,
+                  title:p.player+' nearby'+atTail(p.wx,p.y,p.wz)+' · '+fmtAgo(p.at)});
               }
             }
           }
@@ -7229,6 +7328,9 @@ final class WebPage {
                 color:x===0?'#dfe6ef':'#778394',width:x===0?1.6:.8,opacity:x===0?.55:.26});
               grid.push({id:'gz'+i,points:[{x:cx-5*step,y:y,z:z},{x:cx+5*step,y:y,z:z}],
                 color:z===0?'#dfe6ef':'#778394',width:z===0?1.6:.8,opacity:z===0?.55:.26});
+              // Same rule as the flat map's grid: the lines are scale, the
+              // labels are a coordinate readout.
+              if(noCoords()) continue;
               grid.push({id:'gxl'+i,type:'label',x:x,y:y+.4,z:cz-5*step,
                 text:'x '+x,color:'#aab5c3',size:.72,title:'X '+x});
               grid.push({id:'gzl'+i,type:'label',x:cx-5*step,y:y+.4,z:z,
@@ -7242,6 +7344,9 @@ final class WebPage {
             // second copy of every player in the wrong place, next to the one
             // Almin drew where they actually were.
             grid:grid,darkness:mapOpts.dim*.55,focus:blueFocus,livePlayers:live,
+            // BlueMap has its own position readout, which Almin does not draw
+            // and cannot remove; the bridge hides what it can find of it.
+            hideCoords:noCoords(),
             counts:{markers:markers.length,scenes:scenes.length,actions:actions.length}};
         }
 
@@ -7297,20 +7402,22 @@ final class WebPage {
         }
 
         async function inspectBlueWorld(p){
-          bluePicked='Reading the live block at X '+p.x+' / Y '+p.y+' / Z '+p.z+'…';
+          const there=coords(p.x,p.y,p.z);
+          bluePicked='Reading the live block '+(there?'at '+there:'you picked')+'…';
           paintBluePicked();
           const q='/api/scene/context?dim='+encodeURIComponent(allDim)+'&x='+p.x+'&z='+p.z+
             '&minY='+(p.y-2)+'&maxY='+(p.y+2)+'&radius=4';
           const r=await jget(q);
           if(r.status!==200){
-            bluePicked='Rendered block at X '+p.x+' / Y '+p.y+' / Z '+p.z+
+            bluePicked='Rendered block'+atTail(p.x,p.y,p.z)+
               ' · live block state unavailable (the chunk may not be loaded)';
           } else {
             const exact=(r.body.blocks||[]).find(b=>b.x===p.x&&b.z===p.z&&
               (b.y===p.y||b.y===p.y-1||b.y===p.y+1));
-            bluePicked=exact?'<strong>'+esc(exact.what)+'</strong> · world now · X '+exact.x+
-              ' / Y '+exact.y+' / Z '+exact.z:'No exposed live block at X '+p.x+' / Y '+p.y+
-              ' / Z '+p.z;
+            bluePicked=exact
+              ? '<strong>'+esc(exact.what)+'</strong> · world now'+
+                atTail(exact.x,exact.y,exact.z)
+              : 'No exposed live block'+(there?' at '+there:' there');
           }
           paintBluePicked();
         }
@@ -7327,8 +7434,8 @@ final class WebPage {
           const x=Math.round(group.reduce((n,a)=>n+a.x,0)/group.length);
           const y=Math.round(group.reduce((n,a)=>n+a.y,0)/group.length);
           const z=Math.round(group.reduce((n,a)=>n+a.z,0)/group.length);
-          return '<strong>'+total+' grouped action'+(total===1?'':'s')+'</strong> around X '+x+
-            ' / Y '+y+' / Z '+z+'<div class="bcls">'+rows.map(row=>{
+          return '<strong>'+total+' grouped action'+(total===1?'':'s')+'</strong>'+
+            (noCoords()?'':' around '+coords(x,y,z))+'<div class="bcls">'+rows.map(row=>{
               const a=row.a;
               return '<div class="bcl"><span class="bn">'+esc(a.mask||a.player)+'</span>'+
                 '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+
@@ -7370,7 +7477,7 @@ final class WebPage {
             }
             const a=ref.data;
             bluePicked='<strong>'+esc(a.detail||a.action)+'</strong> · '+esc(a.player)+' · '+
-              esc(a.action)+' · X '+a.x+' / Y '+a.y+' / Z '+a.z+' · '+esc(fmtAgo(a.at));
+              esc(a.action)+atTail(a.x,a.y,a.z)+' · '+esc(fmtAgo(a.at));
             paintBluePicked();
           });
         }
@@ -7795,6 +7902,25 @@ final class WebPage {
           audit.append(box,t);
           card.appendChild(audit);
 
+          // Narrowing what somebody is shown rather than what they may open:
+          // they still get the Activity menu, and it stops handing them
+          // everybody's base locations by the thousand.
+          const noco=document.createElement('label');
+          noco.className='note';
+          noco.style.display='flex'; noco.style.alignItems='center'; noco.style.gap='8px';
+          noco.style.marginTop='8px';
+          const nobox=document.createElement('input'); nobox.type='checkbox';
+          nobox.checked=!!a.hideCoords;
+          nobox.onchange=()=>postAccount({action:'coords',id:a.id,on:nobox.checked});
+          const not=document.createElement('span');
+          not.innerHTML='Keep coordinates out of the Activity menu for '+esc(a.username)+
+            '. They still see the map, the paths and who did what \u2014 not the numbers. '+
+            '<span class="muted">The 3D view runs BlueMap\u2019s own web app; Almin hides '+
+            'what it can of its position readouts, but cannot promise to have hidden all '+
+            'of them.</span>';
+          noco.append(nobox,not);
+          card.appendChild(noco);
+
           // Its own row, and only offered by somebody who holds it: what a
           // restart runs is a shell line on the host, so it is not part of
           // Settings and cannot be handed down by an account without it.
@@ -8166,6 +8292,10 @@ final class WebPage {
           } else {
             box.innerHTML='<code>'+esc(startCommand)+'</code>'+
               (startSource?'<br><span class="muted">from '+esc(startSource)+'</span>':'')+
+              // Said here as well as when it was typed, because the person
+              // reading this may not be the person who typed it.
+              (startWarning?'<br><span class="state crit">Will not run</span> '+
+                esc(startWarning):'')+
               (relaunchError?'<br><span class="state crit">Last attempt failed</span> '+
                 esc(relaunchError):'');
           }
@@ -8223,9 +8353,17 @@ final class WebPage {
               const r=await jpost('/api/config',{name:'web-start-command',value:want});
               const m=$('sc-msg');
               const ok=r.status===200 && r.body && r.body.ok;
-              m.className='msg '+(ok?'ok':'err');
-              m.textContent=ok?'Saved.':((r.body&&r.body.error)||why(r));
+              m.className='msg '+(ok?(r.body.warning?'err':'ok'):'err');
+              m.textContent=ok?(r.body.warning||'Saved.')
+                              :((r.body&&r.body.error)||why(r));
               if(!ok){ $('sc-go').disabled=false; return; }
+              // Saved, but visibly broken: leave it up rather than closing
+              // over the one sentence that says the restart will not work.
+              if(r.body.warning){
+                await refreshOnce(); showRelaunch();
+                $('sc-go').disabled=false;
+                return;
+              }
               field.almTouched=false;
               if(msg){ msg.className='msg ok';
                 msg.textContent=want?'A restart will run that.'
@@ -9831,17 +9969,19 @@ final class WebPage {
           authed=!!s.body.authed; secure=!!s.body.secure; pwSet=!!s.body.passwordSet;
           me={username:s.body.username||'', owner:!!s.body.owner,
               access:s.body.access||{}, linkedPlayer:s.body.linkedPlayer||'',
-              audited:!!s.body.audited, canSetStart:!!s.body.canSetStart};
+              audited:!!s.body.audited, canSetStart:!!s.body.canSetStart,
+              noCoords:!!s.body.noCoords};
           encrypted=!!s.body.encrypted;
           publicMetrics=!!s.body.publicMetrics; canStart=!!s.body.canStart;
           supervisor=!!s.body.supervisor;
           if(s.body.serverRunning!=null) serverRunning=!!s.body.serverRunning;
           restarting=!!s.body.restarting;
           startCommand=s.body.startCommand||''; startProblem=s.body.startProblem||'';
-          startSource=s.body.startSource||'';
+          startSource=s.body.startSource||''; startWarning=s.body.startWarning||'';
           relaunchError=s.body.relaunchError||'';
           // Absent for a logged-out session, which never asks for a face anyway.
           if(s.body.heads!=null) headsOn=!!s.body.heads;
+          if(s.body.warn3d!=null) warn3d=!!s.body.warn3d;
           if(restarting && !awaitingReturn){ awaitingReturn=true; waitingSince=Date.now(); }
           // A different version answering on this address means the jar was
           // replaced under us and this page is the old panel. Reload onto the

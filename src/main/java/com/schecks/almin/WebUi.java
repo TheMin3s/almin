@@ -986,12 +986,16 @@ public final class WebUi {
                 // server" and "somebody typed this" are different facts about
                 // the same string, and only one of them can be edited.
                 o.addProperty("startSource", plan.source());
+                String wrong = ServerRelaunch.problemWith(cfg.webStartCommand,
+                    dirOf(boundServer));
+                if (!wrong.isEmpty()) o.addProperty("startWarning", wrong);
                 if (!plan.ok()) o.addProperty("startProblem", plan.problem());
                 if (!relaunchError.isEmpty()) o.addProperty("relaunchError", relaunchError);
                 // Whether to ask for faces at all. Without this the panel would
                 // request one per row and take a 404 each time on a server that
                 // has them turned off.
                 o.addProperty("heads", cfg.webPlayerHeads);
+                o.addProperty("warn3d", cfg.activity3dWarning);
                 // Who is signed in and what they may reach. The panel draws
                 // itself from this, so a menu somebody cannot open is a menu
                 // that is not there rather than one that errors when pressed.
@@ -1002,6 +1006,7 @@ public final class WebUi {
                     o.addProperty("linkedPlayer", me.mcName());
                     o.addProperty("audited", me.auditActivity());
                     o.addProperty("canSetStart", me.canStartCommand());
+                    o.addProperty("noCoords", me.coordsHidden());
                     JsonObject access = new JsonObject();
                     for (String menu : Accounts.MENUS) access.addProperty(menu, me.level(menu));
                     o.add("access", access);
@@ -1959,6 +1964,14 @@ public final class WebUi {
             o.addProperty("ok", true);
             o.addProperty("name", key.name);
             o.addProperty("value", String.valueOf(parsed));
+            // Saved either way — it is their machine and a directory can be
+            // made later — but said now rather than at the one moment the
+            // command is finally run and the server does not come back.
+            if (START_COMMAND_KEYS.contains(key.name)) {
+                String wrong = ServerRelaunch.problemWith(String.valueOf(parsed),
+                    dirOf(boundServer));
+                if (!wrong.isEmpty()) o.addProperty("warning", wrong);
+            }
 
             // Changing how the panel listens has to be answered before it is
             // acted on, or the reply never reaches the browser that asked.
@@ -2923,7 +2936,11 @@ public final class WebUi {
             } else {
                 report = AiInsights.cached(scope);
             }
-            if (report != null) root.add("report", reportJson(report));
+            // A summary is cached and shared by everyone who asks for that
+            // period, so it cannot be written differently per account; the
+            // coordinates come out of it on the way to one that is not shown
+            // them instead.
+            if (report != null) root.add("report", reportJson(report, hidden(ex)));
             json(ex, 200, root.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -3154,12 +3171,20 @@ public final class WebUi {
         return arr;
     }
 
-    private static JsonObject reportJson(AiInsights.Report r) {
+    /** Whether this request's account is one coordinates are kept from. */
+    private boolean hidden(HttpExchange ex) {
+        Accounts.Account me = who(ex);
+        return me != null && me.coordsHidden();
+    }
+
+    private static JsonObject reportJson(AiInsights.Report r, boolean hide) {
         JsonObject o = new JsonObject();
+        java.util.function.UnaryOperator<String> say =
+            t -> hide ? Coords.scrub(t) : t;
         o.addProperty("generated", r.generated());
         // Also cleans an answer already held in the in-memory cache from
         // before truncated structured replies were handled by the parser.
-        o.addProperty("summary", AiInsights.displaySummary(r.summary()));
+        o.addProperty("summary", say.apply(AiInsights.displaySummary(r.summary())));
         o.addProperty("model", r.model());
         o.addProperty("provider", r.provider());
         o.addProperty("error", r.error() == null ? "" : r.error());
@@ -3167,8 +3192,8 @@ public final class WebUi {
         for (AiInsights.Moment m : r.moments()) {
             JsonObject j = new JsonObject();
             j.addProperty("at", m.at());
-            j.addProperty("label", m.label());
-            j.addProperty("why", m.why());
+            j.addProperty("label", say.apply(m.label()));
+            j.addProperty("why", say.apply(m.why()));
             j.addProperty("player", m.player());
             j.addProperty("dim", m.dim());
             j.addProperty("x", m.x());
@@ -3183,7 +3208,7 @@ public final class WebUi {
             JsonObject j = new JsonObject();
             j.addProperty("at", m.at());
             j.addProperty("player", m.player());
-            j.addProperty("means", m.means());
+            j.addProperty("means", say.apply(m.means()));
             means.add(j);
         }
         o.add("sequences", means);
@@ -3193,8 +3218,8 @@ public final class WebUi {
             j.addProperty("from", f.from());
             j.addProperty("to", f.to());
             j.addProperty("player", f.player());
-            j.addProperty("label", f.label());
-            j.addProperty("why", f.why());
+            j.addProperty("label", say.apply(f.label()));
+            j.addProperty("why", say.apply(f.why()));
             found.add(j);
         }
         o.add("patterns", found);
@@ -4203,6 +4228,8 @@ public final class WebUi {
                 // The same rule as every other grant: you cannot hand over
                 // something you do not hold. Nobody can bootstrap themselves
                 // a shell by granting it to an account they then sign in as.
+                case "coords" -> Accounts.setHideCoords(id,
+                    body.has("on") && body.get("on").getAsBoolean());
                 case "startcmd" -> me.canStartCommand()
                     ? Accounts.setStartCommand(id,
                         body.has("on") && body.get("on").getAsBoolean())
@@ -4286,6 +4313,7 @@ public final class WebUi {
             o.addProperty("mcUuid", a.mcUuid());
             o.addProperty("auditActivity", a.auditActivity());
             o.addProperty("startCommand", a.startCommand());
+            o.addProperty("hideCoords", a.hideCoords());
             o.addProperty("rank", a.level());
             o.addProperty("created", a.created());
             o.addProperty("lastLogin", a.lastLogin());
@@ -4418,6 +4446,11 @@ public final class WebUi {
             case "place"   -> "looked at a place on the map";
             case "cluster" -> "opened a group of events";
             case "scene"   -> "opened a build in 3D";
+            // Its own line, not folded into the visit: the 3D map is the part
+            // of this menu that shows the world with coordinates on it, and a
+            // record that could not tell it apart from reading the log would
+            // not be answering the question anybody asks of this file.
+            case "map3d"   -> "opened the 3D map, which shows coordinates";
             case "moment"  -> "jumped to a moment";
             case "search"  -> "searched the log";
             case "summary" -> "read the summary";

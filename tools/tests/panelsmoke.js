@@ -3963,6 +3963,50 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       "BlueMap's own live player heads are turned off once the timeline moves back");
     if (!ownHeads) failures.push('the BlueMap payload does not say whether it is live');
 
+    // ---- an account that is not shown coordinates ----
+    // The map still draws; it stops being a list of grid references.
+    {
+      const wasMe = sandbox.me;
+      sandbox.me = { ...wasMe, noCoords: true };
+      sandbox.paintAll();
+      const hidden = sandbox.bluePendingState || {};
+      check('the 3D bridge is told to hide what it can of its own readouts', () =>
+        hidden.hideCoords === true ? true : String(hidden.hideCoords));
+      check('...and the coordinate grid labels are not sent at all', () =>
+        !(hidden.grid || []).some((g) => g.type === 'label')
+          ? true : 'grid labels went out to a restricted account');
+      check('...while the map itself still has something on it', () =>
+        (hidden.markers || []).length > 0 && (hidden.lines || []).length > 0
+          ? true : 'hiding coordinates emptied the map');
+      const titles = [].concat(hidden.markers || [], hidden.players || [],
+                               hidden.scenes || []).map((m) => m.title || '').join(' | ');
+      check('...and nothing it draws says where', () =>
+        !/X -?\d+ \/ Y/.test(titles) && !/-?\d+,-?\d+,-?\d+/.test(titles)
+          ? true : titles.slice(0, 160));
+
+      const clusterShut = sandbox.blueClusterHtml([
+        { at: clock - 3000, player: 'Steve', mask: '', action: 'break',
+          detail: 'Stone', count: 2, x: 4, y: 63, z: 8 }]);
+      check('a group of events still says what and who, and not where', () =>
+        /Steve/.test(clusterShut) && /Stone/.test(clusterShut)
+          && !/X 4 \/ Y/.test(clusterShut) && !/4,63,8/.test(clusterShut)
+          ? true : clusterShut.slice(0, 200));
+
+      sandbox.tab = 'activity'; sandbox.render();
+      check('and the account is told the numbers are being kept from it', () =>
+        /Coordinates are not shown/.test(deepText(byId.get('main')))
+          ? true : 'no note was shown');
+
+      sandbox.me = wasMe;
+      sandbox.tab = 'activity'; sandbox.render();
+      sandbox.paintAll();
+      const shown = sandbox.bluePendingState || {};
+      check('an account with no restriction is unchanged', () =>
+        shown.hideCoords === false
+          && (shown.grid || []).some((g) => g.type === 'label')
+          ? true : 'the unrestricted view lost its coordinates too');
+    }
+
     const pathOpacity=[...new Set((payload.lines||[]).filter(l=>
       String(l.id||'').startsWith('path-')).map(l=>l.opacity))];
     const pathFades=pathOpacity.length>1;
@@ -4040,11 +4084,77 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       'a selected 3D build is made of world-coordinate blocks and altitude-aware players');
     if (!inWorld) failures.push('the BlueMap build stayed a badge or lost player altitude');
 
+    // ---- asking before the world opens ----
+    // The 3D view is the part of this menu that is the world rather than a
+    // picture of it, so a server can make opening it a deliberate act.
+    {
+      sandbox.setBlueMapMode('legacy');
+      sandbox.closeModal();
+      sandbox.warn3d = true; sandbox.agreed3d = false;
+      posted = [];
+      sandbox.setBlueMapMode('world');
+      check('with the warning on, 3D asks first', () =>
+        !sandbox.usingBlueMap() ? true : 'it opened without asking');
+      const asked = deepText(byId.get('modal-body'));
+      check('...and says it will show coordinates', () =>
+        /shows exact coordinates/i.test(asked) ? true : asked.slice(0, 200));
+      check('...and that opening it is written down on its own', () =>
+        /separately/i.test(asked) ? true : asked.slice(0, 200));
+      check('...and declining leaves the flat map up', () => {
+        byId.get('td-no').onclick();
+        return !sandbox.usingBlueMap() ? true : 'declining still opened it';
+      });
+
+      sandbox.setBlueMapMode('world');
+      // Reported only for an account that has been told it is recorded, which
+      // is the only kind this line is ever written for.
+      const notAudited = sandbox.me;
+      sandbox.me = { ...notAudited, audited: true };
+      const realFetch3d = sandbox.fetch;
+      const sent3d = [];
+      sandbox.fetch = async (url) => {
+        sent3d.push(String(url));
+        return { status: 200, json: async () => bodyFor(url) };
+      };
+      byId.get('td-go').onclick();
+      sandbox.fetch = realFetch3d;
+      check('agreeing opens it', () => sandbox.usingBlueMap() ? true : 'it stayed shut');
+      check('...and is recorded as its own action, not as opening Activity', () =>
+        sent3d.some((u) => u.startsWith('/api/activity/watch') && /kind=map3d/.test(u))
+          ? true : sent3d.join(' ') || 'nothing was sent');
+      sandbox.me = notAudited;
+      sandbox.warn3d = false; sandbox.agreed3d = false;
+      sandbox.closeModal();
+    }
+
     sandbox.setBlueMapMode('legacy');
     sandbox.paintAll();
     const legacy = !sandbox.usingBlueMap() && /id="t-svg"/.test(byId.get('t-map')._html || '');
     console.log((legacy ? '  PASS  ' : '  FAIL  ') + 'legacy 2D remains available');
     if (!legacy) failures.push('legacy map was replaced rather than retained');
+
+    // ---- the flat map, for an account that is not shown coordinates ----
+    {
+      const wasMe = sandbox.me;
+      sandbox.me = { ...wasMe, noCoords: true };
+      sandbox.paintAll();
+      const html = byId.get('t-map')._html || '';
+      check('the flat map keeps its paths and marks', () =>
+        /class="tpath"/.test(html) && /class="thead/.test(html)
+          ? true : 'hiding coordinates emptied the flat map');
+      check('...and stops writing grid references on it', () =>
+        !/X -?\d+ \/ Y -?\d+/.test(html) && !/&#183; -?\d+,-?\d+,-?\d+/.test(html)
+          ? true : (html.match(/X -?\d+ \/ Y -?\d+/) || [])[0] || 'terse form present');
+      check('...including the coordinate grid over it', () =>
+        !/>x -?\d+</.test(html) && !/>z -?\d+</.test(html)
+          ? true : 'the coordinate grid was still labelled');
+      sandbox.me = wasMe;
+      sandbox.paintAll();
+      check('an unrestricted account still gets the grid', () =>
+        /># ?x -?\d+</.test(byId.get('t-map')._html || '')
+          || /<text[^>]*>x -?\d+</.test(byId.get('t-map')._html || '')
+          ? true : 'coordinates went missing for everybody');
+    }
 
     responses['/api/bluemap'] = { installed: false, enabled: false, loaded: false,
       configured: false, ready: false, restartRequired: false, port: 8100,
@@ -4174,6 +4284,18 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
         sent.length === 1
           && sent[0] === 'web-start-command=cd /srv/mc && java -Xmx8G -jar server.jar'
           ? true : JSON.stringify(sent));
+
+      // A command the server can already see is broken says so where it was
+      // typed, and the dialog stays open over it rather than closing on
+      // "Saved." — the whole failure mode is not finding out until later.
+      sandbox.startWarning = 'There is no directory /srv/mc on the machine this server '
+        + 'runs on, so the command would stop at its own first word.';
+      sandbox.showRelaunch();
+      check('a command that visibly will not run says so in Settings', () =>
+        /Will not run/.test(byId.get('s-relaunch')._html || '')
+          && /no directory \/srv\/mc/.test(byId.get('s-relaunch')._html || '')
+          ? true : byId.get('s-relaunch')._html);
+      sandbox.startWarning = '';
 
       sandbox.closeModal();
       sandbox.me = wasMe;

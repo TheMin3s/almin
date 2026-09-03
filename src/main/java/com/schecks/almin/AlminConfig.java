@@ -73,6 +73,17 @@ public final class AlminConfig {
     public String webAdminUsername = "admin";
     /** How long a watched account's Activity use is kept. 0 keeps nothing. */
     public int panelAuditDays = 30;
+    /**
+     * Make the 3D view of the Activity menu something somebody asks for.
+     *
+     * <p>The flat map is shapes on a picture of the ground. The 3D view is the
+     * world, with a camera in it and coordinates on everything, and it is the
+     * one part of the Activity menu that can be used to walk to a place rather
+     * than to answer a question about it. Off by default, because a server
+     * where nobody minds should not have a dialog in the way; on, opening it
+     * is a deliberate act, said out loud and recorded as its own line.
+     */
+    public boolean activity3dWarning = false;
     /** How long a web login stays valid. */
     public int webSessionMinutes = 120;
     /**
@@ -433,6 +444,8 @@ public final class AlminConfig {
             c -> c.webAdminPasswordHash, (c, v) -> c.webAdminPasswordHash = (String) v),
         intKey("panel-audit-days", "How long a watched account's use of the Activity menu is kept, in days", 0, 3650,
             c -> c.panelAuditDays, (c, v) -> c.panelAuditDays = (Integer) v),
+        boolKey("activity-3d-warning", "Ask before opening the Activity menu's 3D view, and record opening it separately",
+            c -> c.activity3dWarning, (c, v) -> c.activity3dWarning = (Boolean) v),
         textKey("web-admin-username", "Username for the owner account (its password is web-admin-password-hash)",
             c -> c.webAdminUsername, (c, v) -> c.webAdminUsername = (String) v),
         intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,

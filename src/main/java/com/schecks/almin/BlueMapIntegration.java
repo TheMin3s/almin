@@ -568,9 +568,27 @@ final class BlueMapIntegration {
             } catch(e) {}
           }
 
+          /**
+           * BlueMap's own coordinate readouts, for an account that is not
+           * shown coordinates.
+           *
+           * <p>Almin can leave every number out of everything it draws and
+           * still be sitting inside an app with a position display in the
+           * corner and a right-click menu that copies one. This is as far as
+           * it can honestly go: the class is put on the body and CSS hides the
+           * parts that show a position, in the app's own names and in the
+           * loose ones, because the app is an optional install whose internals
+           * are not Almin's to depend on. Nothing here is a guarantee, and the
+           * panel says so where the switch lives.
+           */
+          function hideCoords(hide){
+            document.body.classList.toggle('almin-no-coords',!!hide);
+          }
+
           async function render(){
             if(!state||!ensureRoot()) return;
             livePlayers(state.livePlayers!==false);
+            hideCoords(state.hideCoords===true);
             await chooseMap(state.dimension);
             if(!root||!root.parent) { ensureRoot(); }
             if(!root) return;
@@ -642,7 +660,14 @@ final class BlueMapIntegration {
           function injectStyle(){
             if(document.getElementById('almin-bridge-style')) return;
             const s=document.createElement('style'); s.id='almin-bridge-style';
-            s.textContent='body.almin-no-live-players .bm-marker-player,'+
+            s.textContent='body.almin-no-coords .hud,'+
+              'body.almin-no-coords .bm-position,'+
+              'body.almin-no-coords .position,'+
+              'body.almin-no-coords [class*="position"],'+
+              'body.almin-no-coords [class*="coordinate"],'+
+              'body.almin-no-coords [class*="compass"] .coords,'+
+              'body.almin-no-coords .almin-mark.gridlabel{display:none!important}'+
+              'body.almin-no-live-players .bm-marker-player,'+
               'body.almin-no-live-players .bm-player-marker,'+
               'body.almin-no-live-players [class*="marker-player"],'+
               'body.almin-no-live-players [class*="player-marker"]{display:none!important}'+

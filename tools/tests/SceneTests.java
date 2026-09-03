@@ -45,7 +45,7 @@ public class SceneTests {
         check("recorded players keep Y as well as X and Z",
             page.contains("players.push({player:who,x:p.x-cx,y:p.y,z:p.z-cz")
                 && page.contains("function scenePlayer")
-                && page.contains("p.wx+','+p.y+','+p.wz"),
+                && page.contains("tightTail(p.wx,p.y,p.wz)"),
             "player altitude is not carried through the scene");
         check("scene block textures use an authenticated image route",
             page.contains("function sceneTextureDefs")

@@ -107,6 +107,54 @@ public final class ServerRelaunch {
     }
 
     /**
+     * What is visibly wrong with a command, before anything depends on it.
+     *
+     * <p>A start command is only ever tested at the one moment it matters, so
+     * a mistake in it is discovered by the server not coming back. This checks
+     * the one mistake that is checkable and that people actually make: a
+     * leading {@code cd} to a directory that does not exist here. It is how a
+     * path copied off the host of a container gets in — the directory is real
+     * somewhere, and not anywhere this process can reach — and the shell's
+     * answer to it is a two-word error and exit 2.
+     *
+     * <p>A sentence, or empty when nothing is visibly wrong. Empty is not a
+     * promise that the command works; it is only the absence of this.
+     */
+    public static String problemWith(String command, Path serverDirectory) {
+        String cmd = command == null ? "" : command.trim();
+        if (cmd.isEmpty()) return "";
+        java.util.regex.Matcher m = LEADING_CD.matcher(cmd);
+        if (!m.find()) return "";
+        String target = unquote(m.group(1));
+        if (target.isEmpty()) return "";
+        Path dir = workingDirectory(serverDirectory);
+        Path want;
+        try {
+            want = dir.resolve(target).normalize();
+        } catch (RuntimeException e) {
+            return "";
+        }
+        if (Files.isDirectory(want)) return "";
+        return "There is no directory " + target + " on the machine this server runs on, so "
+            + "the command would stop at its own first word. Almin already starts the "
+            + "replacement in " + dir + ", which is where this server was launched, so the "
+            + "cd is usually not needed at all.";
+    }
+
+    /** {@code cd /some/where &&} or {@code cd "/some where" ;} at the front. */
+    private static final java.util.regex.Pattern LEADING_CD =
+        java.util.regex.Pattern.compile("^cd\\s+(\"[^\"]*\"|'[^']*'|[^;&|]+?)\\s*(?:&&|;|&)");
+
+    private static String unquote(String raw) {
+        String v = raw == null ? "" : raw.trim();
+        if (v.length() >= 2 && (v.startsWith("\"") && v.endsWith("\"")
+                             || v.startsWith("'") && v.endsWith("'"))) {
+            v = v.substring(1, v.length() - 1);
+        }
+        return v.trim();
+    }
+
+    /**
      * The command line this JVM was launched with, or an empty list if the
      * platform will not say.
      *
