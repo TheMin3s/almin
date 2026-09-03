@@ -448,7 +448,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'paintSceneWho', 'sideLimit', 'sideRow', 'setRowsShown',
                     'sessions', 'sessionIndexAt', 'timeMap', 'shortSpan',
                     'stepSession', 'showWholePeriod', 'paintSessions', 'roughSpan',
-                    'noteWatch', 'setFocus', 'noteSearchSoon']) {
+                    'noteWatch', 'setFocus', 'noteSearchSoon',
+                    'askAboutMods', 'paintModChat']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -3358,6 +3359,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     byId.set('cl-bundled', stub('div'));
     byId.set('cl-gone', stub('div'));
     byId.set('cl-ask', stub('button'));
+    byId.set('cl-chat', stub('div'));
     await sandbox.reviewMods({ name: 'Steve', uuid: 'u' }, c);
 
     const box = deepText(byId.get('cl-review'));
@@ -3372,6 +3374,70 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((pointed ? '  PASS  ' : '  FAIL  ') +
       'only the mods that are a question are listed');
     if (!pointed) failures.push('flag list was: ' + rows.slice(0, 140));
+
+    // ---- and then asking about it ----
+    // The review is a verdict. Whether a flagged mod matters on this server is
+    // the next question, and it used to have nowhere to go.
+    {
+      const opened = /cl-q/.test(deepText(byId.get('cl-chat')));
+      console.log((opened ? '  PASS  ' : '  FAIL  ') +
+        'the review can be asked about afterwards');
+      if (!opened) failures.push('no ask box after the review');
+
+      const realFetch = sandbox.fetch;
+      const sent = [];
+      sandbox.fetch = async (url, init) => {
+        let body = null;
+        try { body = init && init.body ? JSON.parse(init.body) : null; } catch (e) {}
+        sent.push({ url: String(url).split('?')[0], body });
+        return { status: 200, json: async () => ({
+          answer: 'Xaero\u2019s minimap is a map; the entity radar is the part to decide on.',
+          looked: ['xaerominimap'], error: '' }) };
+      };
+      byId.get('cl-q').value = 'is xaerominimap a problem?';
+      await sandbox.askAboutMods({ name: 'Steve', uuid: 'u' });
+      sandbox.fetch = realFetch;
+
+      const put = sent.find((x) => x.url === '/api/client/review' && x.body
+        && x.body.question);
+      const asked = put && put.body.question === 'is xaerominimap a problem?'
+        && put.body.uuid === 'u';
+      console.log((asked ? '  PASS  ' : '  FAIL  ') + '...and the question reaches the server');
+      if (!asked) failures.push('the question was not sent: ' + JSON.stringify(sent));
+
+      const chat = deepText(byId.get('cl-chat'));
+      const answered = /entity radar is the part to decide on/.test(chat)
+        && /is xaerominimap a problem\?/.test(chat);
+      console.log((answered ? '  PASS  ' : '  FAIL  ') +
+        '...and both halves of the exchange stay on screen');
+      if (!answered) failures.push('the exchange was not kept: ' + chat.slice(0, 160));
+
+      const cited = /Looked up on Modrinth: xaerominimap/.test(chat);
+      console.log((cited ? '  PASS  ' : '  FAIL  ') +
+        '...and it says which mods it actually looked up');
+      if (!cited) failures.push('no Modrinth attribution');
+
+      // A second question has to carry the first exchange, or the model is
+      // answering "what about the other one" with no idea what the one was.
+      sent.length = 0;
+      const realFetch2 = sandbox.fetch;
+      sandbox.fetch = async (url, init) => {
+        let body = null;
+        try { body = init && init.body ? JSON.parse(init.body) : null; } catch (e) {}
+        sent.push({ url: String(url).split('?')[0], body });
+        return { status: 200, json: async () => ({ answer: 'Yes.', looked: [], error: '' }) };
+      };
+      byId.get('cl-q').value = 'and the other one?';
+      await sandbox.askAboutMods({ name: 'Steve', uuid: 'u' });
+      sandbox.fetch = realFetch2;
+      const carried = sent[0] && sent[0].body && (sent[0].body.history || []).length === 2
+        && sent[0].body.history[0].mine === true
+        && sent[0].body.history[1].mine === false;
+      console.log((carried ? '  PASS  ' : '  FAIL  ') +
+        '...and a follow-up carries what was already said');
+      if (!carried) failures.push('history not sent: ' +
+        JSON.stringify(sent[0] && sent[0].body && sent[0].body.history));
+    }
 
     const hedged = /not evidence of anything/.test(box) && /can be wrong/.test(box);
     console.log((hedged ? '  PASS  ' : '  FAIL  ') +

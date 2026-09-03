@@ -2948,6 +2948,38 @@ public final class WebUi {
             if (id == null) { json(ex, 400, err("Not a UUID.")); return; }
             ClientProfiles.Profile p = ClientProfiles.of(id);
             if (p == null) { json(ex, 404, err("That client has not reported anything.")); return; }
+
+            // A question turns this from a verdict into a conversation. Same
+            // route because it is the same subject and the same permission:
+            // whoever may ask for the review may ask about the review.
+            String question = body.has("question") && !body.get("question").isJsonNull()
+                ? body.get("question").getAsString() : "";
+            if (!question.isBlank()) {
+                java.util.List<AiInsights.ModTurn> turns = new java.util.ArrayList<>();
+                if (body.has("history") && body.get("history").isJsonArray()) {
+                    for (com.google.gson.JsonElement el : body.getAsJsonArray("history")) {
+                        if (!el.isJsonObject()) continue;
+                        JsonObject t = el.getAsJsonObject();
+                        String text = t.has("text") ? t.get("text").getAsString() : "";
+                        if (text.isBlank()) continue;
+                        turns.add(new AiInsights.ModTurn(
+                            t.has("mine") && t.get("mine").getAsBoolean(), text));
+                        if (turns.size() >= 8) break;
+                    }
+                }
+                AiInsights.ModAnswer a = AiInsights.askMods(
+                    p.name(), p.present(), p.removed(), turns, question);
+                JsonObject ans = new JsonObject();
+                ans.addProperty("answer", a.text());
+                ans.addProperty("generated", a.generated());
+                ans.addProperty("error", a.error() == null ? "" : a.error());
+                JsonArray looked = new JsonArray();
+                for (String m : a.looked()) looked.add(m);
+                ans.add("looked", looked);
+                json(ex, a.ok() ? 200 : 400, ans.toString());
+                return;
+            }
+
             AiInsights.ModReview review = AiInsights.review(p.name(), p.present(), p.removed());
             JsonObject o = new JsonObject();
             o.addProperty("generated", review.generated());

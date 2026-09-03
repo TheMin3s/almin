@@ -205,6 +205,23 @@ public final class AiInsights {
         }
     }
 
+    /** One turn of the conversation about a client's mods. */
+    public record ModTurn(boolean mine, String text) {}
+
+    /**
+     * An answer to a follow-up question about a client's mods.
+     *
+     * @param looked the mod ids that were actually looked up on Modrinth, so
+     *               the panel can say where the facts came from rather than
+     *               leaving the reader to assume the model knew them
+     */
+    public record ModAnswer(long generated, String text, String error, List<String> looked) {
+        public boolean ok() { return error == null || error.isEmpty(); }
+        public static ModAnswer failed(String why) {
+            return new ModAnswer(System.currentTimeMillis(), "", why, List.of());
+        }
+    }
+
     /** How long to wait for the model. Configurable; see ai-timeout-seconds. */
     static Duration timeout() {
         int s = AlminConfig.get().aiTimeoutSeconds;
@@ -1229,6 +1246,141 @@ public final class AiInsights {
                 cut(str(o, "summary"), 400), flags, "");
         } catch (Exception e) {
             return new ModReview(System.currentTimeMillis(), player, text.trim(), List.of(), "");
+        }
+    }
+
+    static final String MODS_CHAT_SYSTEM = """
+        You are answering a Minecraft server admin's questions about the mods \
+        one player has installed. You are given the client's mod list, what \
+        Modrinth says about some of those mods, and the conversation so far.
+
+        Answer in plain prose \u2014 a few sentences, no JSON, no headings, no \
+        lists unless the question asks for one. Answer the question that was \
+        asked and stop.
+
+        The Modrinth entries below are real: they were fetched from Modrinth \
+        just now. Prefer them to anything you remember, quote what they say \
+        about a mod rather than paraphrasing it into something stronger, and \
+        when a mod is not in that list say you are going on recollection. If \
+        you do not know what a mod is, say so. An invented description of \
+        somebody's mod is worse than no answer, because the admin will act on \
+        it.
+
+        Everything here is self-reported by the client and can be faked. \
+        Nothing you say is evidence, and you are not deciding anything about \
+        the player \u2014 you are telling the admin what a mod is for.""";
+
+    /** At most this many Modrinth lookups for one question. */
+    private static final int MODRINTH_LOOKUPS = 5;
+
+    /** And no longer than this spent doing them, however many that turns out to be. */
+    private static final long MODRINTH_BUDGET_MS = 8000L;
+
+    /**
+     * The mods worth looking up for this question.
+     *
+     * <p>Whatever the question names, first: somebody asking "what is
+     * sodium for" wants Sodium looked up and not the first five things on the
+     * list. Failing that, the head of the list, which grounds a general
+     * question in something real rather than in what a model half-remembers
+     * about mod ids.
+     */
+    static List<String> lookupTargets(String question, List<ClientProfiles.Mod> present) {
+        List<String> out = new ArrayList<>();
+        String q = question == null ? "" : question.toLowerCase(Locale.ROOT);
+        for (ClientProfiles.Mod m : present) {
+            if (out.size() >= MODRINTH_LOOKUPS) break;
+            String id = m.id() == null ? "" : m.id().toLowerCase(Locale.ROOT);
+            if (id.isEmpty() || out.contains(m.id())) continue;
+            // The id as written, or with its dashes as spaces: a person types
+            // "iris shaders", the mod is "iris-shaders".
+            if (q.contains(id) || q.contains(id.replace('-', ' '))) out.add(m.id());
+        }
+        for (ClientProfiles.Mod m : present) {
+            if (out.size() >= MODRINTH_LOOKUPS) break;
+            if (m.id() != null && !m.id().isBlank() && !out.contains(m.id())) out.add(m.id());
+        }
+        return out;
+    }
+
+    /**
+     * What Modrinth says about those mods, as plain lines for the prompt.
+     *
+     * <p>Only mod ids leave the server here \u2014 never the player's name.
+     * Bounded in both directions: a fixed number of lookups and a wall-clock
+     * budget, because a slow or unreachable Modrinth must cost the admin a
+     * weaker answer rather than a request that never comes back.
+     */
+    static String modrinthFacts(List<String> ids, List<String> looked) {
+        StringBuilder b = new StringBuilder(1024);
+        long deadline = System.currentTimeMillis() + MODRINTH_BUDGET_MS;
+        for (String id : ids) {
+            if (System.currentTimeMillis() > deadline) break;
+            try {
+                List<Modrinth.Hit> hits = Modrinth.search(id, "");
+                if (hits.isEmpty()) continue;
+                Modrinth.Hit h = hits.get(0);
+                b.append("- ").append(id).append(": ").append(h.title())
+                 .append(" \u2014 ").append(cut(h.description(), 300))
+                 .append("  (").append(h.downloads()).append(" downloads, modrinth.com/mod/")
+                 .append(h.slug()).append(")\n");
+                looked.add(id);
+            } catch (Exception e) {
+                // A lookup that fails is a fact we do not have, not an error
+                // worth failing the whole question over.
+            }
+        }
+        return b.toString();
+    }
+
+    /**
+     * Answers one follow-up question about a client's mods.
+     *
+     * <p>The review is a single structured verdict; this is the conversation
+     * that follows it, which is where an admin actually works out whether a
+     * flagged mod matters on their server. Grounded in Modrinth rather than
+     * left to recall, because the failure mode of the first version was a
+     * model describing a mod it had never heard of with total confidence.
+     */
+    public static ModAnswer askMods(String player, List<ClientProfiles.Mod> present,
+                                    List<ClientProfiles.Mod> removed,
+                                    List<ModTurn> history, String question) {
+        String q = question == null ? "" : question.trim();
+        if (q.isEmpty()) return ModAnswer.failed("Ask something first.");
+        if (q.length() > 600) q = q.substring(0, 600);
+        String why = problem();
+        if (!why.isEmpty()) return ModAnswer.failed(why);
+        if (present == null || present.isEmpty()) {
+            return ModAnswer.failed("That client has not reported a mod list.");
+        }
+        if (!running.compareAndSet(false, true)) {
+            return ModAnswer.failed("Already thinking \u2014 try again in a moment.");
+        }
+        try {
+            AlminConfig cfg = AlminConfig.get();
+            lastAsked = System.currentTimeMillis();
+            List<String> looked = new ArrayList<>();
+            String facts = modrinthFacts(lookupTargets(q, present), looked);
+            StringBuilder b = new StringBuilder(6144);
+            b.append(modsPrompt(player == null ? "" : player, present, removed));
+            if (!facts.isEmpty()) b.append("\nWhat Modrinth says about some of them:\n").append(facts);
+            else b.append("\nModrinth could not be reached, so there are no fetched facts ")
+                  .append("below. Say so if it matters to the answer.\n");
+            if (history != null && !history.isEmpty()) {
+                b.append("\nThe conversation so far:\n");
+                int n = 0;
+                for (ModTurn t : history) {
+                    if (n++ >= 8) break;
+                    b.append(t.mine() ? "Admin: " : "You: ").append(cut(t.text(), 700)).append('\n');
+                }
+            }
+            b.append("\nAdmin asks: ").append(q).append('\n');
+            String text = ask(cfg, MODS_CHAT_SYSTEM, b.toString());
+            return new ModAnswer(System.currentTimeMillis(), text.trim(), "", looked);
+        } catch (Exception e) {
+            return ModAnswer.failed(e.getMessage() == null ? e.toString() : e.getMessage());
+        } finally {
+            running.set(false);
         }
     }
 

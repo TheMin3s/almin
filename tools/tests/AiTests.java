@@ -267,6 +267,59 @@ public class AiTests {
         check("  and is not fooled by a roundabout route",
             resolve.invoke(null, dir, "config/almin/../almin/ai-key") == null);
 
+        // ---- asking about a client's mods, after the verdict ----
+        // The failure this is guarding against is a model confidently
+        // describing a mod it has never heard of, on somebody's computer, to
+        // an admin who will act on it. The answer is grounded in Modrinth, so
+        // what has to be right is which mods get looked up.
+        Class<?> MOD = Class.forName("com.schecks.almin.ClientProfiles$Mod");
+        Constructor<?> mc = MOD.getConstructors()[0];
+        List<Object> mods = new ArrayList<>();
+        for (String id : new String[]{"sodium", "iris-shaders", "xaerominimap", "lithium",
+                                      "modmenu", "fabric-api", "journeymap"}) {
+            mods.add(mod(mc, id));
+        }
+        Method targets = AI.getDeclaredMethod("lookupTargets", String.class, List.class);
+        targets.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<String> named = (List<String>) targets.invoke(null,
+            "is xaerominimap a problem on a survival server?", mods);
+        check("the mod the question names is the one looked up",
+            !named.isEmpty() && named.get(0).equals("xaerominimap"));
+
+        @SuppressWarnings("unchecked")
+        List<String> spaced = (List<String>) targets.invoke(null,
+            "what does iris shaders do", mods);
+        check("...even written the way a person types it",
+            !spaced.isEmpty() && spaced.get(0).equals("iris-shaders"));
+
+        @SuppressWarnings("unchecked")
+        List<String> general = (List<String>) targets.invoke(null,
+            "anything here worth worrying about?", mods);
+        check("a question that names nothing still gets real facts",
+            !general.isEmpty() && general.get(0).equals("sodium"));
+        check("and never more than a handful of lookups", general.size() <= 5);
+
+        Method askMods = AI.getMethod("askMods", String.class, List.class, List.class,
+            List.class, String.class);
+        Object blank = askMods.invoke(null, "Steve", mods, List.of(), List.of(), "   ");
+        check("an empty question is refused before anything is sent",
+            !(Boolean) get(blank, "ok"));
+        Object none = askMods.invoke(null, "Steve", List.of(), List.of(), List.of(), "what?");
+        check("a client that reported no mods is refused too",
+            !(Boolean) get(none, "ok"));
+
+        Field chatField = AI.getDeclaredField("MODS_CHAT_SYSTEM");
+        chatField.setAccessible(true);
+        String chatSystem = (String) chatField.get(null);
+        check("the model is told to prefer the fetched facts to its memory",
+            chatSystem.contains("Prefer them to anything you remember"));
+        check("...and to say so when it is going on recollection",
+            chatSystem.contains("recollection"));
+        check("...and that none of it is evidence",
+            chatSystem.contains("Nothing you say is evidence"));
+
         System.out.println(failures == 0 ? "AI OK" : "AI FAILURES: " + failures);
         if (failures > 0) System.exit(1);
     }
@@ -276,6 +329,20 @@ public class AiTests {
         Class<?> E = Class.forName("com.schecks.almin.Episodes$Episode");
         return E.getConstructors()[0].newInstance(kind, headline, who, "uuid", "overworld",
             at - 5000, at, x, y, z, 4, 3, 20, 40, "pickaxe");
+    }
+
+    /** One reported mod, however many fields that record turns out to have. */
+    static Object mod(Constructor<?> c, String id) throws Exception {
+        Class<?>[] types = c.getParameterTypes();
+        Object[] args = new Object[types.length];
+        for (int i = 0; i < types.length; i++) {
+            if (types[i] == String.class) args[i] = i == 0 ? id : "";
+            else if (types[i] == long.class) args[i] = 0L;
+            else if (types[i] == int.class) args[i] = 0;
+            else if (types[i] == boolean.class) args[i] = false;
+            else args[i] = null;
+        }
+        return c.newInstance(args);
     }
 
     static Object get(Object rec, String field) throws Exception {

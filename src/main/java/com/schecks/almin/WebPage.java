@@ -385,6 +385,16 @@ final class WebPage {
           .sesnav .btn:first-child{border-radius:8px 0 0 8px}
           .sesnav .btn:last-child{border-radius:0 8px 8px 0}
           .sesnav .btn:disabled{opacity:.4;cursor:default}
+          /* Asking about a mod list, and being answered. The question is the
+             admin's own words and the answer is a model's, so they do not look
+             alike. */
+          .modask{background:var(--card2);border:1px solid var(--line);border-radius:10px;
+                  padding:8px 11px;margin:8px 0 6px;color:var(--ink);font-size:13px}
+          .modask:before{content:'You asked';display:block;font-size:10.5px;
+                  text-transform:uppercase;letter-spacing:.8px;color:var(--dim);
+                  margin-bottom:3px}
+          .modsaid{border-left:2px solid var(--brand);padding:2px 0 2px 11px;margin:0 0 10px;
+                  color:var(--ink);font-size:13.5px;line-height:1.5;white-space:pre-wrap}
           .scenebar{display:flex;gap:9px;align-items:center;margin-top:10px;flex-wrap:wrap}
           .scenebar .btn{padding:5px 11px;font-size:12.5px}
           .scenebar input[type=range]{flex:1;min-width:140px;accent-color:var(--brand);padding:0}
@@ -2226,13 +2236,14 @@ final class WebPage {
                 '<button class="btn" id="cl-ask" title="Ask the model what these mods do">'+
                 'Ask about these</button></div>'+
                 '<div id="cl-review"></div>'+
+                '<div id="cl-chat"></div>'+
                 '<div id="cl-mods"></div><div id="cl-bundled"></div>';
               if(gone.length){
                 html+='<h3 class="csec">Removed in the last '+(c.historyDays||7)+
                   ' days ('+gone.length+')</h3><div id="cl-gone"></div>';
               }
               body.innerHTML=html;
-              clientReview=null;
+              clientReview=null; modChat=[];
               paintMods($('cl-mods'),own,c.at,false);
               paintBundles($('cl-bundled'),bundles,c.at);
               if(gone.length) paintMods($('cl-gone'),gone,c.at,true);
@@ -2352,6 +2363,80 @@ final class WebPage {
         let clientReview=null;
 
         /**
+         * The conversation about one client's mods.
+         *
+         * <p>The review is a verdict; this is the part where an admin works
+         * out whether a flagged mod actually matters on their server, which is
+         * a question the first answer cannot know to answer. Kept in the
+         * browser and sent back with each question, so the server holds no
+         * conversation state and closing the dialog ends it.
+         */
+        let modChat=[];
+
+        /** The ask box under the review, and everything said so far. */
+        function paintModChat(p){
+          const box=$('cl-chat'); if(!box) return;
+          box.innerHTML='';
+          for(const t of modChat){
+            const row=document.createElement('div');
+            row.className=t.mine?'modask':'modsaid';
+            row.textContent=t.text;
+            box.appendChild(row);
+            if(!t.mine && t.looked && t.looked.length){
+              const src=document.createElement('div');
+              src.className='muted';
+              src.style.fontSize='11.5px';
+              src.style.margin='-4px 0 8px';
+              src.textContent='Looked up on Modrinth: '+t.looked.join(', ');
+              box.appendChild(src);
+            }
+          }
+          const bar=document.createElement('div');
+          bar.className='term';
+          bar.style.marginTop='8px';
+          bar.innerHTML='<input id="cl-q" placeholder="ask about these mods, '+
+            'e.g. is xaeros minimap a problem on a survival server?">'+
+            '<button class="btn go" id="cl-qgo">Ask</button>';
+          box.appendChild(bar);
+          const note=document.createElement('p');
+          note.className='muted';
+          note.style.cssText='margin:6px 0 0;font-size:11.5px';
+          note.textContent='Answers are grounded in what Modrinth says about the mods '+
+            'named in the question \u2014 only mod ids are sent there, never the '+
+            'player\u2019s name. The model still gets the list and the name, the same '+
+            'as the review above.';
+          box.appendChild(note);
+          $('cl-qgo').onclick=()=>askAboutMods(p);
+          $('cl-q').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); askAboutMods(p); } };
+        }
+
+        async function askAboutMods(p){
+          const field=$('cl-q'), go=$('cl-qgo');
+          const q=field?field.value.trim():'';
+          if(!q) return;
+          modChat.push({mine:true,text:q});
+          paintModChat(p);
+          const waiting=document.createElement('div');
+          waiting.className='note'; waiting.textContent='asking the model\u2026';
+          $('cl-chat').appendChild(waiting);
+          if(go) go.disabled=true;
+          // Everything said so far, minus the question just added, which is
+          // sent on its own: the server puts it at the end of the prompt.
+          const before=modChat.slice(0,-1).map(t=>({mine:!!t.mine,text:t.text}));
+          const r=await jpost('/api/client/review',
+            {uuid:p.uuid, question:q, history:before});
+          if(go) go.disabled=false;
+          if(r.status!==200){
+            modChat.push({mine:false,
+              text:(r.body&&(r.body.error||r.body.message))||'failed',looked:[]});
+          } else {
+            modChat.push({mine:false, text:r.body.answer||'(nothing came back)',
+                          looked:r.body.looked||[]});
+          }
+          paintModChat(p);
+        }
+
+        /**
          * Asks the model what one client's mods are.
          *
          * <p>Never automatic, and never part of loading the page. Pointing a
@@ -2396,6 +2481,9 @@ final class WebPage {
               list.appendChild(row);
             }
           }
+          // The verdict is in; the questions it raises start here.
+          modChat=[];
+          paintModChat(p);
           // The rows themselves now carry the flag, so redraw them.
           const own=(c.mods||[]).filter(m=>!groupOf(m));
           paintMods($('cl-mods'),own,c.at,false);
