@@ -3728,6 +3728,7 @@ final class WebPage {
             const seen=away[a.player];
             if(!seen || a.at>=seen.at) away[a.player]={at:a.at, gone:a.action==='leave'};
           }
+          const onlineNow=new Set(online.map(p=>String(p.name||'').toLowerCase()));
           const inDim=p=>p.dim===allDim;
           const mine=a=>!focusPlayer || a.player===focusPlayer;
           // Everything that had happened by the cursor, not just the last
@@ -3883,7 +3884,9 @@ final class WebPage {
               // not moved — which is what AFK means, and it stays true when
               // you scrub back rather than only describing right now.
               const stillFor=cursor-last.at;
-              const gone=!!(away[n] && away[n].gone && away[n].at>=last.at-1000);
+              const leftEvent=away[n]&&away[n].gone?away[n]:null;
+              const gone=hasLeft(n,away,onlineNow);
+              const leftAt=leftEvent?leftEvent.at:last.at;
               const idle=!gone && afkSecs>0 && stillFor>afkSecs*1000;
               const dim=gone||idle;
               const hx=sx(last.x), hy=sz(last.z);
@@ -3926,12 +3929,12 @@ final class WebPage {
               // The state and the moment travel with the mark, so the hover
               // handler does not have to work them out again from data that
               // will have been rebuilt by the time anyone points at it.
-              const when=gone?away[n].at:last.at;
+              const when=gone?leftAt:last.at;
               heads.push('<g class="thead'+(idle?' afk':'')+(gone?' gone':'')+
                 '" data-who="'+esc(n)+'" data-state="'+(gone?'gone':idle?'afk':'here')+
                 '" data-at="'+when+'" data-still="'+Math.round(stillFor/1000)+
                 '" style="cursor:pointer">'+head+'<title>'+esc(n)+
-                (gone?' — left here '+fmtAgo(away[n].at)
+                (gone?' — left here '+fmtAgo(leftAt)
                      :(idle?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):''))+
                 '</title></g>');
             }
@@ -4484,6 +4487,24 @@ final class WebPage {
             out.push(label('z '+z,4,pz-4,'start'));
           }
           return out;
+        }
+
+        /**
+         * Whether somebody had gone by the cursor.
+         *
+         * <p>Both renderers ask this and both used to answer it themselves.
+         * Live there is a definitive answer — the server's list of who is
+         * on — and scrubbed back there is the last join or leave before the
+         * cursor. The version this replaces also required the leave row to
+         * land within a second of the player's last position sample, which is
+         * two recorders on two different clocks agreeing by luck: when they
+         * did not, somebody who had logged off an hour ago was drawn standing
+         * there, greyed, labelled afk.
+         */
+        function hasLeft(name,away,onlineNow){
+          if(live) return !onlineNow.has(String(name).toLowerCase());
+          const seen=away[name];
+          return !!(seen&&seen.gone);
         }
 
         /** Who is on right now, greyed if they have stopped moving. */
@@ -7004,7 +7025,7 @@ final class WebPage {
             // sample mislabeled real departures as AFK whenever the two
             // recorders happened to run on different ticks.
             const leftEvent=d.away[who]&&d.away[who].gone?d.away[who]:null;
-            const gone=live?!onlineNow.has(who.toLowerCase()):!!leftEvent;
+            const gone=hasLeft(who,d.away,onlineNow);
             const leftAt=leftEvent?leftEvent.at:last.at;
             if(gone&&(!leftWindow||playerClock-leftAt>=leftWindow)) continue;
             const stillFor=d.cursor-last.at;
@@ -7120,7 +7141,11 @@ final class WebPage {
           }
 
           return {dimension:allDim,markers:markers,lines:lines,players:players,scenes:scenes,
-            grid:grid,darkness:mapOpts.dim*.55,focus:blueFocus,
+            // BlueMap keeps its own heads on the map, at wherever everybody is
+            // standing this second. Scrubbed back to last night that is a
+            // second copy of every player in the wrong place, next to the one
+            // Almin drew where they actually were.
+            grid:grid,darkness:mapOpts.dim*.55,focus:blueFocus,livePlayers:live,
             counts:{markers:markers.length,scenes:scenes.length,actions:actions.length}};
         }
 

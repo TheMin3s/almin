@@ -54,6 +54,26 @@ public class BlueMapTests {
                     && Files.readString(bridge).contains("e.source!==parent"),
                 Files.exists(bridge) ? "bridge incomplete" : "bridge missing");
 
+            // BlueMap keeps its own heads on the map, at wherever everybody is
+            // standing this second. Scrubbed back an hour that is a second
+            // copy of every player, in the wrong place, beside the one Almin
+            // drew where they actually were. Turned off through whichever
+            // handle this BlueMap version has, and hidden in CSS as well,
+            // because none of it is an API Almin is entitled to depend on.
+            String js = Files.readString(bridge);
+            check("BlueMap's own live player heads are turned off in playback",
+                js.contains("state.livePlayers!==false")
+                    && js.contains("playerMarkerManager")
+                    && js.contains("almin-no-live-players"), "bridge left them on");
+            String turn = js.substring(js.indexOf("function livePlayers"),
+                js.indexOf("async function render"));
+            check("...without reaching into BlueMap unguarded",
+                turn.contains("try {") && turn.contains("catch(e) {}"),
+                "the reach into BlueMap's internals is not guarded");
+            check("...and the CSS half runs even before BlueMap is up",
+                turn.indexOf("almin-no-live-players") < turn.indexOf("if(!app) return"),
+                "nothing happens at all until BlueMap answers");
+
             Method status = type.getDeclaredMethod(
                 "status", Path.class, int.class, boolean.class, boolean.class);
             status.setAccessible(true);

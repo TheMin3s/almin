@@ -2459,6 +2459,57 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       ? true : 'a player who rejoined was still shown as gone';
   });
 
+  // The version this replaces also wanted the leave row to land within a
+  // second of the player's last position sample. Two recorders on two clocks
+  // agree by luck, and when they did not, somebody who had logged off an hour
+  // ago stood on the map greyed out and labelled afk.
+  // Steve is standing still in the overworld through all of this, which is
+  // what afk is for and is not what these are about.
+  const headState = (who) => {
+    const m = new RegExp('data-who="' + who + '" data-state="([a-z]+)"')
+      .exec(byId.get('t-map')._html || '');
+    return m ? m[1] : 'not drawn';
+  };
+
+  check('leaving counts even when the last step was recorded after it', () => {
+    const d = sandbox.allData;
+    const alex = d.tracks.Alex;
+    const leftAt = alex[alex.length - 1].at - 30000;
+    d.actions.push({ at: leftAt, player: 'Alex', mask: '', action: 'leave',
+                     detail: '', dim: 'overworld', x: 30, y: 64, z: 70, count: 1 });
+    sandbox.live = false;
+    sandbox.paintAll();
+    const state = headState('Alex');
+    d.actions.pop();
+    sandbox.paintAll();
+    return state === 'gone' ? true : 'they were drawn as ' + state;
+  });
+
+  check('...and live, being off the server is enough on its own', () => {
+    const d = sandbox.allData;
+    const wasLive = sandbox.live, wasOnline = d.online;
+    // No leave row at all: they joined before this window and are simply not
+    // on the server now, which is the ordinary case on a server that has been
+    // up longer than the log keeps.
+    d.online = d.online.filter((p) => p.name !== 'Alex');
+    sandbox.live = true;
+    sandbox.paintAll();
+    const state = headState('Alex');
+    d.online = wasOnline; sandbox.live = wasLive;
+    sandbox.paintAll();
+    return state === 'gone' ? true : 'an offline player was drawn as ' + state;
+  });
+
+  check('...and somebody who is still on it is not', () => {
+    const wasLive = sandbox.live;
+    sandbox.live = true;
+    sandbox.paintAll();
+    const state = headState('Steve');
+    sandbox.live = wasLive;
+    sandbox.paintAll();
+    return state === 'afk' ? true : 'a player standing still was drawn as ' + state;
+  });
+
   // ---- which dimension ----
   check('there is a way to switch dimension', () => {
     sandbox.live = false;
@@ -3621,6 +3672,20 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       'a departed BlueMap head disappears after its configured retention');
     if (!expired) failures.push('expired departed BlueMap head remained visible');
     sandbox.live=wasLive;
+
+    // BlueMap draws its own player heads at wherever everybody is standing
+    // this second. Scrubbed back an hour that is a second copy of every
+    // player, in the wrong place, beside the one Almin drew where they were.
+    const liveWas=sandbox.live;
+    sandbox.live=true; sandbox.paintAll();
+    const liveFlag=(sandbox.bluePendingState||{}).livePlayers;
+    sandbox.live=false; sandbox.paintAll();
+    const pastFlag=(sandbox.bluePendingState||{}).livePlayers;
+    sandbox.live=liveWas; sandbox.paintAll();
+    const ownHeads=liveFlag===true && pastFlag===false;
+    console.log((ownHeads ? '  PASS  ' : '  FAIL  ') +
+      "BlueMap's own live player heads are turned off once the timeline moves back");
+    if (!ownHeads) failures.push('the BlueMap payload does not say whether it is live');
 
     const pathOpacity=[...new Set((payload.lines||[]).filter(l=>
       String(l.id||'').startsWith('path-')).map(l=>l.opacity))];

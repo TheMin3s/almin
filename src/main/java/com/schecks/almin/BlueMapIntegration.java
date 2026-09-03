@@ -538,8 +538,39 @@ final class BlueMapIntegration {
             }
           }
 
+          /**
+           * BlueMap's own player heads, which are always "now".
+           *
+           * <p>They are the right thing to draw on a live map and the wrong
+           * thing to leave up when the panel has been scrubbed back an hour:
+           * you get everybody twice, once where they were and once where they
+           * are standing this second, and only one of those is what you asked
+           * to see. Turned off through whichever handle this BlueMap has, and
+           * hidden in CSS as well, because the app is an optional install
+           * whose internals are not Almin's to depend on.
+           */
+          function livePlayers(show){
+            const app=window.bluemap;
+            document.body.classList.toggle('almin-no-live-players',!show);
+            if(!app) return;
+            try {
+              const mgr=app.playerMarkerManager;
+              if(mgr){
+                if(typeof mgr.setVisibility==='function') mgr.setVisibility(show);
+                const set=mgr.markerSet||mgr.playerMarkerSet;
+                if(set){
+                  if(typeof set.setVisible==='function') set.setVisible(show);
+                  else set.visible=show;
+                  if(set.data) set.data.visible=show;
+                }
+              }
+              app.mapViewer.redraw();
+            } catch(e) {}
+          }
+
           async function render(){
             if(!state||!ensureRoot()) return;
+            livePlayers(state.livePlayers!==false);
             await chooseMap(state.dimension);
             if(!root||!root.parent) { ensureRoot(); }
             if(!root) return;
@@ -611,7 +642,11 @@ final class BlueMapIntegration {
           function injectStyle(){
             if(document.getElementById('almin-bridge-style')) return;
             const s=document.createElement('style'); s.id='almin-bridge-style';
-            s.textContent='.almin-html{pointer-events:auto}.almin-mark,.almin-head{pointer-events:auto;'+
+            s.textContent='body.almin-no-live-players .bm-marker-player,'+
+              'body.almin-no-live-players .bm-player-marker,'+
+              'body.almin-no-live-players [class*="marker-player"],'+
+              'body.almin-no-live-players [class*="player-marker"]{display:none!important}'+
+              '.almin-html{pointer-events:auto}.almin-mark,.almin-head{pointer-events:auto;'+
               'border:2px solid #0b0d11;color:#fff;background:var(--almin-color);box-shadow:0 2px 8px #000b;'+
               'cursor:pointer;font:700 11px system-ui;transform:scale(var(--almin-size));transform-origin:center}'+
               '.almin-mark{min-width:15px;height:15px;border-radius:50%;padding:0 3px}.almin-mark.cluster{'+
