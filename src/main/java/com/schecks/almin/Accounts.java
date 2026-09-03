@@ -15,7 +15,9 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * People who may sign in to the panel, and what each of them may reach.
@@ -62,6 +64,67 @@ public final class Accounts {
     public static final List<String> MENUS =
         List.of("dash", "term", "activity", "files", "players", "mods", "settings");
 
+    // ---------- the switches that are not menus ----------
+
+    public static final String AUDIT_ACTIVITY = "audit-activity";
+    public static final String START_COMMAND  = "start-command";
+    public static final String HIDE_COORDS    = "hide-coords";
+    public static final String HIDE_CHAT      = "hide-chat";
+    public static final String OWN_ACTIVITY   = "own-activity";
+    public static final String NO_MODEL       = "no-model";
+
+    /**
+     * Everything an account can be given or have withheld that is not a menu.
+     *
+     * <h3>Why these are not menu levels</h3>
+     * A menu level answers "may they open this". These answer four other
+     * questions — may they do one particular dangerous thing, is what
+     * they do in here written down, is part of what the menu shows kept from
+     * them, and is part of what it can do off the table. Folding any of them
+     * into none/read/write would have meant a level that meant something
+     * different from the same level on the next menu along.
+     *
+     * <h3>Why a named set rather than a field each</h3>
+     * There were three of these as separate record components, and adding a
+     * fourth meant editing every constructor call in the file — the kind
+     * of cost that stops useful switches from being added at all. They are one
+     * set now, and a new one is a name in this list, a sentence in
+     * {@link #extraName} and {@link #said}, and a row in the panel.
+     *
+     * <p>The order is the order the panel draws them in.
+     */
+    public static final List<String> EXTRAS = List.of(
+        AUDIT_ACTIVITY, HIDE_COORDS, HIDE_CHAT, OWN_ACTIVITY, NO_MODEL, START_COMMAND);
+
+    /**
+     * The name of the boolean these used to be written as, or {@code null}.
+     *
+     * <p>Read only, and only for a file written before there was a set. A file
+     * is converted the first time it is saved after this; both spellings are
+     * understood until then, and nobody has to be told to migrate anything.
+     */
+    private static String legacyKey(String extra) {
+        return switch (extra) {
+            case AUDIT_ACTIVITY -> "auditActivity";
+            case START_COMMAND  -> "startCommand";
+            case HIDE_COORDS    -> "hideCoords";
+            default -> null;
+        };
+    }
+
+    /** What each switch is called where a person reads it. */
+    public static String extraName(String extra) {
+        return switch (extra) {
+            case AUDIT_ACTIVITY -> "Record their use of Activity";
+            case START_COMMAND  -> "Change what a restart runs";
+            case HIDE_COORDS    -> "Hide coordinates";
+            case HIDE_CHAT      -> "Hide what people said";
+            case OWN_ACTIVITY   -> "Only their own player";
+            case NO_MODEL       -> "No language model";
+            default -> extra;
+        };
+    }
+
     /** What each menu is called where a person reads it. */
     public static String menuName(String menu) {
         return switch (menu) {
@@ -85,19 +148,26 @@ public final class Accounts {
      * @param mcName      the Minecraft account they are, or "" if not linked
      * @param mcUuid      that account's UUID, or ""
      * @param access      menu to {@link #NONE}/{@link #READ}/{@link #WRITE}
-     * @param auditActivity whether their use of the Activity menu is recorded
-     * @param startCommand  whether they may change what a restart runs, which
-     *                      is a command on the host OS and so is granted on its
-     *                      own rather than with the rest of Settings
-     * @param hideCoords    whether the Activity menu keeps the numbers to
-     *                      itself for them: they see what happened and who,
-     *                      and not where on the map it is
+     * @param extras      the switches that are not menus, by name; see
+     *                      {@link #EXTRAS}
      * @param owner       true only for the synthesised owner, never on disk
      */
     public record Account(String id, String username, String hash, String mcName, String mcUuid,
                           Map<String, String> access, Map<String, String> folders,
-                          boolean auditActivity, boolean startCommand, boolean hideCoords,
+                          Set<String> extras,
                           int rank, long created, long lastLogin, boolean owner) {
+
+        /** Whether one of {@link #EXTRAS} is set, before owner rules. */
+        public boolean has(String extra) { return extras != null && extras.contains(extra); }
+
+        /**
+         * Whether their use of the Activity menu is written down.
+         *
+         * <p>Never for the owner: the record exists so that lending somebody a
+         * surveillance tool is not a secret, and the owner is who it is lent
+         * by.
+         */
+        public boolean auditActivity() { return !owner && has(AUDIT_ACTIVITY); }
 
         /**
          * Whether coordinates are kept from this account.
@@ -109,9 +179,40 @@ public final class Accounts {
          * stops being a list of grid references anybody can copy out.
          *
          * <p>Never the owner: this narrows what a delegate is shown, and an
-         * owner who wanted less could simply not look.
+         * owner who wanted less could simply not look. The same is true of
+         * every {@code …Hidden} and {@code …Only} switch below.
          */
-        public boolean coordsHidden() { return !owner && hideCoords; }
+        public boolean coordsHidden() { return !owner && has(HIDE_COORDS); }
+
+        /**
+         * Whether what people said is kept from this account.
+         *
+         * <p>The log records chat, which makes the Activity menu a transcript
+         * of every conversation on the server. Plenty of what an admin account
+         * is for — who broke this, who was here at four — does not need that,
+         * and the row still says that somebody spoke and when.
+         */
+        public boolean chatHidden() { return !owner && has(HIDE_CHAT); }
+
+        /**
+         * Whether this account only ever sees its own player.
+         *
+         * <p>For handing somebody their own log rather than everybody's: their
+         * paths, their blocks, their deaths. Requires a linked Minecraft
+         * account, because without one there is no "their own" to show, and an
+         * account in that state is shown nothing rather than everything.
+         */
+        public boolean ownActivityOnly() { return !owner && has(OWN_ACTIVITY); }
+
+        /**
+         * Whether the language model is off the table for this account.
+         *
+         * <p>Asking it spends the owner's money and, unless the model runs on
+         * this machine, sends other people's activity to a company. That is a
+         * different decision from whether somebody may read the log, so it is
+         * a different switch.
+         */
+        public boolean modelBarred() { return !owner && has(NO_MODEL); }
 
         /**
          * Whether this account may set {@code web-start-command}.
@@ -122,7 +223,7 @@ public final class Accounts {
          * that holds it can run anything the server user can, which is a
          * different question from whether they may change the AFK timeout.
          */
-        public boolean canStartCommand() { return owner || startCommand; }
+        public boolean canStartCommand() { return owner || has(START_COMMAND); }
 
         /** What this account may do with one menu. The owner may do everything. */
         public String level(String menu) {
@@ -276,9 +377,7 @@ public final class Accounts {
         return new Account(
             str(o, "id").isBlank() ? newId() : str(o, "id"),
             username, str(o, "hash"), str(o, "mcName"), str(o, "mcUuid"),
-            access, folders, o.has("auditActivity") && o.get("auditActivity").getAsBoolean(),
-            o.has("startCommand") && o.get("startCommand").getAsBoolean(),
-            o.has("hideCoords") && o.get("hideCoords").getAsBoolean(),
+            access, folders, readExtras(o),
             rankOf((int) num(o, "rank")),
             num(o, "created"), num(o, "lastLogin"), false);
     }
@@ -299,6 +398,37 @@ public final class Accounts {
         }
     }
 
+    /**
+     * The switches on one stored account, in either spelling.
+     *
+     * <p>A file written before these were a set has a boolean per switch; one
+     * written since has a list of names. Both are read, and the next save
+     * writes the list, so an upgrade needs nothing from anybody. An unknown
+     * name in the list is dropped rather than kept, so a downgrade and a
+     * re-upgrade cannot resurrect a switch this version does not have.
+     */
+    private static Set<String> readExtras(JsonObject o) {
+        Set<String> out = new LinkedHashSet<>();
+        JsonArray list = o.getAsJsonArray("extras");
+        if (list != null) {
+            for (JsonElement e : list) {
+                try {
+                    String name = e.getAsString();
+                    if (EXTRAS.contains(name)) out.add(name);
+                } catch (RuntimeException ignored) {
+                    // not a string; there is nothing to take from it
+                }
+            }
+        }
+        for (String extra : EXTRAS) {
+            String was = legacyKey(extra);
+            if (was == null || !o.has(was)) continue;
+            try { if (o.get(was).getAsBoolean()) out.add(extra); }
+            catch (RuntimeException ignored) { /* keep the default, which is off */ }
+        }
+        return out;
+    }
+
     private static JsonObject write(Account a) {
         JsonObject o = new JsonObject();
         o.addProperty("id", a.id());
@@ -306,9 +436,9 @@ public final class Accounts {
         o.addProperty("hash", a.hash());
         o.addProperty("mcName", a.mcName());
         o.addProperty("mcUuid", a.mcUuid());
-        o.addProperty("auditActivity", a.auditActivity());
-        o.addProperty("startCommand", a.startCommand());
-        o.addProperty("hideCoords", a.hideCoords());
+        JsonArray extras = new JsonArray();
+        for (String x : EXTRAS) if (a.has(x)) extras.add(x);
+        o.add("extras", extras);
         o.addProperty("rank", a.rank());
         o.addProperty("created", a.created());
         o.addProperty("lastLogin", a.lastLogin());
@@ -335,7 +465,7 @@ public final class Accounts {
         String name = cfg.webAdminUsername == null || cfg.webAdminUsername.isBlank()
             ? "admin" : cfg.webAdminUsername.trim();
         return new Account("owner", name, cfg.webAdminPasswordHash == null ? "" : cfg.webAdminPasswordHash,
-            "", "", Map.of(), Map.of(), false, true, false, OWNER_RANK, 0, 0, true);
+            "", "", Map.of(), Map.of(), Set.of(), OWNER_RANK, 0, 0, true);
     }
 
     /** Every account except the owner, in the order they were made. */
@@ -388,7 +518,7 @@ public final class Accounts {
         String pw = passwordProblem(password);
         if (!pw.isEmpty()) return Result.fail(pw);
         Account a = new Account(newId(), name, Passwords.hash(password), "", "",
-            new LinkedHashMap<>(), new LinkedHashMap<>(), false, false, false, rankOf(rank),
+            new LinkedHashMap<>(), new LinkedHashMap<>(), new LinkedHashSet<>(), rankOf(rank),
             System.currentTimeMillis(), 0, false);
         byName.put(name.toLowerCase(Locale.ROOT), a);
         save();
@@ -403,7 +533,7 @@ public final class Accounts {
         String bad = passwordProblem(password);
         if (!bad.isEmpty()) return Result.fail(bad);
         put(a.username(), new Account(a.id(), a.username(), Passwords.hash(password), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.extras(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + "'s password is changed.");
     }
@@ -417,7 +547,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) access.put(menu, level);
         else access.remove(menu);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            access, a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
+            access, a.folders(), a.extras(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + menuName(menu) + ".");
     }
@@ -447,7 +577,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) folders.put(f, level);
         else folders.remove(f);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), folders, a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), folders, a.extras(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + f + ".");
     }
@@ -457,7 +587,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), new LinkedHashMap<>(), a.extras(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " can reach every folder the Files menu shows.");
     }
@@ -473,7 +603,7 @@ public final class Accounts {
         if (a == null) return Result.fail("No such account.");
         int want = rankOf(rank);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), want, a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.extras(), want, a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " is now level " + want + ".");
     }
@@ -494,7 +624,7 @@ public final class Accounts {
             return Result.fail("That is not a Minecraft account name.");
         }
         put(a.username(), new Account(a.id(), a.username(), a.hash(), n, n.isEmpty() ? "" : u,
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.extras(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(n.isEmpty()
             ? a.username() + " is no longer linked to a player."
@@ -502,48 +632,58 @@ public final class Accounts {
     }
 
     /**
-     * Grants or withdraws the right to change what a restart runs.
+     * Turns one of {@link #EXTRAS} on or off for one account.
      *
-     * <p>Separate from every menu level because it is not a menu: it is the
-     * one setting in Almin that becomes a command line on the host, and an
-     * account holding it can do anything the server's user can.
+     * <p>One method for all of them, rather than one each: they differ in what
+     * they mean and not in what setting them does, and a set of near-identical
+     * methods is how the next one comes to be forgotten.
      */
-    public static synchronized Result setStartCommand(String id, boolean on) {
+    public static synchronized Result setExtra(String id, String extra, boolean on) {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
+        if (!EXTRAS.contains(extra)) return Result.fail("There is no " + extra + " setting.");
+        Set<String> extras = new LinkedHashSet<>(a.extras());
+        if (on) extras.add(extra); else extras.remove(extra);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), on, a.hideCoords(), a.rank(), a.created(),
-            a.lastLogin(), false));
+            a.access(), a.folders(), extras, a.rank(), a.created(), a.lastLogin(), false));
         save();
-        return Result.done(on
-            ? a.username() + " can change what a restart runs on this machine."
-            : a.username() + " can no longer change what a restart runs.");
+        return Result.done(said(a.username(), extra, on));
     }
 
-    /** Keeps coordinates out of the Activity menu for one account, or puts them back. */
-    public static synchronized Result setHideCoords(String id, boolean on) {
-        Account a = stored(id);
-        if (a == null) return Result.fail("No such account.");
-        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), on, a.rank(),
-            a.created(), a.lastLogin(), false));
-        save();
-        return Result.done(on
-            ? a.username() + " is shown the Activity menu without coordinates."
-            : a.username() + " is shown coordinates in the Activity menu again.");
+    /** What turning one of them on or off has just done, in a sentence. */
+    private static String said(String who, String extra, boolean on) {
+        return switch (extra) {
+            case AUDIT_ACTIVITY -> on
+                ? who + "'s use of the Activity menu is recorded, and they are told so."
+                : who + "'s use of the Activity menu is no longer recorded.";
+            case START_COMMAND -> on
+                ? who + " can change what a restart runs on this machine."
+                : who + " can no longer change what a restart runs.";
+            case HIDE_COORDS -> on
+                ? who + " is shown the Activity menu without coordinates."
+                : who + " is shown coordinates in the Activity menu again.";
+            case HIDE_CHAT -> on
+                ? who + " is shown that people spoke, and not what they said."
+                : who + " can read chat in the Activity menu again.";
+            case OWN_ACTIVITY -> on
+                ? who + " sees only their own player in the Activity menu."
+                : who + " sees everybody in the Activity menu again.";
+            case NO_MODEL -> on
+                ? who + " cannot ask the language model anything."
+                : who + " can ask the language model again.";
+            default -> on ? who + ": " + extra + " is on." : who + ": " + extra + " is off.";
+        };
     }
 
-    /** Turns Activity-menu recording on or off for one account. */
-    public static synchronized Result setAudit(String id, boolean on) {
-        Account a = stored(id);
-        if (a == null) return Result.fail("No such account.");
-        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), on, a.startCommand(), a.hideCoords(), a.rank(), a.created(),
-            a.lastLogin(), false));
-        save();
-        return Result.done(on
-            ? a.username() + "'s use of the Activity menu is recorded, and they are told so."
-            : a.username() + "'s use of the Activity menu is no longer recorded.");
+    /** Kept for the console and the offline suite, which name these directly. */
+    public static Result setAudit(String id, boolean on) {
+        return setExtra(id, AUDIT_ACTIVITY, on);
+    }
+    public static Result setStartCommand(String id, boolean on) {
+        return setExtra(id, START_COMMAND, on);
+    }
+    public static Result setHideCoords(String id, boolean on) {
+        return setExtra(id, HIDE_COORDS, on);
     }
 
     public static synchronized Result rename(String id, String username) {
@@ -558,7 +698,7 @@ public final class Accounts {
         }
         byName.remove(a.username().toLowerCase(Locale.ROOT));
         byName.put(name.toLowerCase(Locale.ROOT), new Account(a.id(), name, a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.extras(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done("Now called " + name + ".");
     }
@@ -577,7 +717,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return;
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.hideCoords(), a.rank(), a.created(), System.currentTimeMillis(), false));
+            a.access(), a.folders(), a.extras(), a.rank(), a.created(), System.currentTimeMillis(), false));
         save();
     }
 

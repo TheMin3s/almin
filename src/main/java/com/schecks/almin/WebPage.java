@@ -510,6 +510,25 @@ final class WebPage {
           .sw:disabled{opacity:.45;cursor:default}
           .sw:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 
+          /* ---- the extra permissions on one account ----
+             The same group-of-rows shape as Settings, because it is the same
+             kind of decision and there is no reason for two idioms. What is
+             different is that these are sentences about a person rather than
+             config keys, so the name is prose rather than monospace, and a
+             row is allowed to say something about itself: the one that hands
+             over a command line on this machine should not look like the one
+             that hides coordinates. */
+          .exgroup{margin-top:11px}
+          .exhead{margin:0 0 6px 2px;font-size:11px;letter-spacing:.08em;
+                  text-transform:uppercase;color:var(--mute)}
+          .cfgrow .exname{font-size:13px;font-weight:600;color:var(--ink)}
+          .cfgrow.care{background:rgba(208,59,59,.07)}
+          .cfgrow.care .exname::after{content:'care';margin-left:7px;padding:1px 6px;
+                  border-radius:999px;font-size:10px;font-weight:600;line-height:1.6;
+                  letter-spacing:.06em;text-transform:uppercase;color:#e97070;
+                  background:rgba(208,59,59,.16);vertical-align:1px}
+          .exsnag{margin-top:4px;font-size:12px;line-height:1.45;color:var(--warn)}
+
           /* ---- somebody's record of using Activity ----
              A visit is a heading with a start and an end; what they chose to
              do inside it hangs under it, indented against a rule. Written flat
@@ -707,7 +726,7 @@ final class WebPage {
          * still loading does not flash a menu somebody is not allowed to open.
          */
         let me={username:'',owner:false,access:{},linkedPlayer:'',audited:false,
-                canSetStart:false,noCoords:false};
+                canSetStart:false,noCoords:false,noModel:false,ownOnly:false};
         function mayRead(menu){
           if(me.owner) return true;
           const v=me.access?me.access[menu]:'';
@@ -1149,6 +1168,7 @@ final class WebPage {
           // used to be reads as a bug; a line at the top saying the numbers
           // are not shown to this account reads as a decision somebody made.
           if(authed && tab==='activity' && noCoords()) m.appendChild(noCoordsNote());
+          if(authed && tab==='activity' && me.ownOnly) m.appendChild(ownOnlyNote());
           if(authed && tab==='activity' && me.audited){
             m.appendChild(watchedNote());
             warnWatched();
@@ -1283,6 +1303,21 @@ final class WebPage {
           box.style.marginBottom='12px';
           box.textContent='Coordinates are not shown to this account. The map, the paths '+
             'and the log are all here \u2014 where they are on the world grid is not.';
+          return box;
+        }
+
+        // A menu showing one player out of thirty looks like a menu with a
+        // bug in it. Saying so costs a line and turns it back into a rule.
+        function ownOnlyNote(){
+          const box=document.createElement('div');
+          box.className='msg';
+          box.id='ownonly-note';
+          box.style.marginBottom='12px';
+          box.textContent=me.linkedPlayer
+            ? 'This account is shown only '+me.linkedPlayer+'. Everyone else on the '+
+              'server is left out of the map, the paths and the log.'
+            : 'This account is shown only its own player, and is not linked to one \u2014 '+
+              'so there is nothing here. The main account can link it.';
           return box;
         }
 
@@ -2340,8 +2375,9 @@ final class WebPage {
               html+='<div class="bartitle" style="margin:16px 0 2px">'+
                 '<h3 class="csec" style="margin:0">Installed ('+own.length+')</h3>'+
                 '<span class="spacer"></span>'+
-                '<button class="btn" id="cl-ask" title="Ask the model what these mods do">'+
-                'Ask about these</button></div>'+
+                (me.noModel?'':
+                  '<button class="btn" id="cl-ask" title="Ask the model what these mods do">'+
+                  'Ask about these</button>')+'</div>'+
                 '<div id="cl-review"></div>'+
                 '<div id="cl-chat"></div>'+
                 '<div id="cl-mods"></div><div id="cl-bundled"></div>';
@@ -5265,6 +5301,9 @@ final class WebPage {
         // down to y 11" is a sentence the log never contained. The summary on
         // top of them is optional and off by default.
         let episodes=[], aiStatus=null, aiReport=null, summarising=false;
+        // Set when the server has a summary but will not hand this account
+        // this one. Not an error, and not "nothing summarised yet" either.
+        let aiHeld='';
         // Which of the three subjects the summary is about. 'view' follows the
         // map, so zooming in and pressing Summarise asks about what is on
         // screen rather than about the whole server again.
@@ -5310,6 +5349,7 @@ final class WebPage {
           episodes=r.body.episodes||[];
           aiStatus=r.body.ai||null;
           aiReport=r.body.report||null;
+          aiHeld=r.body.reportHeld||'';
           paintInsights();
         }
 
@@ -5323,6 +5363,7 @@ final class WebPage {
               episodes=r.body.episodes||episodes;
               aiStatus=r.body.ai||aiStatus;
               aiReport=r.body.report||null;
+              aiHeld=r.body.reportHeld||'';
             } else {
               aiReport={error:(r.body&&r.body.error)||'failed',moments:[],summary:''};
             }
@@ -5551,7 +5592,7 @@ final class WebPage {
         function paintAiBox(){
           paintScopeChips();
           const box=$('i-ai'), run=$('i-run'); if(!box) return;
-          const on=aiStatus && aiStatus.enabled;
+          const on=aiStatus && aiStatus.enabled && !me.noModel;
           const bar=$('i-askbar');
           if(bar) bar.style.display=on?'':'none';
           if(run){
@@ -5560,7 +5601,20 @@ final class WebPage {
               :(aiScope==='player'?'Summarise '+focusPlayer
                :aiScope==='view'?'Summarise this view':'Summarise');
             run.title=on?'Ask the model to read the episodes below'
+                        :me.noModel?'This account cannot ask the language model'
                         :'Turn on ai-enabled in Settings first';
+          }
+          // Barred is not off. Telling this account to turn on a setting it
+          // cannot reach, for a reason that is not the reason, would send it
+          // looking for a fault that is not there.
+          if(me.noModel){
+            box.innerHTML='<div class="note"><b>This account cannot ask the language '+
+              'model.</b> The episodes below are worked out here and are all yours; '+
+              'anything already summarised still shows.</div>';
+            if(aiReport && aiReport.summary){
+              box.innerHTML+='<div class="summary">'+esc(aiReport.summary)+'</div>';
+            }
+            return;
           }
           if(!on){
             box.innerHTML='<div class="note">'+
@@ -5585,6 +5639,10 @@ final class WebPage {
           }
           if(aiReport && aiReport.error){
             html+='<div class="msg err">'+esc(aiReport.error)+'</div>';
+            box.innerHTML=html; return;
+          }
+          if(aiHeld){
+            html+='<div class="note">'+esc(aiHeld)+'</div>';
             box.innerHTML=html; return;
           }
           if(!aiReport){
@@ -7886,60 +7944,107 @@ final class WebPage {
             card.appendChild(folderRow(a));
           }
 
-          // Recording somebody's use of the Activity menu is a decision about
-          // watching a person, so it is spelled out rather than being a bare
-          // switch, and it says that they are told.
-          const audit=document.createElement('label');
-          audit.className='note';
-          audit.style.display='flex'; audit.style.alignItems='center'; audit.style.gap='8px';
-          audit.style.marginTop='10px';
-          const box=document.createElement('input'); box.type='checkbox';
-          box.checked=!!a.auditActivity;
-          box.onchange=()=>postAccount({action:'audit',id:a.id,on:box.checked});
-          const t=document.createElement('span');
-          t.textContent='Record what '+a.username+' looks at in Activity, and tell them '+
-            'it is recorded when they open it.';
-          audit.append(box,t);
-          card.appendChild(audit);
-
-          // Narrowing what somebody is shown rather than what they may open:
-          // they still get the Activity menu, and it stops handing them
-          // everybody's base locations by the thousand.
-          const noco=document.createElement('label');
-          noco.className='note';
-          noco.style.display='flex'; noco.style.alignItems='center'; noco.style.gap='8px';
-          noco.style.marginTop='8px';
-          const nobox=document.createElement('input'); nobox.type='checkbox';
-          nobox.checked=!!a.hideCoords;
-          nobox.onchange=()=>postAccount({action:'coords',id:a.id,on:nobox.checked});
-          const not=document.createElement('span');
-          not.innerHTML='Keep coordinates out of the Activity menu for '+esc(a.username)+
-            '. They still see the map, the paths and who did what \u2014 not the numbers. '+
-            '<span class="muted">The 3D view runs BlueMap\u2019s own web app; Almin hides '+
-            'what it can of its position readouts, but cannot promise to have hidden all '+
-            'of them.</span>';
-          noco.append(nobox,not);
-          card.appendChild(noco);
-
-          // Its own row, and only offered by somebody who holds it: what a
-          // restart runs is a shell line on the host, so it is not part of
-          // Settings and cannot be handed down by an account without it.
-          if(me.canSetStart){
-            const sc=document.createElement('label');
-            sc.className='note';
-            sc.style.display='flex'; sc.style.alignItems='center'; sc.style.gap='8px';
-            sc.style.marginTop='8px';
-            const scbox=document.createElement('input'); scbox.type='checkbox';
-            scbox.checked=!!a.startCommand;
-            scbox.onchange=()=>postAccount({action:'startcmd',id:a.id,on:scbox.checked});
-            const sct=document.createElement('span');
-            sct.innerHTML='Let '+esc(a.username)+' change what a restart runs. '+
-              '<b>This is a command line on this machine</b>, run as the user the server '+
-              'runs as \u2014 give it only to someone you would give a shell.';
-            sc.append(scbox,sct);
-            card.appendChild(sc);
-          }
+          card.appendChild(extraGroup(a));
           return card;
+        }
+
+        /**
+         * The extra permissions on one account, as a group of switches.
+         *
+         * <p>These are not access levels. An access level answers "may they
+         * open this menu"; these answer "what is that menu allowed to tell
+         * them, and what may they do with it" \u2014 which is the question you
+         * actually have about somebody you trust with Activity but not with
+         * everybody's base coordinates.
+         *
+         * <p>Written from one list rather than three hand-built rows, so
+         * adding the next one is a line here and a name on the server.
+         */
+        const accountExtras=[
+          {key:'audit-activity', name:'Record their use of Activity',
+           says:a=>'Everything '+esc(a.username)+' opens in the Activity menu is written '+
+                   'down, and they are told so when they open it.',
+           off:a=>'Nothing is kept about what '+esc(a.username)+' looks at.'},
+          {key:'hide-coords', name:'Hide coordinates',
+           says:a=>'The map, the paths and who did what \u2014 without the numbers. '+
+                   'The 3D view is BlueMap\u2019s own web app; Almin hides what it '+
+                   'can of its position readouts, but cannot promise to have hidden '+
+                   'all of them.',
+           off:a=>'Positions are shown in full, on the map and in every row.'},
+          {key:'hide-chat', name:'Hide what people said',
+           says:a=>'Activity still shows that somebody spoke, and when. The message '+
+                   'itself is left out.',
+           off:a=>'Chat rows carry what was typed.'},
+          {key:'own-activity', name:'Only their own player',
+           says:a=>'Activity shows '+esc(a.username)+' the player they are linked to, and '+
+                   'nobody else \u2014 no other paths, no other rows, no other names.',
+           off:a=>'Activity shows everyone on the server.',
+           snag:a=>a.mcName?'':'This account is not linked to a player yet, so it '+
+                   'would be shown nothing at all. Link it first.'},
+          {key:'no-model', name:'No language model',
+           says:a=>esc(a.username)+' cannot send anything to the language model. Summaries '+
+                   'somebody else asked for are still readable \u2014 they are already '+
+                   'written and already here.',
+           off:a=>'They may ask the model about activity, and about client mod lists.'},
+          {key:'start-command', name:'Change what a restart runs', care:true,
+           needs:()=>me.canSetStart,
+           says:a=>'<b>A command line on this machine</b>, run as the user the server '+
+                   'runs as. Give it only to someone you would give a shell.',
+           off:a=>'What a restart runs is fixed for them, as it is for everyone else '+
+                  'without this.'}
+        ];
+
+        function extraGroup(a){
+          const wrap=document.createElement('div'); wrap.className='exgroup';
+          const head=document.createElement('div'); head.className='exhead';
+          head.textContent='What this account may see and do';
+          const group=document.createElement('div'); group.className='cfggroup';
+          const on=a.extras||{};
+          for(const x of accountExtras){
+            if(x.needs && !x.needs()) continue;
+            group.appendChild(extraRow(a,x,!!on[x.key]));
+          }
+          wrap.append(head,group);
+          return wrap;
+        }
+
+        function extraRow(a,x,live){
+          const row=document.createElement('div');
+          row.className='cfgrow'+(x.care?' care':'');
+          const left=document.createElement('div');
+          left.innerHTML='<div class="exname">'+esc(x.name)+'</div>'+
+            '<div class="muted">'+(live?x.says(a):x.off(a))+'</div>';
+          // A condition that makes the switch pointless is worth saying beside
+          // it while it is on, rather than leaving somebody to wonder why the
+          // account they restricted sees nothing.
+          const snag=live&&x.snag?x.snag(a):'';
+          if(snag){
+            const s=document.createElement('div'); s.className='exsnag';
+            s.textContent=snag;
+            left.appendChild(s);
+          }
+          const ctl=document.createElement('div'); ctl.className='cfgctl';
+          const b=document.createElement('button');
+          b.className='sw'+(live?' on':'');
+          b.type='button';
+          b.setAttribute('role','switch');
+          b.setAttribute('aria-checked',live?'true':'false');
+          b.setAttribute('aria-label',x.name+' for '+a.username);
+          b.title=live?'on':'off';
+          b.innerHTML='<i></i>';
+          b.onclick=async()=>{
+            // Flick now, ask after: the round trip repaints the whole list, and
+            // a switch that waits for the network feels broken. If it is
+            // refused the repaint never comes and this puts it back.
+            b.classList.toggle('on',!live);
+            b.disabled=true;
+            const ok=await postAccount({action:'extra',id:a.id,extra:x.key,on:!live});
+            if(!ok){ b.classList.toggle('on',live); b.disabled=false; }
+          };
+          ctl.appendChild(b);
+          if(!mayWrite('accounts')){ b.disabled=true; b.title='read-only account'; }
+          row.append(left,ctl);
+          return row;
         }
 
         /**

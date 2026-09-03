@@ -1007,6 +1007,8 @@ public final class WebUi {
                     o.addProperty("audited", me.auditActivity());
                     o.addProperty("canSetStart", me.canStartCommand());
                     o.addProperty("noCoords", me.coordsHidden());
+                    o.addProperty("noModel", me.modelBarred());
+                    o.addProperty("ownOnly", me.ownActivityOnly());
                     JsonObject access = new JsonObject();
                     for (String menu : Accounts.MENUS) access.addProperty(menu, me.level(menu));
                     o.add("access", access);
@@ -2605,7 +2607,7 @@ public final class WebUi {
         try {
             if ("GET".equals(ex.getRequestMethod())) {
                 if (!requireAuth(ex)) return;
-                json(ex, 200, activityJson());
+                json(ex, 200, activityJson(who(ex)));
                 return;
             }
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
@@ -2675,10 +2677,12 @@ public final class WebUi {
         }
     }
 
-    private String activityJson() {
+    private String activityJson(Accounts.Account me) {
         AlminConfig cfg = AlminConfig.get();
+        String only = onlyPlayer(me);
         JsonArray arr = new JsonArray();
         for (ActivityEntry e : ActivityLog.recent(rowsShown())) {
+            if (!visible(only, e.player())) continue;
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
@@ -2730,11 +2734,17 @@ public final class WebUi {
     private void handleTrack(HttpExchange ex) throws IOException {
         try {
             if (!requireAuth(ex)) return;
+            Accounts.Account me = who(ex);
+            String only = onlyPlayer(me);
             String who = queryParam(ex, "player");
+            // Asked about somebody they are not shown: answered with their own
+            // player, or with nothing at all when there is no own player.
+            if (!visible(only, who)) who = NOBODY.equals(only) ? "" : only;
             JsonObject root = new JsonObject();
 
             JsonObject who2 = new JsonObject();
             for (Map.Entry<String, Integer> e : PlayerTracks.tracked().entrySet()) {
+                if (!visible(only, e.getKey())) continue;
                 who2.addProperty(e.getKey(), e.getValue());
             }
             root.add("players", who2);
@@ -2749,7 +2759,8 @@ public final class WebUi {
                 List<Afk.Who> online = serverRunning
                     ? onServer(() -> Afk.online(server), List.<Afk.Who>of())
                     : List.<Afk.Who>of();
-                json(ex, 200, allTracksJson(root, online == null ? List.of() : online).toString());
+                json(ex, 200,
+                    allTracksJson(root, online == null ? List.of() : online, me).toString());
                 return;
             }
 
@@ -2779,7 +2790,7 @@ public final class WebUi {
                 JsonObject o = new JsonObject();
                 o.addProperty("at", e.at());
                 o.addProperty("action", e.action());
-                o.addProperty("detail", e.detail());
+                o.addProperty("detail", detailFor(me, e));
                 o.addProperty("dim", e.dim());
                 o.addProperty("x", e.x());
                 o.addProperty("y", e.y());
@@ -2807,14 +2818,17 @@ public final class WebUi {
      * around" — which needs everyone on the same timeline or it answers
      * nothing.
      */
-    private JsonObject allTracksJson(JsonObject root, List<Afk.Who> online) {
+    private JsonObject allTracksJson(JsonObject root, List<Afk.Who> online,
+                                     Accounts.Account me) {
         long from = Long.MAX_VALUE, to = 0;
+        String only = onlyPlayer(me);
 
         // Name to UUID, so the map can draw a face at each path's head rather
         // than a coloured dot with a label beside it.
         JsonObject ids = new JsonObject();
         JsonObject tracks = new JsonObject();
         for (String name : PlayerTracks.tracked().keySet()) {
+            if (!visible(only, name)) continue;
             JsonArray points = new JsonArray();
             for (PlayerTrackPoint p : PlayerTracks.of(name)) {
                 JsonObject o = new JsonObject();
@@ -2836,12 +2850,13 @@ public final class WebUi {
         JsonArray actions = new JsonArray();
         for (ActivityEntry e : ActivityLog.recent(mapRows())) {
             if (e.dim() == null || e.dim().isEmpty()) continue;
+            if (!visible(only, e.player())) continue;
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
             o.addProperty("mask", maskOf(e.uuid()));
             o.addProperty("action", e.action());
-            o.addProperty("detail", e.detail());
+            o.addProperty("detail", detailFor(me, e));
             o.addProperty("dim", e.dim());
             o.addProperty("x", e.x());
             o.addProperty("y", e.y());
@@ -2857,6 +2872,7 @@ public final class WebUi {
         // timeline cannot, because a path ends when someone leaves.
         JsonArray who = new JsonArray();
         for (Afk.Who w : online) {
+            if (!visible(only, w.name())) continue;
             JsonObject o = new JsonObject();
             o.addProperty("name", w.name());
             o.addProperty("uuid", w.uuid());
@@ -2905,6 +2921,7 @@ public final class WebUi {
         try {
             if (!requireAuth(ex)) return;
             boolean run = "POST".equals(ex.getRequestMethod());
+            if (run && noModel(ex)) return;
             JsonObject body = run ? readBody(ex) : new JsonObject();
             AiInsights.Scope scope = scopeOf(ex, body);
 
@@ -2913,7 +2930,8 @@ public final class WebUi {
             episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
 
             JsonObject root = new JsonObject();
-            root.add("episodes", episodesJson(episodes));
+            Accounts.Account me = who(ex);
+            root.add("episodes", episodesJson(episodes, onlyPlayer(me)));
             root.add("ai", aiStatusJson());
             root.addProperty("scope", scope.key());
 
@@ -2940,7 +2958,20 @@ public final class WebUi {
             // period, so it cannot be written differently per account; the
             // coordinates come out of it on the way to one that is not shown
             // them instead.
-            if (report != null) root.add("report", reportJson(report, hidden(ex)));
+            // A summary the model wrote from chat is a paraphrase of chat, and
+            // no amount of editing makes it reliably not that. Where the model
+            // was given chat at all, an account that is not shown chat is not
+            // shown the summary either; where it was not, there is nothing of
+            // theirs in it and it goes through.
+            boolean fromChat = me != null && me.chatHidden() && AlminConfig.get().aiSendChat;
+            if (fromChat) {
+                root.addProperty("reportHeld",
+                    "This account is not shown what people said, and summaries here are "
+                    + "written with chat in front of the model. Turn off ai-send-chat to "
+                    + "have summaries this account can read.");
+            } else if (report != null) {
+                root.add("report", reportJson(report, hidden(ex)));
+            }
             json(ex, 200, root.toString());
         } catch (Throwable t) {
             fault(ex, t);
@@ -3006,6 +3037,16 @@ public final class WebUi {
         try {
             if (!requireAuth(ex)) return;
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            if (noModel(ex)) return;
+            // The answer is written by a model that was handed the chat, so it
+            // is a paraphrase of the chat. Same rule as the summary.
+            Accounts.Account asking = who(ex);
+            if (asking != null && asking.chatHidden() && AlminConfig.get().aiSendChat) {
+                json(ex, 403, err("This account is not shown what people said, and answers "
+                    + "here are written with chat in front of the model. Turn off "
+                    + "ai-send-chat to have answers this account can read."));
+                return;
+            }
             JsonObject body = readBody(ex);
             String question = body.has("question") ? body.get("question").getAsString() : "";
             AiInsights.Scope scope = scopeOf(ex, body);
@@ -3078,6 +3119,7 @@ public final class WebUi {
         try {
             if (!requireAuth(ex)) return;
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            if (noModel(ex)) return;
             JsonObject body = readBody(ex);
             java.util.UUID id = Heads.parseUuid(body.has("uuid")
                 ? body.get("uuid").getAsString() : "");
@@ -3148,9 +3190,10 @@ public final class WebUi {
         return out;
     }
 
-    private static JsonArray episodesJson(List<Episodes.Episode> episodes) {
+    private static JsonArray episodesJson(List<Episodes.Episode> episodes, String only) {
         JsonArray arr = new JsonArray();
         for (Episodes.Episode e : episodes) {
+            if (!visible(only, e.player())) continue;
             JsonObject o = new JsonObject();
             o.addProperty("kind", e.kind());
             o.addProperty("headline", e.headline());
@@ -3171,10 +3214,79 @@ public final class WebUi {
         return arr;
     }
 
+    /**
+     * The player one account is allowed to see, or {@code null} for everyone.
+     *
+     * <p>An account narrowed to its own player and not linked to one has no
+     * "own" to be shown, so it is shown nothing. That is the direction that
+     * fails safe: the alternative reading — no link, so no narrowing — turns
+     * an unlinked account into an unrestricted one.
+     */
+    public static String onlyPlayer(Accounts.Account me) {
+        if (me == null || !me.ownActivityOnly()) return null;
+        String mine = me.mcName() == null ? "" : me.mcName().trim();
+        return mine.isEmpty() ? NOBODY : mine;
+    }
+
+    /**
+     * What {@link #onlyPlayer} answers for an account narrowed to nobody.
+     *
+     * <p>A NUL, so it cannot be a player's name and cannot be typed into a
+     * query string by somebody hoping to match it.
+     */
+    public static final String NOBODY = "\u0000nobody";
+
+    /** Whether a row belongs to whoever this account is allowed to see. */
+    public static boolean visible(String only, String player) {
+        return only == null || (player != null && player.equalsIgnoreCase(only));
+    }
+
+    /**
+     * What a row said, or nothing when this account is not shown chat.
+     *
+     * <p>The row itself stays: that somebody spoke, and when, is a fact about
+     * the server that an admin account is reasonably shown. What they said is
+     * the part that makes the Activity menu a transcript.
+     */
+    public static String detailFor(Accounts.Account me, ActivityEntry e) {
+        if (me == null || !me.chatHidden()) return e.detail();
+        if ("chat".equals(e.action())) return "";
+        // A command can be a message with a slash in front of it. Hiding chat
+        // and leaving /msg readable would hide nothing anybody meant to hide.
+        return "command".equals(e.action()) && saying(e.detail()) ? "" : e.detail();
+    }
+
+    /** The commands that are somebody talking rather than somebody acting. */
+    private static final java.util.Set<String> TALK = java.util.Set.of(
+        "msg", "tell", "w", "whisper", "say", "me", "teammsg", "tm", "r", "reply");
+
+    private static boolean saying(String detail) {
+        if (detail == null) return false;
+        String d = detail.strip();
+        if (d.startsWith("/")) d = d.substring(1);
+        int end = d.indexOf(' ');
+        if (end < 0) return false;
+        return TALK.contains(d.substring(0, end).toLowerCase(java.util.Locale.ROOT));
+    }
+
     /** Whether this request's account is one coordinates are kept from. */
     private boolean hidden(HttpExchange ex) {
         Accounts.Account me = who(ex);
         return me != null && me.coordsHidden();
+    }
+
+    /**
+     * Refuses a request that would send this account's question to a model.
+     *
+     * <p>Reading a summary somebody else asked for is not barred: it is
+     * already written and already on this machine. What is barred is a new
+     * round trip, because that is the part that leaves.
+     */
+    private boolean noModel(HttpExchange ex) throws IOException {
+        Accounts.Account me = who(ex);
+        if (me == null || !me.modelBarred()) return false;
+        json(ex, 403, err("This account cannot ask the language model."));
+        return true;
     }
 
     private static JsonObject reportJson(AiInsights.Report r, boolean hide) {
@@ -3259,6 +3371,7 @@ public final class WebUi {
         try {
             if (!requireAuthSecure(ex)) return;
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
+            if (noModel(ex)) return;
             JsonObject body = readBody(ex);
             String key = body.has("key") && !body.get("key").isJsonNull()
                 ? body.get("key").getAsString() : "";
@@ -4223,18 +4336,21 @@ public final class WebUi {
                         : Accounts.setRank(id, want);
                 }
                 case "link" -> Accounts.link(id, text(body, "mcName"), text(body, "mcUuid"));
-                case "audit" -> Accounts.setAudit(id,
-                    body.has("on") && body.get("on").getAsBoolean());
                 // The same rule as every other grant: you cannot hand over
                 // something you do not hold. Nobody can bootstrap themselves
                 // a shell by granting it to an account they then sign in as.
-                case "coords" -> Accounts.setHideCoords(id,
-                    body.has("on") && body.get("on").getAsBoolean());
-                case "startcmd" -> me.canStartCommand()
-                    ? Accounts.setStartCommand(id,
-                        body.has("on") && body.get("on").getAsBoolean())
-                    : Accounts.Result.fail("You cannot give away the start command — you "
-                        + "cannot change it yourself.");
+                // One action for every switch that is not a menu. The two
+                // that hand something over rather than take it away are the
+                // only ones that need a question asked first: you cannot give
+                // away what you do not hold.
+                case "extra" -> {
+                    String extra = text(body, "extra");
+                    boolean on = body.has("on") && body.get("on").getAsBoolean();
+                    yield Accounts.START_COMMAND.equals(extra) && !me.canStartCommand()
+                        ? Accounts.Result.fail("You cannot give away the start command — you "
+                            + "cannot change it yourself.")
+                        : Accounts.setExtra(id, extra, on);
+                }
                 case "delete" -> {
                     Accounts.Account going = Accounts.byId(id);
                     Accounts.Result done = Accounts.delete(id);
@@ -4312,8 +4428,9 @@ public final class WebUi {
             o.addProperty("mcName", a.mcName());
             o.addProperty("mcUuid", a.mcUuid());
             o.addProperty("auditActivity", a.auditActivity());
-            o.addProperty("startCommand", a.startCommand());
-            o.addProperty("hideCoords", a.hideCoords());
+            JsonObject extras = new JsonObject();
+            for (String x : Accounts.EXTRAS) extras.addProperty(x, a.has(x));
+            o.add("extras", extras);
             o.addProperty("rank", a.level());
             o.addProperty("created", a.created());
             o.addProperty("lastLogin", a.lastLogin());

@@ -1,6 +1,8 @@
 import com.schecks.almin.Accounts;
 import com.schecks.almin.Coords;
+import com.schecks.almin.ActivityEntry;
 import com.schecks.almin.Passwords;
+import com.schecks.almin.WebUi;
 
 import java.lang.reflect.Field;
 import java.nio.file.Files;
@@ -20,6 +22,11 @@ public class AccountTests {
     /** The web server's source, for the handful of checks that belong there. */
     static String web0() throws Exception {
         return Files.readString(Path.of("src/main/java/com/schecks/almin/WebUi.java"));
+    }
+
+    /** One row of the log, for the checks about what is shown of it. */
+    static ActivityEntry chat(String who, String action, String detail) {
+        return new ActivityEntry(1L, who, "u", action, detail, "overworld", 1, 2, 3, 1);
     }
 
     static void check(String what, boolean ok) {
@@ -156,6 +163,65 @@ public class AccountTests {
             !Accounts.byUsername("moderator").canStartCommand());
         Accounts.setStartCommand(mod.id(), true);
 
+        // ---- the rest of the extras, and what they actually change ----
+        // One named set rather than a boolean per idea, so the checks are
+        // about the vocabulary as much as any one setting.
+        check("there are six of them, and the ones nobody granted are off",
+            Accounts.EXTRAS.size() == 6
+                && !Accounts.byUsername("moderator").has(Accounts.HIDE_CHAT)
+                && !Accounts.byUsername("moderator").has(Accounts.OWN_ACTIVITY)
+                && !Accounts.byUsername("moderator").has(Accounts.NO_MODEL));
+        check("every one of them has something to call it",
+            Accounts.EXTRAS.stream().allMatch(x ->
+                !Accounts.extraName(x).equals(x) && !Accounts.extraName(x).isBlank()));
+        check("a name nobody defined is refused rather than stored",
+            !Accounts.setExtra(mod.id(), "root-shell", true).ok()
+                && !Accounts.byUsername("moderator").has("root-shell"));
+        check("...and turning one on says what changed",
+            Accounts.setExtra(mod.id(), Accounts.HIDE_CHAT, true).message()
+                .contains("moderator"));
+
+        // Hiding chat: the row stays, what was said does not.
+        Accounts.Account quiet = Accounts.byUsername("moderator");
+        check("chat is kept from an account that is not shown it",
+            quiet.chatHidden()
+                && WebUi.detailFor(quiet, chat("Steve", "chat", "meet me at spawn")).isEmpty());
+        check("...and so is the same sentence with a slash in front of it",
+            WebUi.detailFor(quiet, chat("Steve", "command", "/msg Alex meet me")).isEmpty());
+        check("...while a command that is a command is left alone",
+            WebUi.detailFor(quiet, chat("Steve", "command", "/gamemode creative"))
+                .equals("/gamemode creative"));
+        check("...and what somebody built is not chat",
+            WebUi.detailFor(quiet, chat("Steve", "place", "oak planks")).equals("oak planks"));
+        check("the main account is never narrowed this way",
+            !Accounts.owner().chatHidden()
+                && WebUi.detailFor(Accounts.owner(), chat("Steve", "chat", "hello"))
+                    .equals("hello"));
+
+        // Narrowed to their own player.
+        Accounts.link(mod.id(), "Steve", "00000000-0000-0000-0000-0000000000aa");
+        Accounts.setExtra(mod.id(), Accounts.OWN_ACTIVITY, true);
+        String only = WebUi.onlyPlayer(Accounts.byUsername("moderator"));
+        check("an account narrowed to its own player is shown that player",
+            "Steve".equals(only) && WebUi.visible(only, "Steve") && WebUi.visible(only, "steve"));
+        check("...and nobody else", !WebUi.visible(only, "Alex"));
+        check("an account that is not narrowed sees everyone",
+            WebUi.onlyPlayer(Accounts.owner()) == null
+                && WebUi.visible(WebUi.onlyPlayer(Accounts.owner()), "Alex"));
+
+        // The direction this has to fail in: no link means no "own", which is
+        // nobody rather than everybody.
+        Accounts.link(mod.id(), "", "");
+        String none = WebUi.onlyPlayer(Accounts.byUsername("moderator"));
+        check("narrowed with nobody to be narrowed to shows nothing, not everything",
+            none != null && !WebUi.visible(none, "Steve") && !WebUi.visible(none, ""));
+        Accounts.setExtra(mod.id(), Accounts.OWN_ACTIVITY, false);
+        Accounts.setExtra(mod.id(), Accounts.HIDE_CHAT, false);
+        Accounts.setExtra(mod.id(), Accounts.NO_MODEL, true);
+        check("being barred from the model is its own setting",
+            Accounts.byUsername("moderator").modelBarred()
+                && !Accounts.owner().modelBarred());
+
         // ---- it survives a restart ----
         Accounts.setAccess(mod.id(), "files", Accounts.READ);
         Accounts.init(dir);
@@ -165,6 +231,8 @@ public class AccountTests {
         check("...and its recording setting", back.auditActivity());
         check("...and the start-command grant", back.canStartCommand());
         check("...and whether coordinates are kept from them", !back.coordsHidden());
+        check("...and the rest of the extras, by name", back.modelBarred()
+            && !back.chatHidden() && !back.ownActivityOnly());
         check("...and its password still verifies",
             Passwords.verify("hunter2hunter2", back.hash()));
 

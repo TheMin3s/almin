@@ -4007,6 +4007,57 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
           ? true : 'the unrestricted view lost its coordinates too');
     }
 
+    // ---- an account narrowed to its own player ----
+    // A menu showing one player out of thirty has to say that is the rule
+    // rather than looking like a menu that has lost the rest.
+    {
+      const wasMe = sandbox.me;
+      sandbox.me = { ...wasMe, ownOnly: true, linkedPlayer: 'Steve' };
+      sandbox.tab = 'activity'; sandbox.render();
+      check('an account narrowed to its own player is told so, by name', () =>
+        /shown only Steve/.test(deepText(byId.get('main')))
+          ? true : 'no note, or it did not name the player');
+
+      sandbox.me = { ...wasMe, ownOnly: true, linkedPlayer: '' };
+      sandbox.render();
+      check('...and one with no player to be narrowed to is told why it is empty', () =>
+        /not linked to one/.test(deepText(byId.get('main')))
+          ? true : 'an unlinked narrowed account got no explanation');
+
+      sandbox.me = wasMe;
+      sandbox.render();
+      check('an account nobody narrowed is not told anything', () =>
+        !/shown only/.test(deepText(byId.get('main')))
+          ? true : 'the note showed for an unrestricted account');
+    }
+
+    // ---- an account that may not ask the model ----
+    {
+      const wasMe = sandbox.me;
+      const wasStatus = sandbox.aiStatus;
+      sandbox.aiStatus = { enabled: true, provider: 'openai', model: 'gpt-test',
+                           sendChat: false, autoMinutes: 0, problem: '' };
+      sandbox.me = { ...wasMe, noModel: true };
+      sandbox.paintAiBox();
+      const barredText = deepText(byId.get('i-ai'));
+      check('a barred account is told it cannot ask, not that summaries are off', () =>
+        /cannot ask the language model/.test(barredText)
+          && !/Turn on/.test(barredText)
+          ? true : barredText.replace(/\s+/g, ' ').slice(0, 160));
+      check('...and the button that would ask is turned off', () =>
+        byId.get('i-run').disabled === true ? true : 'Summarise stayed pressable');
+
+      sandbox.me = { ...wasMe, noModel: false };
+      sandbox.paintAiBox();
+      check('...while an account that may ask still can', () =>
+        byId.get('i-run').disabled === false
+          && !/cannot ask the language model/.test(deepText(byId.get('i-ai')))
+          ? true : 'an unrestricted account lost the model');
+
+      sandbox.aiStatus = wasStatus;
+      sandbox.me = wasMe;
+    }
+
     const pathOpacity=[...new Set((payload.lines||[]).filter(l=>
       String(l.id||'').startsWith('path-')).map(l=>l.opacity))];
     const pathFades=pathOpacity.length>1;
@@ -4676,6 +4727,109 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
         'the dialog draws each visit with its own entries under it');
       if (!drawn) failures.push('the record dialog drew "' + kinds + '": ' +
         text.replace(/\s+/g, ' ').slice(0, 200));
+    }
+
+    // ---- the extra permissions on one account ----
+    {
+      const acct = { id: 'a1', username: 'moderator', mcName: 'Steve', mcUuid: 'u',
+                     auditActivity: false, rank: 2, access: {}, lastLogin: 0,
+                     extras: { 'hide-coords': true, 'own-activity': true } };
+      sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                     audited: false, canSetStart: true };
+
+      const card = sandbox.accountCard(acct);
+      const rows = deepAll(card, (e) => hasClass(e, 'cfgrow'));
+      const swOf = (r) => deepAll(r, (e) => hasClass(e, 'sw'))[0];
+      const grouped = rows.length === 6
+        && deepAll(card, (e) => hasClass(e, 'cfggroup')).length === 1
+        && rows.every((r) => !!swOf(r));
+      console.log((grouped ? '  PASS  ' : '  FAIL  ') +
+        'the extra permissions are one group of switches, not loose checkboxes');
+      if (!grouped) failures.push('extras drew ' + rows.length + ' rows, ' +
+        deepAll(card, (e) => hasClass(e, 'cfggroup')).length + ' groups');
+
+      const boxes = deepAll(card, (e) => (e.tagName || '') === 'input'
+        && e.type === 'checkbox');
+      console.log((boxes.length === 0 ? '  PASS  ' : '  FAIL  ') +
+        '...and none of the old checkboxes are left');
+      if (boxes.length) failures.push(boxes.length + ' checkboxes still drawn');
+
+      const state = rows.map((r) => (hasClass(swOf(r), 'on') ? 1 : 0)).join('');
+      // The order is the list's: record, coordinates, chat, own player,
+      // model, restart command.
+      const matched = state === '010100';
+      console.log((matched ? '  PASS  ' : '  FAIL  ') +
+        'each switch is set from what the account actually has');
+      if (!matched) failures.push('switch states were ' + state + ', wanted 010100');
+
+      const aria = rows.every((r) => {
+        const b = swOf(r);
+        return b.getAttribute('role') === 'switch'
+          && b.getAttribute('aria-checked') === (hasClass(b, 'on') ? 'true' : 'false')
+          && /moderator/.test(b.getAttribute('aria-label') || '');
+      });
+      console.log((aria ? '  PASS  ' : '  FAIL  ') +
+        '...and says what it is and whether it is on, for a screen reader');
+      if (!aria) failures.push('a switch was not announced properly');
+
+      // The one that hands over a command line on the host is marked, and is
+      // the only one that is.
+      const marked = rows.filter((r) => hasClass(r, 'care'));
+      const care = marked.length === 1 && /restart runs/.test(deepText(marked[0]));
+      console.log((care ? '  PASS  ' : '  FAIL  ') +
+        'the one that hands over a shell is the one marked as such');
+      if (!care) failures.push('care rows: ' + marked.map((r) =>
+        deepText(r).replace(/\s+/g, ' ').slice(0, 60)).join(' | '));
+
+      // What a row says has to follow the switch, or a page of six switches
+      // is six sentences that are half wrong.
+      const coordRow = rows.find((r) => /coordinates/i.test(deepText(r)));
+      const chatRow = rows.find((r) => /said/i.test(deepText(r)));
+      const follows = /without the numbers/.test(deepText(coordRow))
+        && /carry what was typed/.test(deepText(chatRow));
+      console.log((follows ? '  PASS  ' : '  FAIL  ') +
+        '...and what a row says follows whether it is on');
+      if (!follows) failures.push('row text did not follow state: ' +
+        deepText(coordRow).replace(/\s+/g, ' ').slice(0, 90));
+
+      // Narrowed to their own player, with no player to be narrowed to.
+      const ownRow = rows.find((r) => /own player/i.test(deepText(r)));
+      const noSnag = !/not linked to a player yet/.test(deepText(ownRow));
+      const unlinked = sandbox.accountCard(Object.assign({}, acct, { mcName: '' }));
+      const snagRow = deepAll(unlinked, (e) => hasClass(e, 'cfgrow'))
+        .find((r) => /own player/i.test(deepText(r)));
+      const warned = /not linked to a player yet/.test(deepText(snagRow)) && noSnag;
+      console.log((warned ? '  PASS  ' : '  FAIL  ') +
+        'narrowing an unlinked account to "its own player" says it would see nothing');
+      if (!warned) failures.push('no snag on an unlinked own-activity account');
+
+      // Flicking one asks the server for that one setting by name.
+      const realFetch = sandbox.fetch;
+      const sent = [];
+      sandbox.fetch = async (url, init) => {
+        let body = null;
+        try { body = init && init.body ? JSON.parse(init.body) : null; } catch (e) {}
+        sent.push({ url: String(url).split('?')[0], body });
+        return { status: 200, json: async () => ({ ok: true, message: 'done' }) };
+      };
+      await swOf(chatRow).onclick();
+      sandbox.fetch = realFetch;
+      const put = sent.find((x) => x.url === '/api/accounts');
+      const asked = put && put.body && put.body.action === 'extra'
+        && put.body.id === 'a1' && put.body.extra === 'hide-chat' && put.body.on === true;
+      console.log((asked ? '  PASS  ' : '  FAIL  ') +
+        '...and flicking one asks the server for that setting by name');
+      if (!asked) failures.push('extra post was ' + JSON.stringify(put && put.body));
+
+      // Nobody hands out a permission they do not hold themselves.
+      sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                     audited: false, canSetStart: false };
+      const withoutIt = deepAll(sandbox.accountCard(acct), (e) => hasClass(e, 'cfgrow'));
+      const gone = withoutIt.length === 5
+        && !withoutIt.some((r) => /restart runs/.test(deepText(r)));
+      console.log((gone ? '  PASS  ' : '  FAIL  ') +
+        'an account that cannot change what a restart runs cannot give that away');
+      if (!gone) failures.push('start-command row offered by an account without it');
     }
 
     sandbox.me = { username: 'mod', owner: false, access: { activity: 'write' },
