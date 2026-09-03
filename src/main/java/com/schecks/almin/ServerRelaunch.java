@@ -271,11 +271,19 @@ public final class ServerRelaunch {
             Result started = awaitReady(p, ready, token);
             deleteReady(ready);
             if (!started.ok()) {
-                lastError = started.message();
+                // What it ran, every time. "Exit 2" on its own is not something
+                // anybody can act on; the command and where it came from turn
+                // it into a question with an answer — usually that a
+                // web-start-command is wrong, or that the wrapper this server
+                // was really started by is not the JVM's own argv.
+                Result told = new Result(false, started.message()
+                    + " It ran, from " + plan.source() + ": " + plan.display()
+                    + " — the reason it stopped is in this console, just above.");
+                lastError = told.message();
                 AlminLog.warn("[almin] replacement server failed before readiness: {}",
-                    started.message());
-                CONSOLE.warn("[almin] Replacement server did not start: {}", started.message());
-                return started;
+                    told.message());
+                CONSOLE.warn("[almin] Replacement server did not start: {}", told.message());
+                return told;
             }
             launched = true;
             lastError = "";

@@ -414,6 +414,18 @@ const sandbox = {
   encodeURIComponent,
   String, Number, Boolean, Array, Object, Promise, Error, Set, Map, RegExp,
   navigator: { clipboard: { writeText: async () => {} } },
+  // A real one, not a stub that throws: the page wraps every use in a
+  // try/catch for the browsers that refuse, and a harness that always throws
+  // would test only that fallback and never the remembering.
+  localStorage: (() => {
+    const kept = new Map();
+    return {
+      getItem: (k) => (kept.has(String(k)) ? kept.get(String(k)) : null),
+      setItem: (k, v) => { kept.set(String(k), String(v)); },
+      removeItem: (k) => { kept.delete(String(k)); },
+      clear: () => { kept.clear(); },
+    };
+  })(),
   isSecureContext: true,
   innerWidth: 1440, innerHeight: 900,
   open: () => null,
@@ -3521,6 +3533,100 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
     responses['/api/update'] = wasUpdate;
     await sandbox.loadUpdate(true);
+  }
+
+  // ---- being told about it on the way in ----
+  // The Version section only says so once Settings is open, which is a place
+  // people go for other reasons and often do not go at all.
+  {
+    const wasUpdate = responses['/api/update'];
+    const wasTab = sandbox.tab;
+    check('Version is the first thing in Settings', () => {
+      sandbox.tab = 'settings'; sandbox.settingsTab = 'almin';
+      const html = deepText(sandbox.settingsPanel());
+      const version = html.indexOf('id="f-version"');
+      if (version < 0) return 'the Version section went missing';
+      const others = ['f-pw', 'f-people', 'f-relaunch', 'f-ai', 'f-keys']
+        .map((id) => html.indexOf('id="' + id + '"')).filter((i) => i >= 0);
+      // Otherwise "nothing is above it" would also be true of a page with
+      // nothing on it, and this check would pass by finding no sections.
+      if (others.length < 3) return 'only found ' + others.length + ' other sections';
+      return others.every((i) => i > version)
+        ? true : 'something is above it';
+    });
+
+    sandbox.authed = true;
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                   audited: false };
+    responses['/api/update'] = { current: '2.5.0', repo: 'a/b', status: 'available',
+                                 latest: '2.6.0', hasJar: true };
+    sandbox.localStorage.clear();
+    await sandbox.offerUpdateOnArrival(true);
+    check('arriving at the panel with a new version out says so', () => {
+      const said = deepText(byId.get('modal-body'));
+      if (!/2\.6\.0/.test(said)) return 'it did not name the version: ' + said.slice(0, 80);
+      return /Install now/.test(said) && /Install later/.test(said)
+        ? true : 'it said so without offering to do anything about it';
+    });
+    sandbox.closeModal();
+
+    // A dialog that comes back on every reload is one people learn to dismiss
+    // without reading it.
+    let shown = false;
+    const realModal = sandbox.modal;
+    sandbox.modal = (...a) => { shown = true; return realModal(...a); };
+    await sandbox.offerUpdateOnArrival(false);
+    check('...and does not say it again on the next page load', () =>
+      !shown ? true : 'it nagged about a version it had already shown');
+
+    shown = false;
+    await sandbox.offerUpdateOnArrival(true);
+    check('...but a fresh login is told', () =>
+      shown ? true : 'logging in again said nothing');
+    sandbox.closeModal();
+
+    shown = false;
+    responses['/api/update'] = { current: '2.5.0', repo: 'a/b', status: 'available',
+                                 latest: '2.7.0', hasJar: true };
+    await sandbox.offerUpdateOnArrival(false);
+    check('...and so is a reload once there is a newer one', () =>
+      shown ? true : 'a newer version went unmentioned');
+    sandbox.closeModal();
+
+    // Already dealt with. Being asked twice about the same update is the
+    // thing that makes people stop reading these.
+    shown = false;
+    responses['/api/update'] = { current: '2.5.0', repo: 'a/b', status: 'available',
+      latest: '2.8.0', hasJar: true,
+      scheduled: { at: clock + 3600e3, whenEmpty: false, version: '2.8.0', by: 'admin' } };
+    await sandbox.offerUpdateOnArrival(true);
+    check('an update already put off is not raised again', () =>
+      !shown ? true : 'it asked about one that is already scheduled');
+
+    shown = false;
+    responses['/api/update'] = { current: '2.5.0', repo: 'a/b', status: 'current',
+                                 latest: '2.5.0' };
+    await sandbox.offerUpdateOnArrival(true);
+    check('...nor is an up-to-date server bothered at all', () =>
+      !shown ? true : 'it popped up with nothing to say');
+
+    // The route belongs to Settings and would refuse them; asking is noise.
+    shown = false;
+    sandbox.me = { username: 'mod', owner: false, access: { activity: 'read' },
+                   linkedPlayer: '', audited: false };
+    responses['/api/update'] = { current: '2.5.0', repo: 'a/b', status: 'available',
+                                 latest: '2.9.0', hasJar: true };
+    sandbox.localStorage.clear();
+    await sandbox.offerUpdateOnArrival(true);
+    check('an account that cannot reach Settings is not told', () =>
+      !shown ? true : 'it told somebody who cannot act on it');
+
+    sandbox.modal = realModal;
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                   audited: false };
+    responses['/api/update'] = wasUpdate;
+    sandbox.tab = wasTab;
+    sandbox.localStorage.clear();
   }
 
   // ---- asking the model things (all of these go over the wire) ----

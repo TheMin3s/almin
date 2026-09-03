@@ -1350,7 +1350,8 @@ final class WebPage {
         async function doLogin(pw,msg,user){
           msg.textContent='';
           const r=await jpost('/api/login',{password:pw,username:user||''});
-          if(r.status===200){ authed=true; await refreshOnce(); tab='dash'; render(); }
+          if(r.status===200){ authed=true; await refreshOnce(); tab='dash'; render();
+            offerUpdateOnArrival(true).catch(()=>{}); }
           else if(r.status===429) msg.textContent='Too many attempts — locked out for '+(r.body.minutes||15)+' min.';
           else if(r.body&&r.body.remaining!=null)
             msg.textContent='That username and password do not match. '+
@@ -7453,6 +7454,17 @@ final class WebPage {
           }
           const body=document.createElement('div');
           body.innerHTML=
+            // First, and deliberately: it is the only part of this page that
+            // ever has something to say on its own, and a person who opens
+            // Settings for an unrelated reason should still see it.
+            '<section>'+fold('f-version','Version','checking\u2026')+
+            '<div id="s-update" class="muted">checking…</div>'+
+            '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
+            '<button class="btn" id="s-check">Check again</button>'+
+            '<button class="btn go" id="s-apply" disabled>Download &amp; install</button>'+
+            '<button class="btn" id="s-later" disabled>Install later\u2026</button>'+
+            '<button class="btn" id="s-clearlog">Clear Almin log</button></div>'+
+            '<div class="msg" id="s-upmsg"></div>'+FOLDEND+'</section>'+
             '<section id="s-almin">'+
             fold('f-pw',me.owner?'Admin password':'Your password')+
             '<p class="muted">'+(me.owner
@@ -7481,14 +7493,6 @@ final class WebPage {
             '<button class="btn go" id="s-acadd">Add</button></div>'+
             '<div class="msg" id="s-acmsg"></div>'+
             '<div id="s-aclist"><div class="note">\u2026</div></div>'+FOLDEND+'</section>':'')+
-            '<section>'+fold('f-version','Version','checking\u2026')+
-            '<div id="s-update" class="muted">checking…</div>'+
-            '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
-            '<button class="btn" id="s-check">Check again</button>'+
-            '<button class="btn go" id="s-apply" disabled>Download &amp; install</button>'+
-            '<button class="btn" id="s-later" disabled>Install later\u2026</button>'+
-            '<button class="btn" id="s-clearlog">Clear Almin log</button></div>'+
-            '<div class="msg" id="s-upmsg"></div>'+FOLDEND+'</section>'+
             '<section>'+fold('f-relaunch','Restarting','what Start and Restart run')+
             '<p class="muted">Restart and Start run this, from this machine. Almin reads it off '+
             'the running server, so it matches however this server was actually launched — '+
@@ -8481,6 +8485,70 @@ final class WebPage {
               loadUpdate(true);
               setTimeout(close,1400);
             };
+          });
+        }
+
+        /**
+         * Saying there is a new version, on the way in.
+         *
+         * <p>An update nobody is told about is an update nobody installs. The
+         * Version section says so once Settings is open, which is a place
+         * people go for other reasons and often do not go at all, so arriving
+         * at the panel is where this belongs.
+         *
+         * <p>Once, though. A fresh login is always told; a reload is not told
+         * again about a version it has already been shown, because a dialog
+         * that reappears every time the page comes back is one people learn to
+         * dismiss without reading. The version last shown is remembered in
+         * this browser, so a newer one gets through.
+         */
+        const UPDATE_SEEN='almin.sawupdate';
+        function seenUpdate(){
+          try { return localStorage.getItem(UPDATE_SEEN)||''; } catch(e) { return ''; }
+        }
+        function rememberUpdate(v){
+          try { localStorage.setItem(UPDATE_SEEN,v||''); } catch(e) {}
+        }
+
+        async function offerUpdateOnArrival(fresh){
+          // Nothing is asked of an account that could not act on the answer:
+          // the route belongs to Settings and would refuse them anyway.
+          if(!authed || !mayRead('settings')) return;
+          const r=await jget('/api/update');
+          if(r.status!==200 || !r.body) return;
+          updateInfo=r.body;
+          const b=r.body;
+          if(b.status!=='available' || !b.latest) return;
+          // Already dealt with: queued behind an empty server, or put off to a
+          // time somebody chose. Telling them again is asking twice.
+          if(b.scheduled || b.queued) return;
+          if(!fresh && seenUpdate()===b.latest) return;
+          rememberUpdate(b.latest);
+          newVersionDialog(b);
+        }
+
+        function newVersionDialog(b){
+          const can=mayWrite('settings') && !!b.hasJar;
+          modal('Almin '+b.latest+' is out',(body,close)=>{
+            body.innerHTML=
+              '<p>This server runs <b>v'+esc(b.current)+'</b>. <b>v'+esc(b.latest)+
+              '</b> is available.</p>'+
+              (b.hasJar?'':'<p class="muted">That release has no jar attached to it, so it '+
+                           'cannot be installed from here.</p>')+
+              (mayWrite('settings')?'':'<p class="muted">Your account can see Settings but not '+
+                           'change them, so somebody else has to install it.</p>')+
+              '<p class="muted">Installing restarts the server and disconnects whoever is '+
+              'playing. Later asks for a time, or for the next moment nobody is online \u2014 '+
+              'and tells them in chat before it happens.</p>'+
+              '<div class="row2">'+
+              (can?'<button class="btn go" id="nv-now">Install now</button>'+
+                   '<button class="btn" id="nv-later">Install later\u2026</button>':'')+
+              '<button class="btn" id="nv-no">'+(can?'Not now':'Close')+'</button></div>';
+            $('nv-no').onclick=close;
+            if(can){
+              $('nv-now').onclick=updateDialog;
+              $('nv-later').onclick=scheduleDialog;
+            }
           });
         }
 
@@ -9668,7 +9736,8 @@ final class WebPage {
           else if(tab==='activity'){ loadActivity(); liveTick(); }
         }
         $('logout').onclick=async()=>{ await jpost('/api/logout',{}); authed=false; tab='dash'; last=null; render(); };
-        (async()=>{ await refreshOnce(); render(); poll(); setInterval(poll,3000); })();
+        (async()=>{ await refreshOnce(); render(); offerUpdateOnArrival(false).catch(()=>{});
+                    poll(); setInterval(poll,3000); })();
         </script>
         """;
 
