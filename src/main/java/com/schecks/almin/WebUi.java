@@ -4119,6 +4119,7 @@ public final class WebUi {
             o.addProperty("what", e.what());
             o.addProperty("detail", e.detail());
             o.addProperty("count", e.count());
+            o.addProperty("visit", e.visit());
             list.add(o);
         }
         root.add("entries", list);
@@ -4239,8 +4240,16 @@ public final class WebUi {
             // Recorded here rather than in the handlers for the same reason
             // the check is here: one gate, and no route that forgot.
             if (menu.equals("activity")) {
+                // Every request keeps the visit alive; almost none of them is
+                // worth a line. The raw query string used to be the line's
+                // detail, which is how a record of somebody's afternoon came
+                // to read "looked at the map at=1788400917938&dim=overworld".
+                PanelAudit.visiting(me);
                 if (WATCH_ROUTE.equals(route(ex))) noteWatched(me, ex);
-                else PanelAudit.note(me, PanelAudit.describe(route(ex)), about(ex));
+                else {
+                    String did = PanelAudit.describe(route(ex), ex.getRequestMethod());
+                    if (did != null) PanelAudit.note(me, did, "");
+                }
             }
             return true;
         }
@@ -4266,10 +4275,17 @@ public final class WebUi {
     private static final java.util.Map<String, long[]> watchRate =
         java.util.Collections.synchronizedMap(new java.util.HashMap<>());
 
-    /** What each kind of selection is called where a person reads it. */
+    /**
+     * What each kind of selection is called where a person reads it, or
+     * {@code null} for one that only says somebody is still there.
+     */
     private static String watchPhrase(String kind) {
         return switch (kind) {
-            case "here"    -> "was in the activity menu";
+            // The minute heartbeat. Its whole job is to keep the visit's end
+            // time moving, and the visit is the line that says how long they
+            // were in there; a line of its own every minute is the noise this
+            // record was drowning in.
+            case "here"    -> null;
             case "player"  -> "looked at one player";
             case "place"   -> "looked at a place on the map";
             case "cluster" -> "opened a group of events";
@@ -4306,7 +4322,8 @@ public final class WebUi {
             if (seen[1] > WATCH_PER_MINUTE) return;
         }
         if (subject.length() > 120) subject = subject.substring(0, 120);
-        PanelAudit.note(me, watchPhrase(kind), subject);
+        String said = watchPhrase(kind);
+        if (said != null) PanelAudit.note(me, said, subject);
     }
 
     /** The query string as a map, for the few routes that read more than one. */
@@ -4346,16 +4363,6 @@ public final class WebUi {
      * entry worth keeping. Capped, and only the query — never a body, which
      * may hold something nobody asked to have written down.
      */
-    private static String about(HttpExchange ex) {
-        try {
-            String q = ex.getRequestURI().getQuery();
-            if (q == null || q.isBlank()) return "";
-            return q.length() > 160 ? q.substring(0, 160) : q;
-        } catch (Throwable t) {
-            return "";
-        }
-    }
-
     /** 401s unless the caller may at least look at {@code menu}. */
     private boolean requireRead(HttpExchange ex, String menu) throws IOException {
         Accounts.Account a = who(ex);

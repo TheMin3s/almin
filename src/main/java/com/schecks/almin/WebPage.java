@@ -510,6 +510,27 @@ final class WebPage {
           .sw:disabled{opacity:.45;cursor:default}
           .sw:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 
+          /* ---- somebody's record of using Activity ----
+             A visit is a heading with a start and an end; what they chose to
+             do inside it hangs under it, indented against a rule. Written flat
+             it was a thousand lines of the panel breathing, and the shape is
+             most of what makes it readable. */
+          .recvisit{display:flex;gap:10px;align-items:baseline;padding:9px 0 5px;
+                  border-top:1px solid var(--line);margin-top:6px}
+          .recvisit:first-child{border-top:0;margin-top:0}
+          .recact{display:flex;gap:10px;align-items:baseline;font-size:12.5px;
+                  padding:3px 0 3px 13px;margin-left:8px;border-left:1px solid var(--line)}
+          .recwhen{color:var(--mute);flex:none;min-width:132px;
+                  font-variant-numeric:tabular-nums}
+          .recvisit .recwhen{color:var(--dim)}
+          .recwhat{margin-right:auto;min-width:0}
+          .recvisit .recwhat{color:var(--ink);font-weight:600}
+          .recspan{color:var(--mute);flex:none;font-size:12px}
+          .recnone{color:var(--mute);font-style:italic;font-size:12.5px;
+                  padding:2px 0 4px 21px}
+          @media(max-width:620px){.recwhen{min-width:0}
+                                  .recvisit,.recact{flex-wrap:wrap;gap:4px 10px}}
+
           /* ---- folds ----
              Settings is long, and nearly every line of it is set once and
              never looked at again. Each part folds shut, so the page opens as
@@ -7910,6 +7931,56 @@ final class WebPage {
         }
 
         /** What one watched account has been looking at, newest first. */
+        /**
+         * How long since the last request before a visit counts as finished.
+         * The server's own VISIT_IDLE_MS; here it only decides whether the
+         * newest visit is drawn as still running.
+         */
+        const VISIT_OPEN_MS=240000;
+
+        /**
+         * The record, folded back into the visits it was written during.
+         *
+         * <p>The server writes a visit when somebody opens the menu and moves
+         * its end time while they are in there, then writes the things they
+         * chose to do as their own entries after it. So an entry belongs to
+         * the last visit started before it that had not ended by the time it
+         * happened. Entries written before visits existed have no visit to
+         * belong to and are shown on their own, which is also what happens if
+         * the file is ever read back out of order.
+         */
+        function recordVisits(rows){
+          const out=[]; let cur=null;
+          for(let i=rows.length-1;i>=0;i--){          // oldest first
+            const e=rows[i];
+            if(e.visit){ cur={visit:e,acts:[]}; out.push(cur); continue; }
+            const inside=cur&&cur.visit&&e.at<=(+cur.visit.until||0)+1000;
+            if(!inside && (!cur||cur.visit)){ cur={visit:null,acts:[]}; out.push(cur); }
+            cur.acts.push(e);
+          }
+          out.reverse();
+          return out;
+        }
+
+        function recordRow(e,cls){
+          const row=document.createElement('div');
+          row.className=cls;
+          const when=document.createElement('span');
+          when.className='recwhen';
+          when.textContent=fmtWhen(e.at);
+          const what=document.createElement('span');
+          what.className='recwhat';
+          what.innerHTML=esc(e.what)+
+            (e.detail?(' <span class="muted">'+esc(e.detail)+'</span>'):'');
+          row.append(when,what);
+          if(e.count>1){
+            const n=document.createElement('span');
+            n.className='recspan'; n.textContent='\u00d7'+e.count;
+            row.appendChild(n);
+          }
+          return row;
+        }
+
         function showRecord(a){
           modal('What '+a.username+' looked at',(body)=>{
             const box=document.createElement('div');
@@ -7924,41 +7995,39 @@ final class WebPage {
                 return;
               }
               box.textContent='';
+              box.className='';
               const keep=r.body.keepDays;
+              const groups=recordVisits(rows);
+              const visits=groups.filter(g=>g.visit).length;
+              const acts=rows.length-visits;
               const head=document.createElement('p'); head.className='note';
-              head.textContent=rows.length+' entr'+(rows.length===1?'y':'ies')+
+              head.textContent=visits+' visit'+(visits===1?'':'s')+', '+
+                acts+' thing'+(acts===1?'':'s')+' they did'+
                 (keep>0?(', kept for '+keep+' days.'):', kept indefinitely.');
               body.insertBefore(head,box);
-              for(const e of rows){
-                const row=document.createElement('div');
-                row.className='row';
-                row.style.gap='10px'; row.style.padding='5px 0';
-                row.style.borderBottom='1px solid var(--line)';
-                const when=document.createElement('span');
-                when.className='muted';
-                when.style.minWidth='120px';
-                when.textContent=fmtWhen(e.at);
-                const what=document.createElement('span');
-                what.style.marginRight='auto';
-                what.innerHTML=esc(e.what)+
-                  (e.detail?(' <span class="muted">'+esc(e.detail)+'</span>'):'');
-                row.append(when,what);
-                // Repeats of one thing fold into a single entry with a start
-                // and an end, so the interesting number is usually not how
-                // many times but for how long.
-                const span=(+e.until||0)-(+e.at||0);
-                if(span>=60000){
+              for(const g of groups){
+                if(g.visit){
+                  const row=recordRow(g.visit,'recvisit');
+                  // A visit is a stretch, so it says both ends of it. Somebody
+                  // who has the menu open right now has no end yet.
+                  const open=Date.now()-(+g.visit.until||0)<VISIT_OPEN_MS;
+                  const span=(+g.visit.until||0)-(+g.visit.at||0);
+                  row.children[0].textContent=fmtWhen(g.visit.at)+
+                    ' \u2013 '+(open?'now':fmtWhen(g.visit.until));
                   const how=document.createElement('span');
-                  how.className='muted';
-                  how.textContent='for '+shortSpan(span);
-                  how.title=fmtWhen(e.at)+' to '+fmtWhen(e.until);
+                  how.className='recspan';
+                  how.textContent=span>=60000?shortSpan(span):'a moment';
+                  how.title=fmtWhen(g.visit.at)+' to '+fmtWhen(g.visit.until);
                   row.appendChild(how);
-                } else if(e.count>1){
-                  const n=document.createElement('span');
-                  n.className='muted'; n.textContent='\u00d7'+e.count;
-                  row.appendChild(n);
+                  box.appendChild(row);
                 }
-                box.appendChild(row);
+                for(const e of g.acts) box.appendChild(recordRow(e,'recact'));
+                if(g.visit && !g.acts.length){
+                  const none=document.createElement('div');
+                  none.className='recnone';
+                  none.textContent='read the log, selected nothing';
+                  box.appendChild(none);
+                }
               }
             });
           },{wide:true});

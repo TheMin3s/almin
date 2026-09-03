@@ -84,6 +84,11 @@ function stub(tag) {
                      this.children.push(k); return k; },
     replaceChild(neu, old) { const i = this.children.indexOf(old);
                              if (i >= 0) this.children[i] = neu; return old; },
+    insertBefore(neu, before) { if (neu && typeof neu === 'object') neu.parentNode = this;
+                                const i = this.children.indexOf(before);
+                                if (i < 0) this.children.push(neu);
+                                else this.children.splice(i, 0, neu);
+                                return neu; },
     closest(sel) { return this._closest === undefined ? null : this._closest; },
     insertAdjacentHTML(_pos, html) { register(html); this._html += html; },
     addEventListener() {},
@@ -4164,6 +4169,65 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       if (!silent) failures.push('an unwatched account was reported on');
       sandbox.focusPlayer = '';
       sandbox.fetch = realFetch;
+    }
+
+    // ---- reading somebody's record back ----
+    // Written flat it was thousands of lines of the panel breathing. The
+    // server writes a visit and moves its end time; the page has to fold what
+    // they did back under the visit it happened in, or the shape is lost
+    // again on the way out.
+    {
+      const t0 = clock - 40 * 60000;
+      // Newest first, the way the route answers.
+      const record = [
+        { at: t0 + 32 * 60000, until: t0 + 32 * 60000, visit: false, count: 1,
+          what: 'asked the model to summarise', detail: '' },
+        { at: t0 + 31 * 60000, until: t0 + 31 * 60000, visit: false, count: 3,
+          what: 'looked at one player', detail: 'Steve' },
+        { at: t0 + 30 * 60000, until: t0 + 34 * 60000, visit: true, count: 1,
+          what: 'opened the Activity menu', detail: '' },
+        { at: t0 + 2 * 60000, until: t0 + 2 * 60000, visit: false, count: 1,
+          what: 'searched the log', detail: 'diamond' },
+        { at: t0, until: t0 + 5 * 60000, visit: true, count: 1,
+          what: 'opened the Activity menu', detail: '' },
+      ];
+      const groups = sandbox.recordVisits(record);
+      const folded = groups.length === 2
+        && groups.every((g) => g.visit)
+        && groups[0].acts.length === 2 && groups[1].acts.length === 1
+        && groups[0].visit.at > groups[1].visit.at;
+      console.log((folded ? '  PASS  ' : '  FAIL  ') +
+        'a record reads as visits with what they did inside them');
+      if (!folded) failures.push('the record did not fold into visits: ' +
+        JSON.stringify(groups.map((g) => [!!g.visit, g.acts.length])));
+
+      // Entries written before visits existed, and anything the file hands
+      // back out of order, still have to appear rather than be dropped.
+      const orphans = sandbox.recordVisits([
+        { at: t0 + 1000, until: t0 + 1000, visit: false, count: 1, what: 'read', detail: '' },
+        { at: t0, until: t0, visit: false, count: 1, what: 'read', detail: '' },
+      ]);
+      const kept = orphans.length === 1 && !orphans[0].visit && orphans[0].acts.length === 2;
+      console.log((kept ? '  PASS  ' : '  FAIL  ') +
+        '...and an entry with no visit around it is still shown');
+      if (!kept) failures.push('entries without a visit were lost');
+
+      const wasAccounts = responses['/api/accounts'];
+      responses['/api/accounts'] = { username: 'moderator', keepDays: 30, entries: record };
+      sandbox.showRecord({ username: 'moderator' });
+      await new Promise((r) => setTimeout(r, 20));
+      const shown = byId.get('modal-body');
+      const text = deepText(shown);
+      const kinds = deepAll(shown, (e) => hasClass(e, 'recvisit') || hasClass(e, 'recact'))
+        .map((e) => (hasClass(e, 'recvisit') ? 'V' : 'a')).join('');
+      responses['/api/accounts'] = wasAccounts;
+      sandbox.closeModal();
+      const drawn = kinds === 'VaaVa' && /2 visits, 3 things they did/.test(text)
+        && /Steve/.test(text) && /×3/.test(text);
+      console.log((drawn ? '  PASS  ' : '  FAIL  ') +
+        'the dialog draws each visit with its own entries under it');
+      if (!drawn) failures.push('the record dialog drew "' + kinds + '": ' +
+        text.replace(/\s+/g, ' ').slice(0, 200));
     }
 
     sandbox.me = { username: 'mod', owner: false, access: { activity: 'write' },

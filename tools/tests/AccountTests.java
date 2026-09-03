@@ -290,8 +290,12 @@ public class AccountTests {
             com.schecks.almin.WebUi.class.getDeclaredMethod("watchPhrase", String.class);
         phrase.setAccessible(true);
         check("a selection is described by the server, not the browser",
-            phrase.invoke(null, "player").equals("looked at one player")
-                && phrase.invoke(null, "here").equals("was in the activity menu"));
+            "looked at one player".equals(phrase.invoke(null, "player")));
+        // The panel says "still here" once a minute so the visit's end time
+        // keeps moving. A line each time was most of what made this record
+        // unreadable, and the visit already says how long they were in there.
+        check("the minute heartbeat is not a line of its own",
+            phrase.invoke(null, "here") == null);
         check("a kind nobody defined does not become a sentence",
             phrase.invoke(null, "<b>whatever they like</b>").equals("used the activity menu"));
 
@@ -302,13 +306,90 @@ public class AccountTests {
             web0().contains("changing(ex.getRequestMethod()) && !WATCH_ROUTE.equals(route(ex))"));
 
         check("routes are described in words a person reads",
-            com.schecks.almin.PanelAudit.describe("/api/insights").contains("model")
-                && com.schecks.almin.PanelAudit.describe("/api/reset").contains("cleared"));
+            com.schecks.almin.PanelAudit.describe("/api/insights", "POST").contains("model")
+                && com.schecks.almin.PanelAudit.describe("/api/reset", "POST")
+                    .contains("cleared"));
+
+        // ---- the panel drawing itself is not a thing somebody did ----
+        // The Activity tab polls the log, the paths, the map, the pictures of
+        // the ground and the blocks behind a 3D view, several times a second
+        // between them. A line each was a record nobody could read, with the
+        // raw query string as its detail: "looked at the map
+        // at=1788400917938&dim=overworld".
+        check("polling writes nothing at all",
+            com.schecks.almin.PanelAudit.describe("/api/activity", "GET") == null
+                && com.schecks.almin.PanelAudit.describe("/api/track", "GET") == null
+                && com.schecks.almin.PanelAudit.describe("/api/map", "GET") == null
+                && com.schecks.almin.PanelAudit.describe("/bluemap", "GET") == null
+                && com.schecks.almin.PanelAudit.describe("/api/scene/context", "GET") == null);
+        check("...and the summary list, which is polled on a timer",
+            com.schecks.almin.PanelAudit.describe("/api/insights", "GET") == null);
+        check("...but anything that changes something is written even unnamed",
+            "used the activity menu".equals(
+                com.schecks.almin.PanelAudit.describe("/api/something/new", "POST")));
+        check("the raw query string is no longer anybody's record",
+            !web0().contains("about(ex)"));
 
         com.schecks.almin.PanelAudit.flush();
         com.schecks.almin.PanelAudit.init(dir);
         check("the record survives a restart",
             com.schecks.almin.PanelAudit.forUser("watched").size() == 2);
+
+        // ---- visits ----
+        // The panel polls the log, the paths and the map several times a
+        // second between them. Recorded one line per request, an afternoon in
+        // the Activity menu was thousands of identical lines with the one
+        // entry worth reading buried inside. A stretch with the menu open is
+        // one entry now, and what somebody chose to do hangs under it.
+        com.schecks.almin.PanelAudit.visiting(seen);
+        java.util.List<com.schecks.almin.PanelAudit.Entry> opened =
+            com.schecks.almin.PanelAudit.forUser("watched");
+        check("opening the menu is one entry", opened.size() == 3 && opened.get(0).visit());
+        long startedAt = opened.get(0).at();
+
+        for (int i = 0; i < 60; i++) com.schecks.almin.PanelAudit.visiting(seen);
+        java.util.List<com.schecks.almin.PanelAudit.Entry> polled =
+            com.schecks.almin.PanelAudit.forUser("watched");
+        check("...and sixty more requests are not sixty more entries", polled.size() == 3);
+        check("...they move its end time instead",
+            polled.get(0).at() == startedAt && polled.get(0).until() >= startedAt);
+
+        com.schecks.almin.PanelAudit.note(seen, "looked at one player", "Steve");
+        com.schecks.almin.PanelAudit.visiting(seen);
+        java.util.List<com.schecks.almin.PanelAudit.Entry> during =
+            com.schecks.almin.PanelAudit.forUser("watched");
+        check("what they chose to do lands inside the visit that was running",
+            !during.get(0).visit() && during.get(1).visit()
+                && during.get(0).at() >= during.get(1).at()
+                && during.get(0).at() <= during.get(1).until());
+
+        com.schecks.almin.PanelAudit.visiting(Accounts.owner());
+        check("the owner's visits are not recorded either",
+            com.schecks.almin.PanelAudit.forUser("admin").isEmpty());
+        com.schecks.almin.PanelAudit.visiting(unseen);
+        check("nor an account nobody asked to watch",
+            com.schecks.almin.PanelAudit.forUser("unwatched").isEmpty());
+
+        // Away long enough and coming back is a second visit rather than a
+        // four-hour one. Done through the file so the visit flag is checked
+        // surviving a write and a read as well.
+        com.schecks.almin.PanelAudit.flush();
+        Path auditFile = dir.resolve("config").resolve("almin")
+            .resolve(com.schecks.almin.PanelAudit.fileName());
+        long ago = System.currentTimeMillis() - 20 * 60_000L;
+        Files.writeString(auditFile, Files.readString(auditFile)
+            .replaceAll("\"at\":\\d+", "\"at\":" + ago)
+            .replaceAll("\"until\":\\d+", "\"until\":" + ago));
+        com.schecks.almin.PanelAudit.init(dir);
+        int had = com.schecks.almin.PanelAudit.forUser("watched").size();
+        boolean keptVisit = com.schecks.almin.PanelAudit.forUser("watched").stream()
+            .anyMatch(com.schecks.almin.PanelAudit.Entry::visit);
+        check("a visit is still a visit after a restart", keptVisit);
+        com.schecks.almin.PanelAudit.visiting(seen);
+        java.util.List<com.schecks.almin.PanelAudit.Entry> returned =
+            com.schecks.almin.PanelAudit.forUser("watched");
+        check("coming back after a while starts a new one",
+            returned.size() == had + 1 && returned.get(0).visit());
 
         com.schecks.almin.PanelAudit.forget("watched");
         check("removing the account takes its record with it",
