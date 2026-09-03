@@ -379,6 +379,12 @@ final class WebPage {
           .scene{background:#0b0d11;border:1px solid var(--line);border-radius:10px;
                  overflow:hidden}
           .scene svg{display:block;width:100%;height:min(420px,52dvh)}
+          /* The three session controls read as one control, because they are. */
+          .sesnav{display:inline-flex;gap:1px;align-items:stretch}
+          .sesnav .btn{border-radius:0;padding-left:9px;padding-right:9px}
+          .sesnav .btn:first-child{border-radius:8px 0 0 8px}
+          .sesnav .btn:last-child{border-radius:0 8px 8px 0}
+          .sesnav .btn:disabled{opacity:.4;cursor:default}
           .scenebar{display:flex;gap:9px;align-items:center;margin-top:10px;flex-wrap:wrap}
           .scenebar .btn{padding:5px 11px;font-size:12.5px}
           .scenebar input[type=range]{flex:1;min-width:140px;accent-color:var(--brand);padding:0}
@@ -2371,6 +2377,14 @@ final class WebPage {
                   '<span class="muted num" id="t-rate"></span>'+
                   '<button class="btn" id="t-filter">Filter</button>'+
                   '<button class="btn" id="t-skip">Skip quiet time</button>'+
+                  '<span class="sesnav">'+
+                    '<button class="btn" id="t-sesprev" title="The session before this one">'+
+                      '\u25c0</button>'+
+                    '<button class="btn" id="t-seslabel" title="Show every session at once">'+
+                      '\u2026</button>'+
+                    '<button class="btn" id="t-sesnext" title="The session after this one">'+
+                      '\u25b6</button>'+
+                  '</span>'+
                   '<button class="btn" id="t-golive">Back to live</button>'+
                   '<span class="spacer"></span>'+
                   '<span class="dims" id="t-dims"></span>'+
@@ -2427,6 +2441,9 @@ final class WebPage {
             if(mayWrite('settings') && $('a-rowcount')) $('a-rowcount').onchange=setRowsShown;
             $('t-play').onclick=togglePlay;
             $('t-skip').onclick=()=>{ skipGaps=!skipGaps; paintAll(); };
+            $('t-sesprev').onclick=()=>stepSession(-1);
+            $('t-sesnext').onclick=()=>stepSession(1);
+            $('t-seslabel').onclick=showWholePeriod;
             $('t-golive').onclick=goLive;
             $('t-filter').onclick=()=>{ filterOpen=!filterOpen; paintFilters(); paintAll(); };
             $('t-livepill').onclick=()=>{ $('t-line').scrollIntoView({block:'nearest'}); };
@@ -2975,6 +2992,143 @@ final class WebPage {
         function gapAt(t,gaps){
           for(const g of gaps) if(t>g.from && t<g.to) return g;
           return null;
+        }
+
+        /**
+         * The stretches somebody was actually playing.
+         *
+         * <p>The inverse of {@link quietGaps}: everything the gaps are not.
+         * A server is used in evenings, and "the evening" is the unit people
+         * mean when they ask what happened \u2014 not "the last four days,
+         * most of which was nobody".
+         */
+        function sessions(){
+          if(!allData) return [];
+          const from=allData.from||0, to=allData.to||from+1;
+          if(to<=from) return [];
+          const out=[]; let t=from;
+          for(const g of quietGaps()){
+            if(g.from>t) out.push({from:t,to:g.from});
+            t=Math.max(t,g.to);
+          }
+          if(to>t) out.push({from:t,to:to});
+          return out.length?out:[{from:from,to:to}];
+        }
+
+        /** The session a moment is in, or the nearest one before it. */
+        function sessionIndexAt(t){
+          const ss=sessions();
+          if(!ss.length) return -1;
+          for(let i=0;i<ss.length;i++) if(t>=ss[i].from && t<=ss[i].to) return i;
+          let best=0;
+          for(let i=0;i<ss.length;i++) if(ss[i].from<=t) best=i;
+          return best;
+        }
+
+        /** A little air either side, so a session is not flush with the edge. */
+        function windowForSession(ses){
+          const pad=Math.max(30000,(ses.to-ses.from)*0.05);
+          return {from:ses.from-pad, to:ses.to+pad};
+        }
+
+        /** How wide a stretch of nobody gets, whatever it really lasted. */
+        const QUIET_PX=34;
+
+        /**
+         * Clock to pixels, with quiet time squeezed.
+         *
+         * <p>A timeline that gives a nine-hour gap nine hours of width is
+         * mostly a picture of nobody playing: on a server used in the evenings
+         * the parts worth looking at were slivers at either end of a bar that
+         * was five-sixths empty. Every quiet stretch is given the same small
+         * fixed width instead, labelled with how long it really was, and the
+         * live stretches share everything that is left in proportion to each
+         * other. The clock is still honest \u2014 nothing is hidden, and the
+         * gap says what it cost \u2014 but the space goes where the record is.
+         *
+         * <p>Piecewise, so the inverse matters as much as the forward
+         * direction: clicking the strip has to land on the moment under the
+         * pointer, and a linear guess would be wrong everywhere.
+         */
+        function timeMap(a,b,gaps,W){
+          const span=Math.max(1,b-a);
+          const segs=[]; let t=a;
+          for(const g of gaps){
+            const gf=Math.max(a,g.from), gt=Math.min(b,g.to);
+            if(gt<=gf) continue;
+            if(gf>t) segs.push({from:t,to:gf,quiet:false});
+            // The window can cut a gap in half. What it cost is the whole
+            // gap, not the sliver of it that happens to be on screen: a band
+            // at the edge of a session labelled "5m" when eight hours passed
+            // is worse than no label.
+            segs.push({from:gf,to:gt,quiet:true,realFrom:g.from,realTo:g.to});
+            t=gt;
+          }
+          if(t<b) segs.push({from:t,to:b,quiet:false});
+          if(!segs.length) segs.push({from:a,to:b,quiet:false});
+          const liveMs=segs.reduce((n,g)=>n+(g.quiet?0:g.to-g.from),0);
+          const quiets=segs.filter(g=>g.quiet).length;
+          // Never let the squeezed gaps take the picture over: on a period
+          // that is almost all gaps, the bands themselves would be the bar.
+          const quietPx=quiets?Math.min(QUIET_PX,(W*0.45)/quiets):0;
+          const livePx=Math.max(1,W-quietPx*quiets);
+          let x=0;
+          for(const g of segs){
+            g.x0=x;
+            g.w=g.quiet?quietPx
+              :(liveMs>0?((g.to-g.from)/liveMs)*livePx:livePx/Math.max(1,segs.length-quiets));
+            x+=g.w; g.x1=x;
+          }
+          const last=segs[segs.length-1];
+          const total=last.x1||1;
+          // Rounding leaves a sliver; stretch the whole thing onto the width.
+          const k=W/total;
+          for(const g of segs){ g.x0*=k; g.x1*=k; g.w*=k; }
+          return {
+            segs:segs,
+            x(t){
+              if(t<=a) return 0;
+              if(t>=b) return W;
+              for(const g of segs){
+                if(t<=g.to) return g.x0+((t-g.from)/Math.max(1,g.to-g.from))*g.w;
+              }
+              return W;
+            },
+            at(px){
+              if(px<=0) return a;
+              if(px>=W) return b;
+              for(const g of segs){
+                if(px<=g.x1) return g.from+((px-g.x0)/Math.max(0.001,g.w))*(g.to-g.from);
+              }
+              return b;
+            },
+            span:span
+          };
+        }
+
+        /**
+         * The same thing in one unit, for the label on a squeezed band.
+         *
+         * <p>A band thirty pixels wide cannot hold "8h 31m" legibly, and the
+         * exact figure is on the tooltip with both ends of the gap. Floored
+         * rather than rounded, so the short form never claims more time than
+         * actually passed.
+         */
+        function roughSpan(ms){
+          const m=Math.max(1,Math.floor(ms/60000));
+          if(m<60) return m+'m';
+          const h=Math.floor(m/60);
+          return h<24?h+'h':Math.floor(h/24)+'d';
+        }
+
+        /** "4h 20m", for a gap that has to say what it cost in very little room. */
+        function shortSpan(ms){
+          const m=Math.max(1,Math.round(ms/60000));
+          if(m<60) return m+'m';
+          const h=Math.floor(m/60), rm=m%60;
+          if(h<24) return h+'h'+(rm?' '+rm+'m':'');
+          const d=Math.floor(h/24), rh=h%24;
+          return d+'d'+(rh?' '+rh+'h':'');
         }
 
         // ---- what each action looks like on the map ----
@@ -4263,7 +4417,16 @@ final class WebPage {
         function paintTimeline(){
           const host=$('t-line'); if(!host || !allData) return;
           const from=allData.from||0, to=allData.to||from+1;
-          if(!win.set){ win.from=from; win.to=to; }
+          const gaps=quietGaps();
+          // Opens on the evening in progress rather than on the whole record.
+          // Four days of which three are nobody is a bar with the part you
+          // came for compressed into its last inch; the rest is still there,
+          // one button or one scroll out.
+          if(!win.set){
+            const ss=sessions();
+            const now=ss.length?windowForSession(ss[ss.length-1]):{from:from,to:to};
+            win.from=now.from; win.to=now.to;
+          }
           // Never let the window escape the period or collapse to nothing.
           const minSpan=Math.max(2000,(to-from)/2000);
           if(win.to-win.from<minSpan) win.to=win.from+minSpan;
@@ -4272,15 +4435,18 @@ final class WebPage {
           if(win.from<from) win.from=from;
 
           const W=1000, OV=14, GAP=8, MAIN=54, H=OV+GAP+MAIN;
-          const ovx=t=>((t-from)/Math.max(1,to-from))*W;
-          const mx=t=>((t-win.from)/Math.max(1,win.to-win.from))*W;
-          const gaps=quietGaps();
+          const over=timeMap(from,to,gaps,W);
+          const main=timeMap(win.from,win.to,gaps,W);
+          const ovx=t=>over.x(t);
+          const mx=t=>main.x(t);
 
           let sv='<rect x="0" y="0" width="'+W+'" height="'+OV+'" fill="#151922"/>';
-          for(const g of gaps){
-            sv+='<rect x="'+ovx(g.from).toFixed(1)+'" y="0" width="'+
-              Math.max(1,ovx(g.to)-ovx(g.from)).toFixed(1)+'" height="'+OV+
-              '" fill="#0b0d11"/>';
+          for(const g of over.segs){
+            if(!g.quiet) continue;
+            sv+='<rect x="'+g.x0.toFixed(1)+'" y="0" width="'+Math.max(1,g.w).toFixed(1)+
+              '" height="'+OV+'" fill="#0b0d11"><title>'+
+              esc(shortSpan((g.realTo||g.to)-(g.realFrom||g.from))+
+                ' with nobody on')+'</title></rect>';
           }
           sv+='<rect class="ovwin" x="'+ovx(win.from).toFixed(1)+'" y="0" width="'+
             Math.max(3,ovx(win.to)-ovx(win.from)).toFixed(1)+'" height="'+OV+
@@ -4301,18 +4467,26 @@ final class WebPage {
 
           const y0=OV+GAP;
           sv+='<rect x="0" y="'+y0+'" width="'+W+'" height="'+MAIN+'" fill="#151922"/>';
-          // Quiet time, marked rather than hidden: the map is empty there for
-          // a reason, and hiding it would make the clock lie about how long
-          // the day was.
-          for(const g of gaps){
-            const a=Math.max(0,mx(g.from)), b=Math.min(W,mx(g.to));
+          // Quiet time, squeezed rather than hidden: the map is empty there
+          // for a reason, and dropping it would make the clock lie about how
+          // long the day was. It keeps a band and says what it cost, and the
+          // width goes to the parts with something in them.
+          for(const g of main.segs){
+            if(!g.quiet) continue;
+            const a=Math.max(0,g.x0), b=Math.min(W,g.x1);
             if(b<=a) continue;
+            const real=(g.realTo||g.to)-(g.realFrom||g.from);
+            const how=roughSpan(real);
             sv+='<rect x="'+a.toFixed(1)+'" y="'+y0+'" width="'+(b-a).toFixed(1)+
-              '" height="'+MAIN+'" fill="url(#quiet)"/>';
-            if(b-a>54){
-              sv+='<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y0+MAIN/2+4)+
-                '" text-anchor="middle" fill="#5b6472" font-size="11">nobody on</text>';
-            }
+              '" height="'+MAIN+'" fill="url(#quiet)"/>'+
+              '<line x1="'+a.toFixed(1)+'" y1="'+y0+'" x2="'+a.toFixed(1)+'" y2="'+
+              (y0+MAIN)+'" stroke="#39414e"/>'+
+              '<line x1="'+b.toFixed(1)+'" y1="'+y0+'" x2="'+b.toFixed(1)+'" y2="'+
+              (y0+MAIN)+'" stroke="#39414e"/>'+
+              '<text x="'+((a+b)/2).toFixed(1)+'" y="'+(y0+MAIN/2+3)+
+              '" text-anchor="middle" fill="#6f7a89" font-size="9">'+esc(how)+'</text>'+
+              '<title>'+esc(shortSpan(real)+' with nobody on \u00b7 '+
+                fmtWhen(g.realFrom||g.from)+' to '+fmtWhen(g.realTo||g.to))+'</title>';
           }
           // One tick per action, coloured by what it was.
           for(const a of (allData.actions||[])){
@@ -4346,10 +4520,11 @@ final class WebPage {
             'patternTransform="rotate(45)"><rect width="8" height="8" fill="#101319"/>'+
             '<line x1="0" y1="0" x2="0" y2="8" stroke="#1b2029" stroke-width="4"/></pattern>'+
             '</defs>'+sv+'</svg>';
-          tl={W:W,OV:OV,GAP:GAP,MAIN:MAIN,from:from,to:to};
+          tl={W:W,OV:OV,GAP:GAP,MAIN:MAIN,from:from,to:to,main:main,over:over};
           wireTimeline();
           paintSpeed();
           paintBar();
+          paintSessions();
         }
 
         /**
@@ -4372,6 +4547,56 @@ final class WebPage {
           if(skip){ skip.className='btn'+(skipGaps?' on':'');
             skip.title=skipGaps?'Playback jumps over time nobody was on'
                                :'Playback runs through quiet time in real proportion'; }
+        }
+
+        /**
+         * Which session the window is on, and how to get to the others.
+         *
+         * <p>The strip opens on the evening in progress. Everything before it
+         * is still there \u2014 one scroll out, one click on the overview, or
+         * these, which move a whole session at a time so you land on a
+         * session's edges rather than somewhere in the middle of one.
+         */
+        function paintSessions(){
+          const label=$('t-seslabel'); if(!label) return;
+          const ss=sessions();
+          const prev=$('t-sesprev'), next=$('t-sesnext');
+          if(ss.length<2){
+            for(const el of [label,prev,next]) if(el) el.style.display='none';
+            return;
+          }
+          for(const el of [label,prev,next]) if(el) el.style.display='';
+          const whole=win.from<=(allData.from||0)+1000 && win.to>=(allData.to||0)-1000;
+          const i=whole?-1:sessionIndexAt((win.from+win.to)/2);
+          label.textContent=whole?('all '+ss.length+' sessions')
+                                 :('session '+(i+1)+' of '+ss.length);
+          label.className='btn'+(whole?' on':'');
+          if(prev) prev.disabled=!whole && i<=0;
+          if(next) next.disabled=!whole && i>=ss.length-1;
+        }
+
+        /** Moves the window one whole session earlier or later. */
+        function stepSession(by){
+          const ss=sessions();
+          if(!ss.length) return;
+          const whole=win.from<=(allData.from||0)+1000 && win.to>=(allData.to||0)-1000;
+          let i=whole?(by<0?ss.length-1:0):sessionIndexAt((win.from+win.to)/2)+by;
+          i=Math.max(0,Math.min(ss.length-1,i));
+          const w=windowForSession(ss[i]);
+          win.from=w.from; win.to=w.to; win.set=true;
+          live=false; stopPlay();
+          // Land inside what you asked to look at rather than wherever the
+          // cursor happened to be, which is usually outside it.
+          cursorAt=ss[i].to; cursorSet=true;
+          paintAll();
+        }
+
+        /** Every session at once, which is what the record actually is. */
+        function showWholePeriod(){
+          if(!allData) return;
+          win.from=allData.from||0; win.to=allData.to||win.from+1; win.set=true;
+          live=false; stopPlay();
+          paintAll();
         }
 
         /** Back to following the clock. Also puts the whole period back in view. */
@@ -4436,13 +4661,15 @@ final class WebPage {
                     y:((e.clientY-r.top)/r.height)*(tl.OV+tl.GAP+tl.MAIN)};
           };
           const setCursor=x=>{
-            cursorAt=win.from+(x/tl.W)*(win.to-win.from);
+            // Through the same squeezed scale the strip was drawn with, or
+            // the moment you click is not the moment you land on.
+            cursorAt=tl.main?tl.main.at(x):win.from+(x/tl.W)*(win.to-win.from);
             // Touching the timeline is what "bring the timestamp back" means.
             cursorSet=true; live=false; stopPlay(); schedulePaint();
           };
           const centreWindow=x=>{
             const w=win.to-win.from;
-            const t=tl.from+(x/tl.W)*(tl.to-tl.from);
+            const t=tl.over?tl.over.at(x):tl.from+(x/tl.W)*(tl.to-tl.from);
             win.from=t-w/2; win.to=t+w/2; win.set=true;
           };
           let mode='';
@@ -4468,7 +4695,7 @@ final class WebPage {
             e.preventDefault();
             const p=at(e);
             // Zoom about the pointer, so the moment under it stays under it.
-            const focus=win.from+(p.x/tl.W)*(win.to-win.from);
+            const focus=tl.main?tl.main.at(p.x):win.from+(p.x/tl.W)*(win.to-win.from);
             const k=e.deltaY>0?1.25:0.8;
             win.from=focus-(focus-win.from)*k;
             win.to=focus+(win.to-focus)*k;

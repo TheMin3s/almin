@@ -445,7 +445,9 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'blueMapPayload', 'openBlueScene', 'inspectBlueWorld',
                     'fold', 'foldSetup', 'foldHint', 'paintKeys', 'cfgGroupOf',
                     'sceneTrails', 'sceneWalkers', 'sceneHolds', 'thinScenePath',
-                    'paintSceneWho', 'sideLimit', 'sideRow', 'setRowsShown']) {
+                    'paintSceneWho', 'sideLimit', 'sideRow', 'setRowsShown',
+                    'sessions', 'sessionIndexAt', 'timeMap', 'shortSpan',
+                    'stepSession', 'showWholePeriod', 'paintSessions', 'roughSpan']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -1128,6 +1130,115 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   // for instead was the ceiling on the log — which changed nothing they could
   // see. The number is a setting now, and these are the two things that has
   // to mean: the list obeys it, and it is reachable from where it is read.
+  // ---- sessions, and the time nobody was on ----
+  // A server used in the evenings spent most of the timeline showing nobody,
+  // and opened on the whole record rather than on the evening in progress.
+  {
+    const saved = sandbox.allData, savedWin = { ...sandbox.win };
+    const savedCursor = sandbox.cursorAt, savedSet = sandbox.cursorSet;
+    const savedLive = sandbox.live;
+    // Three evenings, nine hours apart.
+    const start = 1700000000000, HOUR = 3600e3, acts = [];
+    const evenings = [start, start + 9 * HOUR, start + 18 * HOUR];
+    for (const e of evenings)
+      for (let i = 0; i < 30; i++)
+        acts.push({ at: e + i * 60000, player: 'S', action: 'place', detail: 'Stone',
+                    dim: 'overworld', x: i, y: 64, z: 0, count: 1 });
+    const last = evenings[2] + 29 * 60000;
+    sandbox.allData = { ids: {}, tracks: {}, actions: acts, rowsShown: 2000,
+                        from: start, to: last, now: last, afkSeconds: 20 };
+
+    check('the record is split into the evenings it actually happened in', () => {
+      const ss = sandbox.sessions();
+      if (ss.length !== 3) return 'it found ' + ss.length + ' sessions, not 3';
+      return Math.abs(ss[0].from - start) < 2 && Math.abs(ss[2].to - last) < 2
+        ? true : 'the sessions do not line up with the evenings';
+    });
+
+    check('the strip opens on the session in progress, not the whole record', () => {
+      sandbox.win.set = false;
+      sandbox.cursorAt = last; sandbox.cursorSet = true;
+      sandbox.paintTimeline();
+      const covered = sandbox.win.to - sandbox.win.from;
+      const whole = last - start;
+      if (sandbox.win.from < evenings[2] - HOUR) return 'it opened further back than the evening';
+      return covered < whole / 4 ? true : 'it opened on ' + Math.round(covered / 60000) + ' minutes';
+    });
+
+    check('a long gap is squeezed to a band rather than given nine hours of width', () => {
+      const gaps = sandbox.quietGaps();
+      const map = sandbox.timeMap(start, last, gaps, 1000);
+      const quiet = map.segs.filter((g) => g.quiet);
+      if (quiet.length !== 2) return 'it squeezed ' + quiet.length + ' stretches, not 2';
+      const quietPx = quiet.reduce((n, g) => n + g.w, 0);
+      // In real proportion these two gaps are more than nine tenths of it.
+      return quietPx < 100 ? true : 'the gaps still take ' + Math.round(quietPx) + ' of 1000';
+    });
+
+    check('...and the evenings get the width instead', () => {
+      const map = sandbox.timeMap(start, last, sandbox.quietGaps(), 1000);
+      const live = map.segs.filter((g) => !g.quiet);
+      const px = live.reduce((n, g) => n + g.w, 0);
+      const even = live.every((g) => g.w > 250);
+      return px > 900 && even
+        ? true : 'the evenings got ' + live.map((g) => Math.round(g.w)).join('/');
+    });
+
+    // The inverse is the half that breaks silently: the strip still looks
+    // right while every click lands somewhere else.
+    check('clicking the strip lands on the moment under the pointer', () => {
+      const map = sandbox.timeMap(start, last, sandbox.quietGaps(), 1000);
+      let worst = 0;
+      for (let px = 0; px <= 1000; px += 7) {
+        const back = map.x(map.at(px));
+        worst = Math.max(worst, Math.abs(back - px));
+      }
+      return worst < 0.6 ? true : 'off by ' + worst.toFixed(2) + ' pixels';
+    });
+
+    check('a gap cut off by the window still says what the whole gap cost', () => {
+      sandbox.win.set = false;                       // opens on the last evening
+      sandbox.paintTimeline();
+      const svg = byId.get('t-line')._html || '';
+      const gaps = sandbox.quietGaps();
+      const whole = sandbox.roughSpan(gaps[gaps.length - 1].to - gaps[gaps.length - 1].from);
+      const bands = (svg.match(/font-size="9">([^<]*)</g) || [])
+        .map((m) => m.replace(/^font-size="9">/, '').replace(/<$/, ''));
+      if (!bands.length) return 'no band was drawn at the edge of the session';
+      return bands.includes(whole)
+        ? true : 'the clipped band said ' + bands.join('/') + ', not ' + whole;
+    });
+
+    check('a squeezed gap says how long it really was', () => {
+      sandbox.win.from = start; sandbox.win.to = last; sandbox.win.set = true;
+      sandbox.paintTimeline();
+      const svg = byId.get('t-line')._html || '';
+      const gaps = sandbox.quietGaps();
+      const said = sandbox.roughSpan(gaps[0].to - gaps[0].from);
+      const exact = sandbox.shortSpan(gaps[0].to - gaps[0].from);
+      if (!svg.includes(exact + ' with nobody on')) return 'the tooltip is not exact';
+      return svg.includes('>' + said + '<')
+        ? true : 'the band never said "' + said + '"';
+    });
+
+    check('the sessions before this one are one button away', () => {
+      sandbox.win.set = false;
+      sandbox.paintTimeline();
+      sandbox.stepSession(-1);
+      const mid = (sandbox.win.from + sandbox.win.to) / 2;
+      const i = sandbox.sessionIndexAt(mid);
+      if (i !== 1) return 'it moved to session ' + (i + 1) + ', not 2';
+      sandbox.showWholePeriod();
+      return sandbox.win.from <= start && sandbox.win.to >= last
+        ? true : 'the whole period did not come back';
+    });
+
+    sandbox.allData = saved;
+    sandbox.win.from = savedWin.from; sandbox.win.to = savedWin.to;
+    sandbox.win.set = savedWin.set;
+    sandbox.cursorAt = savedCursor; sandbox.cursorSet = savedSet; sandbox.live = savedLive;
+  }
+
   check('the side list is not stuck at a hundred and twenty', () => {
     const saved = sandbox.allData, at = sandbox.cursorAt, set = sandbox.cursorSet;
     const now = Date.now(), acts = [];
