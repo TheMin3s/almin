@@ -2182,7 +2182,10 @@ final class WebPage {
         async function loadPeople(){
           if(peopleData && Date.now()-peopleAt<15000) return;
           const r=await jget('/api/track?all=1');
-          if(r.status===200){ peopleData=r.body; peopleAt=Date.now(); }
+          if(r.status===200){ peopleData=r.body; peopleAt=Date.now();
+            // The same cast the map seats, seated the same way, so a player's
+            // line here and their line on the activity map are one colour.
+            seatPlayers(Object.keys(peopleData.tracks||{})); }
           // The little maps want ground under them for the same reason the big
           // one does: a line on black says where somebody walked, and a line
           // over the world says where they went.
@@ -3060,13 +3063,73 @@ final class WebPage {
           return wrap;
         }
 
-        // Stable per-player colour: the same person is the same colour every
-        // time the map is drawn, without keeping a palette in sync with a
-        // player list that changes.
-        function playerColor(name){
+        /**
+         * A colour per player, and one you can actually tell from the next.
+         *
+         * <p>This used to hash a name straight to a hue, which is stable and
+         * needs no bookkeeping and is, on a real server, useless: "Steve" and
+         * "Alex" land five degrees apart, so two paths across the same map are
+         * two shades of one green. One path in the players list looks fine
+         * next to the face it belongs to; a map with six of them on it is
+         * where the colour has to do the work on its own.
+         *
+         * <p>So names are dealt seats in a palette that is spaced on purpose
+         * \u2014 eight hues 45\u00b0 apart, in three weights \u2014 and the hash
+         * only decides which seat somebody would prefer. A taken seat is
+         * probed past, so two players are never handed the same colour until
+         * there are more than twenty-four of them on one screen.
+         *
+         * <p>A seat, once given, is kept for the life of the page: somebody
+         * joining must not repaint everybody else's path mid-look.
+         */
+        const SEAT_HUES=[12,57,102,147,192,237,282,327];
+        const SEAT_SAT=[68,86,54], SEAT_LIGHT=[66,45,79];
+        const SEATS=SEAT_HUES.length*SEAT_SAT.length;
+        function seatColor(i){
+          const band=Math.floor(i/SEAT_HUES.length)%SEAT_SAT.length;
+          return 'hsl('+SEAT_HUES[i%SEAT_HUES.length]+' '+SEAT_SAT[band]+'% '+
+                 SEAT_LIGHT[band]+'%)';
+        }
+        let playerSeats=new Map();
+        let takenSeats=new Set();
+        function seatFor(name){
           let h=0;
           for(let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0;
-          return 'hsl('+(h%360)+' 62% 62%)';
+          // The hash picks a hue, and the search goes round all eight of them
+          // in the bright weight before it will hand anybody a dark or a pale
+          // one. Probing straight up the seat numbers instead stepped out of
+          // the bright weight the moment it passed the last hue, so a seventh
+          // player got a dark colour with two clear ones still free.
+          const hues=SEAT_HUES.length, first=h%hues;
+          for(let k=0;k<SEATS;k++){
+            const seat=Math.floor(k/hues)*hues+(first+k)%hues;
+            if(!takenSeats.has(seat)) return seat;
+          }
+          // Past twenty-four everybody is seated, so the wheel is handed round
+          // again in order rather than piling every latecomer onto the eight
+          // bright hues while sixteen others sit unused.
+          return playerSeats.size%SEATS;
+        }
+        /**
+         * Seats a whole cast at once, in a fixed order.
+         *
+         * <p>Called with everybody a view is about to draw, before it draws
+         * any of them: seating them lazily as they are painted would let the
+         * order of a repaint decide who gets whose colour, and the same server
+         * would come back a different set of colours on the next reload.
+         */
+        function seatPlayers(names){
+          for(const n of [...new Set((names||[]).map(String))].sort()) playerColor(n);
+        }
+        function playerColor(name){
+          const key=String(name==null?'':name);
+          let seat=playerSeats.get(key);
+          if(seat===undefined){
+            seat=seatFor(key);
+            playerSeats.set(key,seat);
+            takenSeats.add(seat);
+          }
+          return seatColor(seat);
         }
 
         // Pictures of the ground, so the map has a world under it rather than
@@ -3690,6 +3753,10 @@ final class WebPage {
           const tracks=allData.tracks||{}, acts=allData.actions||[];
           const ids=allData.ids||{}, online=allData.online||[];
           const names=Object.keys(tracks);
+          // Everybody first, then the drawing. Colours are dealt from a
+          // palette rather than hashed, so who is in the scene has to be
+          // settled before anything in it is painted.
+          seatPlayers(names.concat(acts.map(a=>a.player),online.map(p=>p.name)));
           if(!names.length && !acts.length){
             box.innerHTML='<div class="note">Nothing recorded yet'+
               ((allData.trackSeconds===0)?' — activity-track-seconds is 0, so paths are off.'
@@ -3877,6 +3944,11 @@ final class WebPage {
             // over a casing that fades with them rather than darkening old
             // ground after the coloured line has gone.
             const wide=mapOpts.path;
+            // Whose line this is, on hover. The legend names the colours, but
+            // a map with six paths crossing is a place to ask about one of
+            // them rather than to go and look one up.
+            const titled=v=>v?'<g class="tpath" data-who="'+esc(n)+'"><title>'+esc(n)+
+              '\u2019s path</title>'+v+'</g>':'';
             let out=mapOpts.paths&&future.length>1
               ? '<path d="'+d(future)+'" fill="none" stroke="'+c+'" stroke-width="'+
                 (wide*0.7).toFixed(1)+'" stroke-opacity=".16" stroke-linejoin="round" '+
@@ -3895,7 +3967,7 @@ final class WebPage {
                   Math.min(.98,r.opacity).toFixed(2)+'" stroke-linejoin="round" '+
                   'stroke-linecap="round"/>').join('');
               }
-              if(!mapOpts.players) return out;
+              if(!mapOpts.players) return titled(out);
               // Where they were at the cursor, drawn as their own face —
               // square, because a Minecraft head is. The player's colour is
               // the frame around it, and stays visible if the face never
@@ -3960,7 +4032,7 @@ final class WebPage {
                      :(idle?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):''))+
                 '</title></g>');
             }
-            return out;
+            return titled(out);
           }).join('');
 
           // Work represented by an isometric badge is one thing on the map by

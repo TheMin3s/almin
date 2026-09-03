@@ -571,6 +571,82 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((a !== c ? '  PASS  ' : '  FAIL  ') + 'two players get different colours');
     if (a === c) failures.push('playerColor collides');
 
+    // ---- colours you can actually tell apart ----
+    // "Different" is not the bar. The old hash gave Steve hue 99 and Alex
+    // hue 94, which are different numbers and the same green, and two paths
+    // across one map in the same green is a map with no colour coding on it.
+    const hueOf = (css) => {
+      const m = /hsl\((\d+)/.exec(css || '');
+      return m ? +m[1] : -1;
+    };
+    const apart = (x, y) => {
+      const d = Math.abs(hueOf(x) - hueOf(y));
+      return Math.min(d, 360 - d);
+    };
+    check('two paths on one map are two colours, not two shades of one', () =>
+      apart(a, c) >= 40 ? true
+        : 'hues ' + hueOf(a) + ' and ' + hueOf(c) + ' are ' + apart(a, c) + ' apart');
+
+    const reseat = (names) => {
+      sandbox.playerSeats = new sandbox.Map();
+      sandbox.takenSeats = new sandbox.Set();
+      sandbox.seatPlayers(names);
+      return names.map((n) => sandbox.playerColor(n));
+    };
+    const eight = ['Ava', 'Bo', 'Cy', 'Dee', 'Eli', 'Fay', 'Gus', 'Hal'];
+    check('a full lobby of eight is eight colours', () => {
+      const got = reseat(eight);
+      if (new Set(got).size !== 8) return 'only ' + new Set(got).size + ' of them: ' + got;
+      const hues = got.map(hueOf).sort((x, y) => x - y);
+      const worst = Math.min(...hues.slice(1).map((h, i) => h - hues[i]));
+      return worst >= 40 ? true : 'two of them are ' + worst + ' degrees apart';
+    });
+    check('...and all of one weight, so none of them is the faint one', () => {
+      const got = reseat(eight);
+      return new Set(got.map((c2) => c2.replace(/hsl\(\d+ /, ''))).size === 1
+        ? true : 'mixed weights: ' + got.join(' ');
+    });
+    check('the same players come out the same colours whatever order they arrive in', () => {
+      const forward = reseat(eight).join(',');
+      const reversed = [...eight].reverse();
+      const map2 = {};
+      reseat(reversed).forEach((c2, i) => { map2[reversed[i]] = c2; });
+      return forward === eight.map((n) => map2[n]).join(',')
+        ? true : 'the order people arrived in changed who got what';
+    });
+    check('somebody joining does not repaint everybody else', () => {
+      const before = reseat(eight).join(',');
+      sandbox.seatPlayers(eight.concat(['Ivy']));
+      const after = eight.map((n) => sandbox.playerColor(n)).join(',');
+      if (before !== after) return 'the incumbents changed colour';
+      // The ninth is the first to change weight rather than hue: all eight
+      // hues are spoken for, so the same hue in a different weight is the
+      // honest answer and a repeat of somebody else's exact colour is not.
+      const ninth = sandbox.playerColor('Ivy');
+      return before.split(',').indexOf(ninth) < 0
+        ? true : 'the newcomer got a colour already in use';
+    });
+    // Back to the cast this file's map data is about, since the checks above
+    // emptied the seating.
+    reseat(['Steve', 'Alex', 'Builder', 'Witness']);
+    sandbox.paintAll();
+    check('a path on the map says whose it is', () => {
+      const html = byId.get('t-map')._html || '';
+      const m = /<g class="tpath" data-who="Steve"><title>([^<]*)</.exec(html);
+      if (!m) return 'no titled path for Steve';
+      return /Steve/.test(m[1]) ? true : 'the title does not name them: ' + m[1];
+    });
+    check('...in the colour the legend gives them', () => {
+      const html = byId.get('t-map')._html || '';
+      const group = html.slice(html.indexOf('data-who="Steve"><title>'));
+      const stroke = /stroke="(hsl\([^"]*\))"/.exec(group);
+      const swatch = /data-who="Steve"[^>]*><i style="background:(hsl\([^"]*\))"/
+        .exec(byId.get('t-legend')._html || '');
+      if (!stroke || !swatch) return 'could not read one of them';
+      return stroke[1] === swatch[1]
+        ? true : 'path ' + stroke[1] + ' vs legend ' + swatch[1];
+    });
+
     // Scrubbing to the start must not throw on an empty selection, and
     // scrubbing back to the end must draw everything again.
     const span = { from: responses['/api/track'].from, to: responses['/api/track'].to };
