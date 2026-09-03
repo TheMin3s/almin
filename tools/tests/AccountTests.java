@@ -16,6 +16,11 @@ import java.util.List;
 public class AccountTests {
     static int failures = 0;
 
+    /** The web server's source, for the handful of checks that belong there. */
+    static String web0() throws Exception {
+        return Files.readString(Path.of("src/main/java/com/schecks/almin/WebUi.java"));
+    }
+
     static void check(String what, boolean ok) {
         System.out.println((ok ? "  ok   " : "  FAIL ") + what);
         if (!ok) failures++;
@@ -275,6 +280,26 @@ public class AccountTests {
             com.schecks.almin.PanelAudit.forUser("watched").size() == 2);
         check("the newest is first",
             com.schecks.almin.PanelAudit.forUser("watched").get(0).detail().equals("player=Alex"));
+
+        // ---- what the browser is allowed to have written down ----
+        // The panel reports selections, which means a browser is choosing what
+        // goes into somebody's record. It chooses from a fixed set and the
+        // server writes the sentence; if it could write the sentence, it could
+        // write anything into the record of the person using it.
+        java.lang.reflect.Method phrase =
+            com.schecks.almin.WebUi.class.getDeclaredMethod("watchPhrase", String.class);
+        phrase.setAccessible(true);
+        check("a selection is described by the server, not the browser",
+            phrase.invoke(null, "player").equals("looked at one player")
+                && phrase.invoke(null, "here").equals("was in the activity menu"));
+        check("a kind nobody defined does not become a sentence",
+            phrase.invoke(null, "<b>whatever they like</b>").equals("used the activity menu"));
+
+        // A read-only account is exactly the account this record is kept for.
+        // The route is a POST, so without an exception for it the gate would
+        // refuse the very people it exists to record.
+        check("the route that writes the record is not treated as a write",
+            web0().contains("changing(ex.getRequestMethod()) && !WATCH_ROUTE.equals(route(ex))"));
 
         check("routes are described in words a person reads",
             com.schecks.almin.PanelAudit.describe("/api/insights").contains("model")

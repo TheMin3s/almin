@@ -1049,6 +1049,11 @@ final class WebPage {
           if(authed && tab==='activity' && me.audited){
             m.appendChild(watchedNote());
             warnWatched();
+          } else if(tab!=='activity'){
+            // Leaving the menu arms the warning again, so coming back is told
+            // again. The alternative is a warning shown once a page load,
+            // which on a tab left open for a day is a warning shown once.
+            watchedTold=false;
           }
           if(authed && readOnly(tab)) m.appendChild(readOnlyNote(tab));
           if(tab==='dash') m.appendChild(dashPanel());
@@ -1071,10 +1076,12 @@ final class WebPage {
          * Told, every time, that this menu keeps a record of the visit.
          *
          * <p>The banner stays for as long as they are on the tab; the dialog
-         * is shown once per page load, because a warning that has to be
-         * dismissed on every poll is a warning people learn to click away
-         * without reading. Both say the same thing, and neither is optional:
-         * an account whose use is recorded is never not told.
+         * comes back every time the menu is opened. Not on every poll, which
+         * would be a warning people learn to click away without reading, and
+         * not once a page load either \u2014 a panel left open in a tab for a
+         * day would then have said it once, in the morning. Both say the same
+         * thing, and neither is optional: an account whose use is recorded is
+         * never not told.
          */
         let watchedTold=false;
         function warnWatched(){
@@ -1086,6 +1093,11 @@ final class WebPage {
               'where they went, and what they said. Your use of it is recorded \u2014 '+
               'what you looked at and when \u2014 and the main account can read that '+
               'record.';
+            const what=document.createElement('p'); what.className='note';
+            what.textContent='What is written down: which player, place, group of '+
+              'events or moment you select, anything you search for, and how long '+
+              'you spend in this menu. Not the game itself \u2014 only your use of '+
+              'this page.';
             const q=document.createElement('p'); q.className='note';
             q.textContent='This is not a warning about you. It is how the main account '+
               'lends this menu out at all: the record is kept because the menu is '+
@@ -1093,9 +1105,61 @@ final class WebPage {
               'than keeping none.';
             const ok=document.createElement('button'); ok.className='btn go';
             ok.textContent='Understood'; ok.onclick=close;
-            body.append(p,q,ok);
+            body.append(p,what,q,ok);
             ok.focus();
           });
+        }
+
+        /**
+         * Tells the server what was just selected, when this account is watched.
+         *
+         * <p>Most of the Activity menu never touches the server: focusing a
+         * player, opening a group of marks, scrubbing to a moment and staring
+         * at the map for twenty minutes are all decisions made in the browser.
+         * A record of "what you looked at" that only knew about the requests
+         * that happened to need data would be a record of the wrong thing.
+         *
+         * <p>Sent only for an account that has been told it is recorded, and
+         * never for anybody else \u2014 a panel that reported selections for an
+         * unwatched account would be building a record nobody agreed to. The
+         * kind is one of a fixed set and the server writes the sentence, so
+         * this cannot invent an entry; the subject is what was selected.
+         */
+        function noteWatch(kind,subject){
+          if(!authed || !me.audited) return;
+          jpost('/api/activity/watch?kind='+encodeURIComponent(kind)+
+            '&subject='+encodeURIComponent(subject||''),{}).catch(()=>{});
+        }
+
+        /**
+         * Focusing one person, in one place.
+         *
+         * <p>Five different controls set this, which is five places to forget
+         * that a watched account's selection is part of what is recorded.
+         */
+        function setFocus(name){
+          const to=focusPlayer===name?'':name;
+          if(to && to!==focusPlayer) noteWatch('player',to);
+          focusPlayer=to;
+          paintAll();
+        }
+
+        /**
+         * A search, once they have stopped typing.
+         *
+         * <p>Per keystroke would put "s", "st", "ste" and "steve" in somebody's
+         * record, which is four lines saying one thing and three of them
+         * wrong about what was searched for.
+         */
+        let searchNoteTimer=null;
+        function noteSearchSoon(){
+          if(!authed || !me.audited) return;
+          if(searchNoteTimer) clearTimeout(searchNoteTimer);
+          searchNoteTimer=setTimeout(()=>{
+            searchNoteTimer=null;
+            const f=$('a-filter'), q=f?f.value.trim():'';
+            if(q) noteWatch('search',q);
+          },1200);
         }
 
         function watchedNote(){
@@ -1103,8 +1167,9 @@ final class WebPage {
           box.className='msg';
           box.id='watched-note';
           box.style.marginBottom='12px';
-          box.textContent='Your use of this menu is recorded. The main account can see '+
-            'what you looked at here and when.';
+          box.textContent='Your use of this menu is recorded \u2014 what you select, '+
+            'what you search for and how long you are here. The main account can read '+
+            'that record.';
           return box;
         }
 
@@ -2456,7 +2521,7 @@ final class WebPage {
             $('a-clear').onclick=clearActivity;
             // Filtering is client-side over the rows already fetched, so
             // typing here asks the server for nothing.
-            $('a-filter').oninput=paintActivity;
+            $('a-filter').oninput=()=>{ paintActivity(); noteSearchSoon(); };
             $('a-who').onchange=()=>loadTrack($('a-who').value);
           },0);
           return wrap;
@@ -2906,9 +2971,16 @@ final class WebPage {
         // twenty times a minute would be rude to a server that is also running
         // a game. How often is a per-viewer preference, so it lives with the
         // rest of them in the panel beside the map.
-        let lastLiveLoad=0, lastInsight=0;
+        let lastLiveLoad=0, lastInsight=0, lastWatchBeat=0;
         function liveTick(){
           if(tab!=='activity' || document.hidden) return;
+          // How long somebody spent in here, recorded the only way a browser
+          // can say it: by saying so while they are still in it. Repeats fold
+          // into one entry with a start and an end, which is the duration.
+          if(me.audited && Date.now()-lastWatchBeat>=60000){
+            lastWatchBeat=Date.now();
+            noteWatch('here','');
+          }
           const every=Math.max(2,mapOpts.refresh||10)*1000;
           if(live && Date.now()-lastLiveLoad >= every) loadAll(true);
           if(Date.now()-lastBlueStatus>=20000) loadBlueMapStatus();
@@ -4104,6 +4176,8 @@ final class WebPage {
               let x=0,z=0;
               for(const a of g.items){ x+=a.x; z+=a.z; }
               clusterAt={items:g.items, x:x/g.items.length, z:z/g.items.length};
+              noteWatch('cluster',g.items.length+' events \u00b7 '+g.items[0].dim+' '+
+                Math.round(clusterAt.x)+','+Math.round(clusterAt.z));
               drawCluster();
             };
             // Both, because a mark is small and a click that moves a pixel
@@ -4310,7 +4384,7 @@ final class WebPage {
             const t=document.createElement('span');
             t.textContent=(w.mask?w.mask:w.name)+(w.afk?' · afk':'');
             el.appendChild(t);
-            el.onclick=()=>{ focusPlayer=focusPlayer===w.name?'':w.name; paintAll(); };
+            el.onclick=()=>setFocus(w.name);
             bar.appendChild(el);
           }
         }
@@ -4337,7 +4411,7 @@ final class WebPage {
             '</span>';
           $('t-legend').querySelectorAll('.pill-who').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
-              focusPlayer=focusPlayer===n?'':n; paintAll(); };
+              setFocus(n); };
           });
         }
 
@@ -4401,6 +4475,8 @@ final class WebPage {
           // Clicking a row takes the map to it: the moment and the place.
           row.onclick=()=>{ cursorAt=a.at; cursorSet=true; live=false; allDim=a.dim;
             view.cx=a.x; view.cz=a.z; view.set=true;
+            noteWatch('moment',a.player+' \u00b7 '+a.action+' \u00b7 '+a.dim+' '+
+              a.x+','+a.y+','+a.z);
             if(usingBlueMap()) focusBlueMap(a.x,a.y,a.z,110);
             stopPlay(); paintAll(); };
           return row;
@@ -4788,7 +4864,7 @@ final class WebPage {
           const svg=$('t-svg'), tip=$('t-tip'), box=$('t-map');
           if(svg) svg.querySelectorAll('.thead').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
-              focusPlayer=focusPlayer===n?'':n; paintAll(); };
+              setFocus(n); };
             if(!tip||!box) return;
             el.addEventListener('mouseenter',()=>{
               tip.textContent=headStory(el);
@@ -5469,6 +5545,8 @@ final class WebPage {
         }
 
         function openScene(e){
+          noteWatch('scene',e.player+' \u00b7 '+(e.headline||'')+' \u00b7 '+e.dim+' '+
+            e.x+','+e.y+','+e.z);
           if(usingBlueMap()) { openBlueScene(e); return; }
           const built=sceneOf(e);
           if(!built){ return; }
@@ -6973,7 +7051,7 @@ final class WebPage {
             ' action(s) by then · '+payload.counts.markers+' visible 3D mark(s) · terrain by BlueMap'+
             (focusPlayer?' · showing only '+esc(focusPlayer):'')+'</span>';
           host.querySelectorAll('.pill-who').forEach(el=>el.onclick=()=>{
-            const n=el.getAttribute('data-who'); focusPlayer=focusPlayer===n?'':n; paintAll();
+            const n=el.getAttribute('data-who'); setFocus(n);
           });
         }
 
@@ -7044,7 +7122,7 @@ final class WebPage {
               return;
             }
             if(ref.type==='player'){
-              focusPlayer=focusPlayer===ref.data.name?'':ref.data.name; paintAll(); return;
+              setFocus(ref.data.name); return;
             }
             if(ref.type==='cluster'){
               bluePicked=blueClusterHtml(ref.data); paintBluePicked(); return;
@@ -7718,7 +7796,17 @@ final class WebPage {
                 what.innerHTML=esc(e.what)+
                   (e.detail?(' <span class="muted">'+esc(e.detail)+'</span>'):'');
                 row.append(when,what);
-                if(e.count>1){
+                // Repeats of one thing fold into a single entry with a start
+                // and an end, so the interesting number is usually not how
+                // many times but for how long.
+                const span=(+e.until||0)-(+e.at||0);
+                if(span>=60000){
+                  const how=document.createElement('span');
+                  how.className='muted';
+                  how.textContent='for '+shortSpan(span);
+                  how.title=fmtWhen(e.at)+' to '+fmtWhen(e.until);
+                  row.appendChild(how);
+                } else if(e.count>1){
                   const n=document.createElement('span');
                   n.className='muted'; n.textContent='\u00d7'+e.count;
                   row.appendChild(n);

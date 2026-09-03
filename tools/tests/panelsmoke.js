@@ -447,7 +447,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'sceneTrails', 'sceneWalkers', 'sceneHolds', 'thinScenePath',
                     'paintSceneWho', 'sideLimit', 'sideRow', 'setRowsShown',
                     'sessions', 'sessionIndexAt', 'timeMap', 'shortSpan',
-                    'stepSession', 'showWholePeriod', 'paintSessions', 'roughSpan']) {
+                    'stepSession', 'showWholePeriod', 'paintSessions', 'roughSpan',
+                    'noteWatch', 'setFocus', 'noteSearchSoon']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -1915,8 +1916,11 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   check('summaries refresh on the same clock as everything else', () => {
     const src = fs.readFileSync(process.argv[2], 'utf8');
+    // To the end of the function rather than a fixed number of characters:
+    // the byte count version failed the day something was added at the top.
     const i = src.indexOf('function liveTick');
-    const body = src.slice(i, i + 700);
+    const next = src.indexOf('\nfunction ', i + 1);
+    const body = src.slice(i, next < 0 ? i + 2000 : next);
     return /loadInsights\(\)/.test(body)
       ? true : 'they only come back on a full page reload';
   });
@@ -3874,7 +3878,10 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
     // ---- being told the visit is recorded ----
     sandbox.watchedTold = false;
-    sandbox.me = { username: 'watched', owner: false, access: { activity: 'read' },
+    // Overview as well as Activity, so the test can leave the menu and come
+    // back — an account that may only reach one tab is put straight back on it.
+    sandbox.me = { username: 'watched', owner: false,
+                   access: { activity: 'read', dash: 'read' },
                    linkedPlayer: '', audited: true };
     sandbox.tab = 'activity'; sandbox.render();
     await new Promise((r) => setTimeout(r, 20));
@@ -3888,6 +3895,54 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       || sandbox.watchedTold === true;
     console.log((dialog ? '  PASS  ' : '  FAIL  ') + '...and it is put in front of them once');
     if (!dialog) failures.push('no watched dialog');
+
+    // Once a page load meant a panel left open in a tab was warned in the
+    // morning and never again. Leaving the menu arms it; coming back is told.
+    sandbox.tab = 'dash'; sandbox.render();
+    const rearmed = sandbox.watchedTold === false && sandbox.tab === 'dash';
+    console.log((rearmed ? '  PASS  ' : '  FAIL  ') +
+      '...and told again the next time they open it');
+    if (!rearmed) failures.push('the warning was only ever shown once');
+
+    // What is recorded is now what they select, so the page has to say so.
+    sandbox.tab = 'activity'; sandbox.render();
+    const said = deepText(byId.get('main')).toLowerCase();
+    const listsIt = /what you select/.test(said) && /how long/.test(said);
+    console.log((listsIt ? '  PASS  ' : '  FAIL  ') +
+      '...and the banner says what is written down');
+    if (!listsIt) failures.push('the banner does not say what is recorded: ' + said.slice(0, 120));
+
+    // Selections happen in the browser and reach the server only because the
+    // page says so. A page that reported them for an unwatched account would
+    // be building a record nobody agreed to, so both directions matter.
+    {
+      const realFetch = sandbox.fetch;
+      const sent = [];
+      sandbox.fetch = async (url, init) => {
+        sent.push(String(url));
+        return { status: 200, json: async () => bodyFor(url) };
+      };
+      sandbox.authed = true;
+      sandbox.focusPlayer = '';
+      sandbox.setFocus('Steve');
+      const told = sent.some((u) => u.startsWith('/api/activity/watch')
+        && /kind=player/.test(u) && /subject=Steve/.test(u));
+      console.log((told ? '  PASS  ' : '  FAIL  ') +
+        'selecting a player on the map is written down for a watched account');
+      if (!told) failures.push('the selection was not reported: ' + sent.join(' '));
+
+      sent.length = 0;
+      sandbox.me = { username: 'mod', owner: false, access: { activity: 'write' },
+                     linkedPlayer: '', audited: false };
+      sandbox.focusPlayer = '';
+      sandbox.setFocus('Steve');
+      const silent = !sent.some((u) => u.startsWith('/api/activity/watch'));
+      console.log((silent ? '  PASS  ' : '  FAIL  ') +
+        '...and not for an account nobody is recording');
+      if (!silent) failures.push('an unwatched account was reported on');
+      sandbox.focusPlayer = '';
+      sandbox.fetch = realFetch;
+    }
 
     sandbox.me = { username: 'mod', owner: false, access: { activity: 'write' },
                    linkedPlayer: '', audited: false };

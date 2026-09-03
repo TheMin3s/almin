@@ -321,6 +321,7 @@ public final class WebUi {
         http.createContext("/api/file/download", ui.guard("/api/file/download", ui::handleFileDownload));
         http.createContext("/api/fetch", ui.guard("/api/fetch", ui::handleFetch));
         http.createContext("/api/activity", ui.guard("/api/activity", ui::handleActivity));
+        http.createContext(WATCH_ROUTE, ui.guard(WATCH_ROUTE, ui::handleActivityWatch));
         http.createContext("/api/track", ui.guard("/api/track", ui::handleTrack));
         http.createContext("/api/map", ui.guard("/api/map", ui::handleMap));
         http.createContext("/api/bluemap", ui.guard("/api/bluemap", ui::handleBlueMap));
@@ -459,6 +460,19 @@ public final class WebUi {
      * new one, which spends the owner's money and sends player data to a third
      * party. A read-only account gets the first and not the second.
      */
+    /**
+     * Where the panel says what somebody looked at.
+     *
+     * <p>The other activity routes record themselves: the gate below knows
+     * which menu they belong to and writes a line for a watched account. This
+     * one exists because most of what a person does in the Activity menu never
+     * reaches the server at all \u2014 focusing a player, opening a group of
+     * marks, scrubbing to a moment, sitting on the map for twenty minutes \u2014
+     * and a record of what somebody looked at that omits all of that is a
+     * record of the wrong thing.
+     */
+    private static final String WATCH_ROUTE = "/api/activity/watch";
+
     private static final java.util.Map<String, String> ROUTE_MENU = java.util.Map.ofEntries(
         java.util.Map.entry("/api/console", "term"),
         java.util.Map.entry("/api/exec", "term"),
@@ -487,6 +501,7 @@ public final class WebUi {
         java.util.Map.entry("/api/client", "players"),
         java.util.Map.entry("/api/client/review", "players"),
         java.util.Map.entry("/api/activity", "activity"),
+        java.util.Map.entry(WATCH_ROUTE, "activity"),
         java.util.Map.entry("/api/track", "activity"),
         java.util.Map.entry("/api/map", "activity"),
         java.util.Map.entry("/api/bluemap", "activity"),
@@ -2503,6 +2518,31 @@ public final class WebUi {
         }
     }
 
+    /**
+     * The panel saying what somebody selected, or that they are still here.
+     *
+     * <p>The writing happened in the gate, which is where every other activity
+     * route is recorded from and the only place that cannot be forgotten. All
+     * that is left is to say yes, and to say nothing about whether anything
+     * was written down \u2014 an account that could tell whether it is being
+     * recorded by watching the answers would be an account that knows when to
+     * behave.
+     */
+    private void handleActivityWatch(HttpExchange ex) throws IOException {
+        try {
+            if (!"POST".equals(ex.getRequestMethod())) {
+                json(ex, 405, err("Use POST."));
+                return;
+            }
+            if (!requireAuth(ex)) return;
+            json(ex, 200, "{\"ok\":true}");
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
     private String activityJson() {
         AlminConfig cfg = AlminConfig.get();
         JsonArray arr = new JsonArray();
@@ -4159,12 +4199,16 @@ public final class WebUi {
         // Not signed in at all: leave it to the handler, which knows whether
         // this route needs a session and answers in its own words.
         if (me == null) return true;
-        boolean write = changing(ex.getRequestMethod());
+        // The one route a read-only account must still be allowed to POST to:
+        // it is how the record of their reading gets written, and an account
+        // that could not write it would simply not be recorded.
+        boolean write = changing(ex.getRequestMethod()) && !WATCH_ROUTE.equals(route(ex));
         if (write ? me.canWrite(menu) : me.canRead(menu)) {
             // Recorded here rather than in the handlers for the same reason
             // the check is here: one gate, and no route that forgot.
             if (menu.equals("activity")) {
-                PanelAudit.note(me, PanelAudit.describe(route(ex)), about(ex));
+                if (WATCH_ROUTE.equals(route(ex))) noteWatched(me, ex);
+                else PanelAudit.note(me, PanelAudit.describe(route(ex)), about(ex));
             }
             return true;
         }
@@ -4174,6 +4218,83 @@ public final class WebUi {
         json(ex, 403, err(said));
         ex.close();
         return false;
+    }
+
+    /**
+     * How many things one account may have written down in a minute.
+     *
+     * <p>The record exists to be read by the person who granted the menu, and
+     * the obvious way to spoil it is to fill it with noise until the
+     * interesting line has fallen off the end. Clicking at human speed is far
+     * under this; a script is not, and a script hits the cap and is told so in
+     * the record itself.
+     */
+    private static final int WATCH_PER_MINUTE = 30;
+
+    private static final java.util.Map<String, long[]> watchRate =
+        java.util.Collections.synchronizedMap(new java.util.HashMap<>());
+
+    /** What each kind of selection is called where a person reads it. */
+    private static String watchPhrase(String kind) {
+        return switch (kind) {
+            case "here"    -> "was in the activity menu";
+            case "player"  -> "looked at one player";
+            case "place"   -> "looked at a place on the map";
+            case "cluster" -> "opened a group of events";
+            case "scene"   -> "opened a build in 3D";
+            case "moment"  -> "jumped to a moment";
+            case "search"  -> "searched the log";
+            case "summary" -> "read the summary";
+            default        -> "used the activity menu";
+        };
+    }
+
+    /**
+     * Writes down one thing the panel says somebody selected.
+     *
+     * <p>The kind is put through {@link #watchPhrase} rather than written as
+     * it arrives, so a browser cannot invent a sentence for the record. The
+     * subject is free text because it has to be \u2014 a player's name, a
+     * place, a search \u2014 and it is clamped and marked as the browser's
+     * word rather than the server's.
+     */
+    private void noteWatched(Accounts.Account me, HttpExchange ex) {
+        if (me == null || me.owner() || !me.auditActivity()) return;
+        java.util.Map<String, String> q = query(ex);
+        String kind = q.getOrDefault("kind", "");
+        String subject = q.getOrDefault("subject", "");
+        long now = System.currentTimeMillis();
+        long[] seen = watchRate.computeIfAbsent(me.id(), k -> new long[]{now, 0});
+        synchronized (watchRate) {
+            if (now - seen[0] > 60_000L) { seen[0] = now; seen[1] = 0; }
+            seen[1]++;
+            if (seen[1] == WATCH_PER_MINUTE + 1) {
+                PanelAudit.note(me, "sent more than the panel does", "rate limited");
+            }
+            if (seen[1] > WATCH_PER_MINUTE) return;
+        }
+        if (subject.length() > 120) subject = subject.substring(0, 120);
+        PanelAudit.note(me, watchPhrase(kind), subject);
+    }
+
+    /** The query string as a map, for the few routes that read more than one. */
+    private static java.util.Map<String, String> query(HttpExchange ex) {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        try {
+            String q = ex.getRequestURI().getRawQuery();
+            if (q == null) return out;
+            for (String part : q.split("&")) {
+                int eq = part.indexOf('=');
+                if (eq <= 0) continue;
+                out.put(java.net.URLDecoder.decode(part.substring(0, eq),
+                            java.nio.charset.StandardCharsets.UTF_8),
+                        java.net.URLDecoder.decode(part.substring(eq + 1),
+                            java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (RuntimeException e) {
+            return out;
+        }
+        return out;
     }
 
     /** The registered path this request arrived on. */
