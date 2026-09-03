@@ -56,6 +56,7 @@ public class Almin implements ModInitializer {
             PlayerTracks.init(server);
             BlockTextures.init(server);
             ServerAutoUpdater.reset();
+            UpdateSchedule.init(server.getServerDirectory());
         });
         // Once the levels are loaded, and not before: the check needs the
         // overworld's seed, and while the server is still starting there is
@@ -81,6 +82,10 @@ public class Almin implements ModInitializer {
         // player-count check and jar swap both happen on this server thread.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
             .register(ServerAutoUpdater::tick);
+        // An update somebody asked for later. Also a null check until then;
+        // the chat warning and the install both need the server thread.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
+            .register(UpdateSchedule::tick);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             Dashboard.markStarted();
             ConsoleTap.start(server);

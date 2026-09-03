@@ -2598,11 +2598,14 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   check('a face that has stopped moving says since when', () => {
     const el = stub('g');
+    const at = Date.now() - 240000;
     el.getAttribute = (k) => ({ 'data-who': 'Mika', 'data-state': 'afk',
-                                'data-at': String(Date.now() - 240000),
-                                'data-still': '240' })[k];
+                                'data-at': String(at), 'data-still': '240' })[k];
     const said = sandbox.headStory(el);
-    return /not moving for/.test(said) && /since \d/.test(said)
+    // Against the formatter rather than against a shape: within ten minutes
+    // of midnight the moment falls on the day before and picks up a date,
+    // which used to fail this for reasons that were nothing to do with it.
+    return /not moving for/.test(said) && said.includes('since ' + sandbox.fmtWhen(at))
       ? true : 'it said: ' + said;
   });
 
@@ -3432,6 +3435,92 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
   } catch (e) {
     console.log('  FAIL  no countdown without a relaunch  -> ' + e.message);
     failures.push('no relaunch: ' + e.message);
+  }
+
+  // ---- putting an update off ----
+  // Four in the afternoon is the wrong time to take a server away. The two
+  // answers people want are "when nobody is on" and "at a time I picked", and
+  // they combine into "at four in the morning, and if somebody is still up,
+  // once they have gone".
+  {
+    const wasUpdate = responses['/api/update'];
+    check('the clock face is turned into an instant, on the right day', () => {
+      const at = sandbox.nextClock('04:00');
+      if (!at) return 'it did not read a time at all';
+      const d = new Date(at);
+      if (d.getHours() !== 4 || d.getMinutes() !== 0) return 'it landed at ' + d.toTimeString();
+      if (at <= Date.now()) return 'it scheduled something in the past';
+      // Never further off than tomorrow: a time today that has not gone is
+      // today's, and one that has is tomorrow's.
+      return at - Date.now() < 25 * 3600e3 ? true : 'it went further than tomorrow';
+    });
+    check('...and nonsense is refused rather than guessed at', () =>
+      sandbox.nextClock('25:00') === 0 && sandbox.nextClock('') === 0
+        && sandbox.nextClock('half four') === 0
+        ? true : 'it invented a time');
+
+    sandbox.tab = 'settings'; sandbox.settingsTab = 'almin';
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    check('an available update can be put off as well as installed', () =>
+      byId.get('s-later') && byId.get('s-later').disabled === false
+        ? true : 'the button is missing or dead');
+
+    const sent = [];
+    const realFetch = sandbox.fetch;
+    sandbox.fetch = async (url, init) => {
+      if (String(url) === '/api/update' && init && init.body) sent.push(JSON.parse(init.body));
+      return { status: 200, json: async () => ({ ok: true, message: 'Scheduled.' }) };
+    };
+    sandbox.scheduleDialog();
+    check('...but not without saying when', () =>
+      byId.get('sch-go').disabled === true
+        ? true : 'it offered to schedule nothing in particular');
+    byId.get('sch-timed').checked = true;
+    byId.get('sch-at').value = '04:00';
+    byId.get('sch-timed').onchange();
+    check('...and it says which day that lands on', () =>
+      /\d/.test(byId.get('sch-when').textContent || '')
+        && byId.get('sch-go').disabled === false
+        ? true : 'it left "04:00" to mean whatever the reader assumed');
+    byId.get('sch-empty').checked = true;
+    byId.get('sch-empty').onchange();
+    await byId.get('sch-go').onclick();
+    sandbox.fetch = realFetch;
+    check('what it asks the server for is a time and a condition', () => {
+      const asked = sent[sent.length - 1];
+      if (!asked) return 'nothing was sent';
+      if (asked.action !== 'schedule') return 'it sent ' + asked.action;
+      if (asked.whenEmpty !== true) return 'the empty-server half was dropped';
+      const d = new Date(asked.at);
+      return d.getHours() === 4 && asked.at > Date.now()
+        ? true : 'it sent ' + new Date(asked.at).toString();
+    });
+    sandbox.closeModal();
+
+    responses['/api/update'] = { current: '2.5.0', repo: 'a/b', status: 'available',
+      latest: '2.6.0', hasJar: true,
+      scheduled: { at: clock + 5 * 3600e3, whenEmpty: true, version: '2.6.0',
+                   by: 'moderator', madeAt: clock, warnMinutes: 5 } };
+    await sandbox.loadUpdate(true);
+    check('a waiting update says so, and says what it is waiting for', () => {
+      const said = deepText(byId.get('s-update'));
+      if (!/scheduled/.test(said)) return 'nothing said it was scheduled';
+      if (!/2\.6\.0/.test(said)) return 'it did not say which version';
+      if (!/nobody is online/.test(said)) return 'it did not say what it waits for';
+      return /moderator/.test(said) ? true : 'it did not say who asked for it';
+    });
+    check('...and can be called off from the same place', () => {
+      const off = deepAll(byId.get('s-update'), (e) => e.tagName === 'button');
+      return off.length === 1 && /Cancel/.test(off[0].textContent || '')
+        ? true : 'there is no way to cancel it';
+    });
+    check('...and the shut fold says it too', () =>
+      /2\.6\.0 scheduled/.test(byId.get('f-version-h').textContent || '')
+        ? true : 'the heading said "' + byId.get('f-version-h').textContent + '"');
+
+    responses['/api/update'] = wasUpdate;
+    await sandbox.loadUpdate(true);
   }
 
   // ---- asking the model things (all of these go over the wire) ----

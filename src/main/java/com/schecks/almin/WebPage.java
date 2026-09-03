@@ -7486,6 +7486,7 @@ final class WebPage {
             '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
             '<button class="btn" id="s-check">Check again</button>'+
             '<button class="btn go" id="s-apply" disabled>Download &amp; install</button>'+
+            '<button class="btn" id="s-later" disabled>Install later\u2026</button>'+
             '<button class="btn" id="s-clearlog">Clear Almin log</button></div>'+
             '<div class="msg" id="s-upmsg"></div>'+FOLDEND+'</section>'+
             '<section>'+fold('f-relaunch','Restarting','what Start and Restart run')+
@@ -7574,6 +7575,7 @@ final class WebPage {
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
             $('s-apply').onclick=updateDialog;
+            $('s-later').onclick=scheduleDialog;
             $('s-clearlog').onclick=clearLog;
             $('s-reload').onclick=reloadConfig;
             $('s-find').oninput=paintKeys;
@@ -8373,6 +8375,127 @@ final class WebPage {
 
         """;
 
+    /**
+     * Putting an update off until later.
+     *
+     * <p>Its own piece because the constants each have a 64KB ceiling and the
+     * settings piece was the fullest of them.
+     */
+    private static final String PARTUPDATE = """
+
+        // ---- installing an update later ----
+        /**
+         * The next time the clock reads this.
+         *
+         * <p>Worked out here rather than sent as "04:00", because the browser
+         * is where somebody typed four in the morning and it is the only party
+         * that knows which four in the morning they meant. The server is told
+         * an instant and never a clock face.
+         */
+        function nextClock(hhmm){
+          const m=/^(\\d{1,2}):(\\d{2})$/.exec(hhmm||'');
+          if(!m) return 0;
+          const h=+m[1], min=+m[2];
+          if(h>23||min>59) return 0;
+          const d=new Date(); d.setHours(h,min,0,0);
+          // A time that has just gone is tomorrow's, not one already missed.
+          if(d.getTime()<=Date.now()+30000) d.setDate(d.getDate()+1);
+          return d.getTime();
+        }
+
+        /** How a plan reads in the Version section and in the dialog. */
+        function describePlan(p){
+          if(!p) return '';
+          const when=p.at>0
+            ? fmtWhen(p.at)+(p.whenEmpty?', once nobody is online':'')
+            : 'the next time nobody is online';
+          const left=p.at>0?Math.max(0,p.at-Date.now()):0;
+          return 'v'+esc(p.version||'?')+' installs '+when+
+            (p.at>0?' \u2014 in '+shortSpan(left):'')+'.';
+        }
+
+        /**
+         * Choosing when.
+         *
+         * <p>Two conditions, and they combine: a time, an empty server, or a
+         * time after which it waits for an empty server. Nothing here can be
+         * left as "when it feels like it" \u2014 with neither ticked there is
+         * already a button for installing now.
+         */
+        function scheduleDialog(){
+          const have=(updateInfo&&updateInfo.latest)?'v'+updateInfo.latest:'the new version';
+          const warn=(updateInfo&&updateInfo.scheduled&&updateInfo.scheduled.warnMinutes)||5;
+          modal('Install '+have+' later',(body,close)=>{
+            body.innerHTML=
+              '<p>Install <b>'+esc(have)+'</b> and restart the server, but not now.</p>'+
+              '<div class="cfggroup" style="margin:12px 0">'+
+                '<div class="cfgrow"><div>'+
+                  '<label style="display:flex;gap:8px;align-items:center">'+
+                  '<input type="checkbox" id="sch-timed" style="width:auto">'+
+                  '<span>At a time</span></label>'+
+                  '<div class="muted" id="sch-when">the next time the clock reads this</div>'+
+                '</div><div class="cfgctl">'+
+                  '<input type="time" id="sch-at" value="04:00" style="width:120px"></div></div>'+
+                '<div class="cfgrow"><div>'+
+                  '<label style="display:flex;gap:8px;align-items:center">'+
+                  '<input type="checkbox" id="sch-empty" style="width:auto">'+
+                  '<span>Only when nobody is online</span></label>'+
+                  '<div class="muted">Waits however long that takes. With a time as well, '+
+                  'the time comes first and then it waits.</div>'+
+                '</div><div class="cfgctl"></div></div>'+
+              '</div>'+
+              '<p class="muted">Players are told in chat '+warn+' minutes before, and again '+
+              'at one minute. This panel goes down with the server and comes back on its '+
+              'own \u2014 whoever is looking at it then does not have to reload.</p>'+
+              '<div class="row2"><button class="btn go" id="sch-go">Schedule it</button>'+
+              '<button class="btn" id="sch-no">Cancel</button></div>'+
+              '<div class="msg" id="sch-msg"></div>';
+            const timed=$('sch-timed'), at=$('sch-at'), empty=$('sch-empty'), go=$('sch-go');
+            // Saying when it lands, in words, under the field: "04:00" is not
+            // a date and half the point of a schedule is knowing which day.
+            const shown=()=>{
+              const when=timed.checked?nextClock(at.value):0;
+              $('sch-when').textContent=!timed.checked
+                ? 'the next time the clock reads this'
+                : when?(fmtWhen(when)+' \u2014 in '+shortSpan(Math.max(0,when-Date.now())))
+                      :'that is not a time';
+              go.disabled=!(when||empty.checked);
+              $('sch-msg').textContent=go.disabled
+                ? 'Pick a time, or tick waiting for an empty server.' : '';
+              $('sch-msg').className='msg';
+            };
+            timed.onchange=shown; at.oninput=shown; empty.onchange=shown;
+            shown();
+            $('sch-no').onclick=close;
+            go.onclick=async()=>{
+              const when=timed.checked?nextClock(at.value):0;
+              if(!when && !empty.checked) return;
+              go.disabled=true;
+              const r=await jpost('/api/update',
+                {action:'schedule',at:when,whenEmpty:!!empty.checked});
+              const msg=$('sch-msg');
+              const ok=r.status===200 && r.body && r.body.ok;
+              msg.className='msg '+(ok?'ok':'err');
+              msg.textContent=ok?(r.body.message||'Scheduled.'):((r.body&&r.body.message)||why(r));
+              if(!ok){ go.disabled=false; return; }
+              loadUpdate(true);
+              setTimeout(close,1400);
+            };
+          });
+        }
+
+        async function cancelSchedule(){
+          const msg=$('s-upmsg');
+          const r=await jpost('/api/update',{action:'cancel'});
+          if(msg){
+            msg.className='msg '+(r.status===200?'ok':'err');
+            msg.textContent=r.status===200?((r.body&&r.body.message)||'Cancelled.'):why(r);
+          }
+          loadUpdate(true);
+        }
+
+        """;
+
     private static final String PARTSETTINGS = """
 
         // ---- Minecraft's own settings ----
@@ -8475,8 +8598,10 @@ final class WebPage {
         }
         let updateInfo=null;
         async function loadUpdate(force){
-          const box=$('s-update'), apply=$('s-apply'); if(!box) return;
-          box.textContent='checking…'; if(apply) apply.disabled=true;
+          const box=$('s-update'), apply=$('s-apply'), later=$('s-later'); if(!box) return;
+          box.textContent='checking…';
+          if(apply) apply.disabled=true;
+          if(later) later.disabled=true;
           // Without force the server answers from a five-minute cache, so
           // opening this tab doesn't call GitHub every time.
           const r=await jget('/api/update'+(force?'?force=1':''));
@@ -8494,9 +8619,28 @@ final class WebPage {
             box.innerHTML=head+' — <span class="state warn">v'+esc(b.latest)+' available</span>'+
               (b.hasJar?'':' <span class="muted">(no jar attached to that release)</span>');
             if(apply) apply.disabled=!b.hasJar;
+            if(later) later.disabled=!b.hasJar;
             foldHint('f-version','v'+b.latest+' available');
           } else { box.innerHTML=head+' — check failed: '+esc(b.reason||'unknown');
             foldHint('f-version','v'+b.current+' · check failed');
+          }
+          // Whatever the check said, an update somebody put off is the most
+          // important thing this section has to tell them, so it goes last and
+          // brings the way to call it off with it.
+          if(b.scheduled){
+            const line=document.createElement('div');
+            line.style.marginTop='8px';
+            line.innerHTML='<span class="state warn">scheduled</span> '+
+              describePlan(b.scheduled)+
+              (b.scheduled.by?(' <span class="muted">asked by '+esc(b.scheduled.by)+
+                               '</span>'):'');
+            const off=document.createElement('button');
+            off.className='btn'; off.textContent='Cancel it';
+            off.style.marginLeft='8px';
+            off.onclick=cancelSchedule;
+            line.appendChild(off);
+            box.appendChild(line);
+            foldHint('f-version','v'+b.scheduled.version+' scheduled');
           }
         }
         /**
@@ -9539,5 +9683,5 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTSETTINGS);
+        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTUPDATE, PARTSETTINGS);
 }

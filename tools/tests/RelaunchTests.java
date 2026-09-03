@@ -369,8 +369,83 @@ public class RelaunchTests {
         ck("/almin op restart restarts too", cmd.contains("ServerRelaunch.arm(\"/almin op restart\")"),
             "no arm");
 
+        // ---- an update somebody asked for later ----
+        // Two conditions that combine: a time, an empty server, or a time
+        // after which it waits for one. Nothing about it may install without
+        // the people on the server having been told first.
+        Class<?> sched = Class.forName("com.schecks.almin.UpdateSchedule");
+        Class<?> planType = Class.forName("com.schecks.almin.UpdateSchedule$Plan");
+        Constructor<?> plan = planType.getDeclaredConstructor(
+            long.class, boolean.class, String.class, String.class, long.class, int.class);
+        Method due = planType.getDeclaredMethod("due", long.class, int.class);
+        long fourAm = 1_700_000_000_000L;
+
+        Object timed = plan.newInstance(fourAm, false, "2.53.0", "mod", 1L, 0);
+        ck("a timed update waits for its time",
+            !(Boolean) due.invoke(timed, fourAm - 1000, 0), "went early");
+        ck("...and does not care who is online when it comes",
+            (Boolean) due.invoke(timed, fourAm, 3), "refused to run");
+
+        Object empty = plan.newInstance(0L, true, "2.53.0", "mod", 1L, 0);
+        ck("an empty-server update waits for the last player",
+            !(Boolean) due.invoke(empty, fourAm, 1), "kicked somebody");
+        ck("...and goes the moment they leave",
+            (Boolean) due.invoke(empty, fourAm, 0), "kept waiting");
+
+        Object both = plan.newInstance(fourAm, true, "2.53.0", "mod", 1L, 0);
+        ck("both together means the time and then the wait",
+            !(Boolean) due.invoke(both, fourAm - 1, 0)
+                && !(Boolean) due.invoke(both, fourAm + 1, 2)
+                && (Boolean) due.invoke(both, fourAm + 1, 0), "the two conditions do not combine");
+
+        Path schedDir = Files.createDirectories(dir.resolve("sched"));
+        Method init = sched.getDeclaredMethod("init", Path.class);
+        Method set = sched.getDeclaredMethod("set", planType);
+        Method get = sched.getDeclaredMethod("get");
+        Method clear = sched.getDeclaredMethod("clear");
+        init.invoke(null, schedDir);
+        set.invoke(null, both);
+        init.invoke(null, schedDir);
+        Object read = get.invoke(null);
+        ck("a plan survives the restart it is waiting through",
+            read != null && read.equals(both), String.valueOf(read));
+        clear.invoke(null);
+        init.invoke(null, schedDir);
+        ck("cancelling it leaves nothing behind",
+            get.invoke(null) == null
+                && !Files.exists(schedDir.resolve("config").resolve("almin")
+                    .resolve("update-schedule.json")), "the file outlived the plan");
+
+        String plan5 = src("UpdateSchedule.java");
+        ck("players are told before the server goes",
+            plan5.contains("5 * 60_000L") && plan5.contains("broadcastSystemMessage")
+                && plan5.contains("The server restarts in"), "no warning");
+        ck("...and the plan is cleared before the install that restarts into it",
+            plan5.indexOf("plan = null; warned = 0; save();")
+                < plan5.indexOf("fire(server, p)"), "a reboot loop is possible");
+        ck("what is installed is whatever is newest when it comes due",
+            plan5.contains("UpdateChecker.checkAsync()")
+                && plan5.contains("installAsked"), "it installs a stale release");
+        ck("a check that fails at four in the morning is retried, not dropped",
+            plan5.contains("MAX_TRIES") && plan5.contains("RETRY_MS"), "one failure ends it");
+        ck("the schedule is offered the server tick",
+            almin.contains("register(UpdateSchedule::tick)")
+                && almin.contains("UpdateSchedule.init("), "not wired");
+        ck("an asked-for update does not consult the auto-update setting",
+            upd.contains("!next.asked() && !AlminConfig.get().autoUpdate")
+                && upd.contains("!asked && !AlminConfig.get().autoUpdate"),
+            "auto-update off would cancel it");
+        ck("...and still refuses to kick somebody who joined mid-download",
+            upd.contains("if (shouldWait(ready, server.getPlayerCount()))"), "no final check");
+
         String page = src("WebPage.java");
         ck("the page reloads itself onto a new version", page.contains("location.reload()"), "");
+        ck("the panel offers to put an update off",
+            page.contains("Install later") && page.contains("action:'schedule'")
+                && page.contains("whenEmpty:") && page.contains("nextClock("),
+            "no way to schedule one");
+        ck("...and to call it off again",
+            page.contains("action:'cancel'") && page.contains("Cancel it"), "no way out");
         ck("...and waits out the gap instead of calling it an error",
             page.contains("awaitingReturn"), "");
     }

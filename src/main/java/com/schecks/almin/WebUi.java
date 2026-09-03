@@ -2127,6 +2127,17 @@ public final class WebUi {
             if (!requireAuthSecure(ex)) return;
             if (!requireServer(ex)) return;
             JsonObject body = readBody(ex);
+            String action = body.has("action") ? body.get("action").getAsString() : "install";
+            if ("schedule".equals(action)) { json(ex, 200, scheduleUpdateJson(ex, body)); return; }
+            if ("cancel".equals(action)) {
+                UpdateSchedule.clear();
+                updateJson = "";
+                JsonObject o = new JsonObject();
+                o.addProperty("ok", true);
+                o.addProperty("message", "The scheduled update is cancelled.");
+                json(ex, 200, o.toString());
+                return;
+            }
             // A new jar on disk changes nothing until the server runs it, so
             // restarting is the default rather than an afterthought. Pass
             // {"restart": false} to install now and apply it later.
@@ -2145,6 +2156,17 @@ public final class WebUi {
         o.addProperty("repo", AlminConfig.get().updateRepo);
         String queued = ServerAutoUpdater.pendingVersion();
         if (!queued.isEmpty()) o.addProperty("queued", queued);
+        UpdateSchedule.Plan plan = UpdateSchedule.get();
+        if (plan != null) {
+            JsonObject p = new JsonObject();
+            p.addProperty("at", plan.at());
+            p.addProperty("whenEmpty", plan.whenEmpty());
+            p.addProperty("version", plan.version());
+            p.addProperty("by", plan.by());
+            p.addProperty("madeAt", plan.madeAt());
+            p.addProperty("warnMinutes", UpdateSchedule.WARN_AT_MS[0] / 60000L);
+            o.add("scheduled", p);
+        }
         try {
             UpdateChecker.CheckResult r =
                 UpdateChecker.checkAsync().get(UPDATE_CHECK_MS, TimeUnit.MILLISECONDS);
@@ -2167,6 +2189,71 @@ public final class WebUi {
             o.addProperty("status", "failed");
             o.addProperty("reason", "check timed out or failed: " + e.getClass().getSimpleName());
         }
+        return o.toString();
+    }
+
+    /** The furthest ahead an update may be put off. */
+    private static final long SCHEDULE_LIMIT_MS = 60L * 86_400_000L;
+
+    /**
+     * Puts an update off until a time, an empty server, or both.
+     *
+     * <p>The instant arrives from the browser already worked out, because the
+     * browser is where "four in the morning" was typed and it is the only
+     * party that knows which four in the morning that was. The server stores
+     * an instant and never a clock face.
+     */
+    private String scheduleUpdateJson(HttpExchange ex, JsonObject body) {
+        JsonObject o = new JsonObject();
+        long at = body.has("at") ? body.get("at").getAsLong() : 0L;
+        boolean whenEmpty = body.has("whenEmpty") && body.get("whenEmpty").getAsBoolean();
+        long now = System.currentTimeMillis();
+        if (at <= 0 && !whenEmpty) {
+            o.addProperty("ok", false);
+            o.addProperty("message", "Say when: a time, an empty server, or both.");
+            return o.toString();
+        }
+        // A minute's grace, because the browser worked the instant out a
+        // moment before it sent it.
+        if (at > 0 && at < now - 60_000L) {
+            o.addProperty("ok", false);
+            o.addProperty("message", "That time has already passed.");
+            return o.toString();
+        }
+        if (at > now + SCHEDULE_LIMIT_MS) {
+            o.addProperty("ok", false);
+            o.addProperty("message", "That is more than two months away.");
+            return o.toString();
+        }
+        UpdateChecker.CheckResult r;
+        try {
+            r = UpdateChecker.checkAsync().get(UPDATE_CHECK_MS, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            o.addProperty("ok", false);
+            o.addProperty("message", "Update check failed: " + e.getClass().getSimpleName());
+            return o.toString();
+        }
+        if (!(r instanceof UpdateChecker.UpdateAvailable ua)) {
+            o.addProperty("ok", false);
+            o.addProperty("message", r instanceof UpdateChecker.UpToDate ut
+                ? "Already on the latest version (" + ut.version() + ") — nothing to schedule."
+                : "Update check failed: " + ((UpdateChecker.CheckFailed) r).reason());
+            return o.toString();
+        }
+        if (!ua.release().hasJar()) {
+            o.addProperty("ok", false);
+            o.addProperty("message",
+                "Release " + ua.release().version() + " has no .jar asset to download.");
+            return o.toString();
+        }
+        Accounts.Account me = who(ex);
+        UpdateSchedule.Plan plan = new UpdateSchedule.Plan(at, whenEmpty,
+            ua.release().version(), me == null ? "" : me.username(), now, 0);
+        UpdateSchedule.set(plan);
+        updateJson = "";
+        o.addProperty("ok", true);
+        o.addProperty("message", "Scheduled: " + plan.describe() + ".");
+        o.addProperty("version", plan.version());
         return o.toString();
     }
 
@@ -2236,6 +2323,9 @@ public final class WebUi {
         String removal = installed.message();
         AlminLog.info("[almin] web panel installed update {} ({} bytes) {}",
             rel.version(), fetched.bytes(), removal);
+        // Installing it now answers whatever was scheduled for later. Left in
+        // place it would come due, find nothing to do, and say so at 4am.
+        UpdateSchedule.clear();
         updateJson = "";
         o.addProperty("ok", true);
         o.addProperty("version", rel.version());

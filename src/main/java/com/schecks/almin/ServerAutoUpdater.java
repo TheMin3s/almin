@@ -25,7 +25,14 @@ public final class ServerAutoUpdater {
     private static final Logger CONSOLE = LoggerFactory.getLogger("almin");
     private static final AtomicBoolean WORKING = new AtomicBoolean();
 
-    private record Pending(UpdateChecker.Release release, Path staged, long bytes) {}
+    /**
+     * @param asked     somebody asked for this one, so the auto-update setting
+     *                  is not what decides whether it happens
+     * @param whenEmpty for an asked one, whether it still waits for the server
+     *                  to be empty; automatic ones follow the config instead
+     */
+    private record Pending(UpdateChecker.Release release, Path staged, long bytes,
+                           boolean asked, boolean whenEmpty) {}
 
     private static volatile Pending pending;
 
@@ -56,36 +63,58 @@ public final class ServerAutoUpdater {
         }
 
         if (shouldWaitForPlayers(server.getPlayerCount())) {
-            queue(new Pending(release, null, 0));
+            queue(new Pending(release, null, 0, false, false));
             CONSOLE.warn("[Almin] Update {} is ready and will install after the last player "
                 + "leaves.", release.version());
             AlminLog.info("[almin] auto-update {} queued until the server is empty",
                 release.version());
             return;
         }
-        download(server, release);
+        download(server, release, false, false);
+    }
+
+    /**
+     * Installs a release because somebody asked for it at this moment — the
+     * scheduled-update path.
+     *
+     * <p>Told apart from the automatic one all the way through: it does not
+     * consult {@code auto-update}, which is a question about what the server
+     * does on its own and not about what an admin just asked for, and it waits
+     * for an empty server only if that is what they asked for.
+     */
+    public static void installAsked(MinecraftServer server, UpdateChecker.Release release,
+                                    boolean whenEmpty) {
+        download(server, release, true, whenEmpty);
     }
 
     /** Called every server tick; it is a nearly-free null check until queued. */
     public static void tick(MinecraftServer server) {
         Pending next = pending;
         if (next == null || WORKING.get()) return;
-        if (!AlminConfig.get().autoUpdate) {
+        if (!next.asked() && !AlminConfig.get().autoUpdate) {
             pending = null;
             deleteQuietly(next.staged());
             AlminLog.info("[almin] cancelled queued auto-update because auto-update is off");
             return;
         }
-        if (shouldWaitForPlayers(server.getPlayerCount())) return;
+        if (shouldWait(next, server.getPlayerCount())) return;
 
         pending = null;
-        if (next.staged() == null) download(server, next.release());
+        if (next.staged() == null) download(server, next.release(), next.asked(), next.whenEmpty());
         else finish(server, next);
     }
 
     /** Package-visible so the offline suite can prove the waiting policy. */
     static boolean shouldWaitForPlayers(int players) {
         return AlminConfig.get().autoUpdateWhenEmpty && players > 0;
+    }
+
+    /**
+     * An update somebody asked for carries its own answer to this. Only the
+     * automatic ones read it out of the config.
+     */
+    private static boolean shouldWait(Pending p, int players) {
+        return p.asked() ? p.whenEmpty() && players > 0 : shouldWaitForPlayers(players);
     }
 
     /** Version waiting for an empty server, or an empty string when none is queued. */
@@ -114,9 +143,10 @@ public final class ServerAutoUpdater {
         }
     }
 
-    private static void download(MinecraftServer server, UpdateChecker.Release release) {
+    private static void download(MinecraftServer server, UpdateChecker.Release release,
+                                 boolean asked, boolean whenEmpty) {
         if (!WORKING.compareAndSet(false, true)) {
-            queue(new Pending(release, null, 0));
+            queue(new Pending(release, null, 0, asked, whenEmpty));
             return;
         }
 
@@ -132,16 +162,17 @@ public final class ServerAutoUpdater {
         }
         deleteQuietly(staged);
 
-        CONSOLE.warn("[Almin] Auto-update: downloading {} ...", release.version());
-        AlminLog.info("[almin] auto-update: staging {} -> mods/{}",
-            release.version(), staged.getFileName());
+        CONSOLE.warn("[Almin] {}: downloading {} ...",
+            asked ? "Scheduled update" : "Auto-update", release.version());
+        AlminLog.info("[almin] {}: staging {} -> mods/{}",
+            asked ? "scheduled update" : "auto-update", release.version(), staged.getFileName());
         FileFetcher.fetchAsync(release.jarUrl(), staged, serverDir).whenComplete((fr, error) ->
-            server.execute(() -> downloaded(server, release, staged, fr, error)));
+            server.execute(() -> downloaded(server, release, staged, fr, error, asked, whenEmpty)));
     }
 
     private static void downloaded(MinecraftServer server, UpdateChecker.Release release,
                                    Path staged, FileFetcher.FetchResult fetched,
-                                   Throwable error) {
+                                   Throwable error, boolean asked, boolean whenEmpty) {
         if (error != null || fetched == null || !fetched.ok()) {
             String why = error != null ? error.toString()
                 : fetched == null ? "no result" : fetched.message();
@@ -161,19 +192,22 @@ public final class ServerAutoUpdater {
             WORKING.set(false);
             return;
         }
-        if (!AlminConfig.get().autoUpdate) {
+        if (!asked && !AlminConfig.get().autoUpdate) {
             deleteQuietly(staged);
             WORKING.set(false);
             return;
         }
-        if (shouldWaitForPlayers(server.getPlayerCount())) {
-            queue(new Pending(release, staged, fetched.bytes()));
+        Pending ready = new Pending(release, staged, fetched.bytes(), asked, whenEmpty);
+        // Somebody can join while a download is running, and the whole point
+        // of waiting for an empty server is not kicking them out of it.
+        if (shouldWait(ready, server.getPlayerCount())) {
+            queue(ready);
             WORKING.set(false);
             CONSOLE.warn("[Almin] Update {} finished downloading, but somebody joined; it "
                 + "will install after the server is empty again.", release.version());
             return;
         }
-        finish(server, new Pending(release, staged, fetched.bytes()));
+        finish(server, ready);
     }
 
     /** Runs on the server thread, after the final empty-server check. */
