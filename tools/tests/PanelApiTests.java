@@ -57,7 +57,9 @@ public class PanelApiTests {
                 {"/api/mods", "handleMods"},
                 {"/api/mods/icon", "handleModIcon"},
                 {"/api/file/mkdir", "handleFileMkdir"},
-                {"/api/files", "handleFiles"}}) {
+                {"/api/files", "handleFiles"},
+                {"/api/activity", "handleActivity"},
+                {"/api/config", "handleConfig"}}) {
             Method m = WebUi.class.getDeclaredMethod(r[1], HttpExchange.class);
             m.setAccessible(true);
             Method g = WebUi.class.getDeclaredMethod("guard", String.class,
@@ -81,6 +83,7 @@ public class PanelApiTests {
         gates();
         login();
         controls();
+        rows();
         heads();
         modIcons();
         mkdir();
@@ -95,6 +98,39 @@ public class PanelApiTests {
     static void set(String field, Object v) throws Exception {
         Field f = AlminConfig.class.getDeclaredField(field);
         f.setAccessible(true); f.set(cfg, v);
+    }
+
+    /**
+     * How much of the activity log the menu is given.
+     *
+     * <p>This was a constant, and the setting people reached for instead was
+     * the ceiling on the log — which changed nothing they could see and said
+     * nothing about why. The number is now a setting of its own, so what is
+     * worth checking is that changing it actually changes the answer.
+     */
+    static void rows() throws Exception {
+        var first = send("GET", "/api/activity", null, cookie);
+        ck("the activity menu says how many rows it shows", first.statusCode() == 200
+            && first.body().contains("\"rowsShown\":2000"), first.body());
+
+        var up = send("POST", "/api/config",
+            "{\"name\":\"activity-rows-shown\",\"value\":\"5000\"}", cookie);
+        ck("it can be raised (" + up.statusCode() + ")", up.statusCode() == 200, up.body());
+        var after = send("GET", "/api/activity", null, cookie);
+        ck("...and the menu is told the new number", after.body().contains("\"rowsShown\":5000"),
+            after.body());
+
+        var over = send("POST", "/api/config",
+            "{\"name\":\"activity-rows-shown\",\"value\":\"20001\"}", cookie);
+        ck("above the ceiling is refused", over.statusCode() != 200, over.body());
+        var under = send("POST", "/api/config",
+            "{\"name\":\"activity-rows-shown\",\"value\":\"50\"}", cookie);
+        ck("below the floor is refused", under.statusCode() != 200, under.body());
+        var still = send("GET", "/api/activity", null, cookie);
+        ck("...and neither changed it", still.body().contains("\"rowsShown\":5000"), still.body());
+
+        send("POST", "/api/config",
+            "{\"name\":\"activity-rows-shown\",\"value\":\"2000\"}", cookie);
     }
 
     /** Which UUIDs a server knows is not public information. */

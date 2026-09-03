@@ -445,7 +445,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'blueMapPayload', 'openBlueScene', 'inspectBlueWorld',
                     'fold', 'foldSetup', 'foldHint', 'paintKeys', 'cfgGroupOf',
                     'sceneTrails', 'sceneWalkers', 'sceneHolds', 'thinScenePath',
-                    'paintSceneWho']) {
+                    'paintSceneWho', 'sideLimit', 'sideRow', 'setRowsShown']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -1121,6 +1121,88 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     if (!/anyone seen my pickaxe/.test(html)) return 'the chat line is not there';
     if (!/afk/.test(html)) return 'afk is not shown as an action';
     return true;
+  });
+
+  // ---- how much of the log the menu shows ----
+  // It was a hundred and twenty, hard coded, and the setting people reached
+  // for instead was the ceiling on the log — which changed nothing they could
+  // see. The number is a setting now, and these are the two things that has
+  // to mean: the list obeys it, and it is reachable from where it is read.
+  check('the side list is not stuck at a hundred and twenty', () => {
+    const saved = sandbox.allData, at = sandbox.cursorAt, set = sandbox.cursorSet;
+    const now = Date.now(), acts = [];
+    for (let i = 0; i < 400; i++)
+      acts.push({ at: now - i * 1000, player: 'S', action: 'place', detail: 'Stone',
+                  dim: 'overworld', x: 0, y: 64, z: 0, count: 1 });
+    sandbox.allData = { ids: {}, tracks: {}, actions: acts, rowsShown: 2000 };
+    sandbox.cursorAt = now; sandbox.cursorSet = true;
+    sandbox.paintSide(acts);
+    const drawn = byId.get('t-side').children.length;
+    sandbox.allData = saved; sandbox.cursorAt = at; sandbox.cursorSet = set;
+    return drawn === 400 ? true : 'it drew ' + drawn + ' of 400';
+  });
+
+  check('...and stops where the server says it stops', () => {
+    const saved = sandbox.allData, at = sandbox.cursorAt, set = sandbox.cursorSet;
+    const now = Date.now(), acts = [];
+    for (let i = 0; i < 400; i++)
+      acts.push({ at: now - i * 1000, player: 'S', action: 'place', detail: 'Stone',
+                  dim: 'overworld', x: 0, y: 64, z: 0, count: 1 });
+    sandbox.allData = { ids: {}, tracks: {}, actions: acts, rowsShown: 250 };
+    sandbox.cursorAt = now; sandbox.cursorSet = true;
+    sandbox.paintSide(acts);
+    const drawn = byId.get('t-side').children.length;
+    const limit = sandbox.sideLimit();
+    sandbox.allData = saved; sandbox.cursorAt = at; sandbox.cursorSet = set;
+    if (limit !== 250) return 'sideLimit ignored the server and said ' + limit;
+    return drawn === 250 ? true : 'it drew ' + drawn + ' of a 250 limit';
+  });
+
+  {
+    // Reachable from where it is read. It lived only in Settings, beside the
+    // ceiling on the log, which is the setting people changed instead.
+    sandbox.tab = 'activity';
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                   audited: false };
+    const asOwner = deepText(sandbox.activityPanel());
+    check('how many rows to show is offered in the Activity menu', () =>
+      /id="a-rowcount"/.test(asOwner) && /2,000 rows|2000 rows/.test(asOwner)
+        ? true : 'the control is not in the menu');
+
+    sandbox.me = { username: 'mod', owner: false, access: { activity: 'read' },
+                   linkedPlayer: '', audited: false };
+    const asReader = deepText(sandbox.activityPanel());
+    check('...and not to an account the server would refuse it from', () =>
+      !/a-rowcount/.test(asReader) ? true : 'a reader was offered a setting');
+
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                   audited: false };
+    sandbox.activityPanel();
+    const realFetch = sandbox.fetch;
+    const sent = [];
+    sandbox.fetch = async (url, init) => {
+      let body = null;
+      try { body = init && init.body ? JSON.parse(init.body) : null; } catch (e) {}
+      sent.push({ url: String(url).split('?')[0], body });
+      return { status: 200, json: async () => bodyFor(url) };
+    };
+    byId.get('a-rowcount').value = '5000';
+    await sandbox.setRowsShown();
+    sandbox.fetch = realFetch;
+    check('...and choosing one writes the setting it says it writes', () => {
+      const put = sent.find((x) => x.url === '/api/config' && x.body
+        && x.body.name === 'activity-rows-shown');
+      return put && put.value !== null && put.body.value === '5000'
+        ? true : 'it sent: ' + JSON.stringify(sent.map((x) => x.body));
+    });
+  }
+
+  check('a server that says nothing gets two thousand, not a hundred', () => {
+    const saved = sandbox.allData;
+    sandbox.allData = { ids: {}, tracks: {}, actions: [] };
+    const limit = sandbox.sideLimit();
+    sandbox.allData = saved;
+    return limit === 2000 ? true : 'it fell back to ' + limit;
   });
 
   check('the side list respects the focus', () => {

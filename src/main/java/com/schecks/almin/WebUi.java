@@ -2416,19 +2416,36 @@ public final class WebUi {
 
     // ---------- routes: player activity ----------
 
-    /** Rows sent to a browser in one response. The page scrolls; it doesn't need all of them. */
-    private static final int ACTIVITY_ROWS = 500;
+    /**
+     * Rows sent to a browser in one response.
+     *
+     * <p>This was five hundred and fixed, which was the wrong shape of answer:
+     * how much of the log somebody wants in front of them is a property of
+     * their server and their evening, not of this file. It is
+     * {@code activity-rows-shown} now, and the one thing worth saying about it
+     * is what it is not — it does not decide how much is kept. Raising
+     * {@code activity-max-entries} to see more of the menu did nothing at all,
+     * and did it silently.
+     */
+    private static int rowsShown() {
+        int n = AlminConfig.get().activityRowsShown;
+        return n > 0 ? n : 2000;
+    }
 
     /**
      * Rows behind the map and the episode pass.
      *
-     * <p>More than the list gets, because the two are read differently: a list
-     * is scrolled and five hundred is already more than anyone reads, while
-     * the map is a picture of a period and five hundred rows of a busy evening
+     * <p>At least as many as the list gets, because the list is drawn from the
+     * map's period and a list that reached further back than the picture it
+     * sits beside would be showing rows the map cannot place. Above that
+     * floor the map wants more than the list does: a list is scrolled, while
+     * the map is a picture of a period and a thousand rows of a busy evening
      * is an hour of it. Marks are clustered when they crowd, so the extra rows
      * cost drawing time rather than legibility.
      */
-    private static final int MAP_ROWS = 2500;
+    private static int mapRows() {
+        return Math.max(2500, rowsShown());
+    }
 
     /**
      * The activity log: what ordinary players did.
@@ -2489,7 +2506,7 @@ public final class WebUi {
     private String activityJson() {
         AlminConfig cfg = AlminConfig.get();
         JsonArray arr = new JsonArray();
-        for (ActivityEntry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+        for (ActivityEntry e : ActivityLog.recent(rowsShown())) {
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
@@ -2514,6 +2531,8 @@ public final class WebUi {
         root.addProperty("enabled", cfg.activityLog);
         root.addProperty("blocks", cfg.activityBlocks);
         root.addProperty("retentionMinutes", cfg.activityRetentionMinutes);
+        root.addProperty("rowsShown", rowsShown());
+        root.addProperty("maxRowsShown", 20000);
         root.add("admins", adminPolicyJson());
         return root.toString();
     }
@@ -2582,7 +2601,7 @@ public final class WebUi {
             }
 
             JsonArray actions = new JsonArray();
-            for (ActivityEntry e : ActivityLog.recent(ACTIVITY_ROWS)) {
+            for (ActivityEntry e : ActivityLog.recent(rowsShown())) {
                 if (!e.player().equalsIgnoreCase(who)) continue;
                 if (e.dim() == null || e.dim().isEmpty()) continue;
                 JsonObject o = new JsonObject();
@@ -2643,7 +2662,7 @@ public final class WebUi {
         }
 
         JsonArray actions = new JsonArray();
-        for (ActivityEntry e : ActivityLog.recent(MAP_ROWS)) {
+        for (ActivityEntry e : ActivityLog.recent(mapRows())) {
             if (e.dim() == null || e.dim().isEmpty()) continue;
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
@@ -2680,6 +2699,7 @@ public final class WebUi {
         }
 
         root.addProperty("all", true);
+        root.addProperty("rowsShown", rowsShown());
         root.add("tracks", tracks);
         root.add("ids", ids);
         root.add("actions", actions);
@@ -2716,7 +2736,7 @@ public final class WebUi {
             JsonObject body = run ? readBody(ex) : new JsonObject();
             AiInsights.Scope scope = scopeOf(ex, body);
 
-            List<ActivityEntry> rows = ActivityLog.recent(MAP_ROWS);
+            List<ActivityEntry> rows = ActivityLog.recent(mapRows());
             List<Episodes.Episode> episodes = Episodes.of(rows);
             episodes = merge(episodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
 
@@ -2817,7 +2837,7 @@ public final class WebUi {
                 json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
                 return;
             }
-            List<ActivityEntry> allRows = ActivityLog.recent(MAP_ROWS);
+            List<ActivityEntry> allRows = ActivityLog.recent(mapRows());
             List<Episodes.Episode> allEpisodes = Episodes.of(allRows);
             allEpisodes = merge(allEpisodes, Episodes.ofMovement(PlayerTracks.everyone(4000)));
 

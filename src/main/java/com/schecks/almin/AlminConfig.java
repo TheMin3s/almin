@@ -147,6 +147,20 @@ public final class AlminConfig {
     /** Ceiling on the log, oldest dropped first, so a busy server can't grow it forever. */
     public int activityMaxEntries = 120000;
     /**
+     * How many recorded actions the Activity menu shows at once.
+     *
+     * <p>Not how many are kept — that is {@link #activityMaxEntries} and
+     * {@link #activityRetentionMinutes}. This is how far back the menu reaches
+     * in one go, and it was a hard-coded number for a long time: people who
+     * wanted more raised the ceiling on the log, watched nothing change, and
+     * had no way to tell that the two were unrelated.
+     *
+     * <p>Two thousand by default. A list is scrolled rather than read, but a
+     * busy evening is thousands of rows and "the last hundred" answers a
+     * different question from the one people open this menu with.
+     */
+    public int activityRowsShown = 2000;
+    /**
      * Include block edits. On by default, folded into counted rows; turn it off
      * if you only care about chat, commands, containers and deaths.
      */
@@ -443,6 +457,8 @@ public final class AlminConfig {
             c -> c.activityRetentionMinutes, (c, v) -> c.activityRetentionMinutes = (Integer) v),
         intKey("activity-max-entries", "Ceiling on the activity log; oldest rows drop first", 500, 400000,
             c -> c.activityMaxEntries, (c, v) -> c.activityMaxEntries = (Integer) v),
+        intKey("activity-rows-shown", "How many recorded actions the Activity menu shows at once (not how many are kept)", 100, 20000,
+            c -> c.activityRowsShown, (c, v) -> c.activityRowsShown = (Integer) v),
         boolKey("activity-blocks", "Include block breaks and uses in the activity log",
             c -> c.activityBlocks, (c, v) -> c.activityBlocks = (Boolean) v),
         boolKey("activity-combat", "Include damage, hits and deaths in the activity log",

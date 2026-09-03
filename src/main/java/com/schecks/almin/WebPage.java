@@ -2400,6 +2400,16 @@ final class WebPage {
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
             '<input id="a-filter" placeholder="filter by player, action, detail or place" '+
             'style="flex:1;min-width:200px">'+
+            // The number people come here to change, where they are when they
+            // want it changed. It lived only in Settings, next to the ceiling
+            // on the log, and raising that one did nothing visible.
+            (mayWrite('settings')
+              ? '<span class="muted">Show</span>'+
+                '<select id="a-rowcount" style="width:auto;min-width:104px">'+
+                  [250,500,1000,2000,3000,5000,10000,20000].map(n=>
+                    '<option value="'+n+'">'+n.toLocaleString()+' rows</option>').join('')+
+                '</select>'
+              : '')+
             '<button class="btn" id="a-refresh">Refresh</button>'+
             '<button class="btn danger" id="a-clear">Start again\u2026</button></div>'+
             '<div id="a-meta" class="muted" style="margin-bottom:8px"></div>'+
@@ -2414,6 +2424,7 @@ final class WebPage {
             loadActivity(); loadTrackList(); loadBlueMapStatus(); loadAll(); loadInsights();
             $('a-refresh').onclick=()=>{ loadActivity(); loadAll(); loadInsights();
               loadBlueMapStatus(true); loadTrack($('a-who').value); };
+            if(mayWrite('settings') && $('a-rowcount')) $('a-rowcount').onchange=setRowsShown;
             $('t-play').onclick=togglePlay;
             $('t-skip').onclick=()=>{ skipGaps=!skipGaps; paintAll(); };
             $('t-golive').onclick=goLive;
@@ -4176,10 +4187,37 @@ final class WebPage {
           });
         }
 
+        /**
+         * How many rows the list beside the map will show.
+         *
+         * <p>The server's number, because the server is what decides how many
+         * rows the page was given in the first place; drawing a cap the data
+         * cannot reach would be a promise the list could not keep.
+         */
+        function sideLimit(){
+          const n=allData&&+allData.rowsShown;
+          return n>0?n:2000;
+        }
+
+        /**
+         * Rows drawn before the rest are handed to the next frame.
+         *
+         * <p>Playback repaints on every tick. Two thousand rows built
+         * synchronously per tick is a slideshow, so the first screenful goes
+         * up now and the tail follows when the browser is free — and a repaint
+         * that arrives first cancels the tail rather than racing it. Playing
+         * therefore costs what it always did, and the full list fills in the
+         * moment you stop.
+         */
+        const SIDE_CHUNK=150;
+        let sideTail=null;
+
         /** The list beside the map: what happened, newest at the cursor first. */
         function paintSide(acts){
           const side=$('t-side'); if(!side) return;
-          const near=acts.filter(a=>a.at<=cursorAt).sort((a,b)=>b.at-a.at).slice(0,120);
+          if(sideTail){ clearTimeout(sideTail); sideTail=null; }
+          const near=acts.filter(a=>a.at<=cursorAt).sort((a,b)=>b.at-a.at)
+            .slice(0,sideLimit());
           side.innerHTML='<h3>'+(focusPlayer?esc(focusPlayer):'Everyone')+
             ' · '+near.length+' shown</h3>';
           if(!near.length){
@@ -4187,24 +4225,31 @@ final class WebPage {
               '<div class="note">Nothing before this point.</div>');
             return;
           }
-          for(const a of near){
-            const row=document.createElement('div');
-            row.className='sideact'+(a.action==='chat'?' say':'');
-            row.appendChild(avatar(a.player,(allData.ids||{})[a.player],'sm'));
-            const body=document.createElement('div');
-            body.innerHTML='<div class="l1"><span class="nm">'+esc(a.mask||a.player)+'</span>'+
-              '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+esc(a.action)+
-              (a.count>1?' ×'+a.count:'')+'</span>'+
-              '<span class="tm">'+esc(fmtAgo(a.at).replace(' ago',''))+'</span></div>'+
-              (a.detail?'<div class="dt">'+esc(a.detail)+'</div>':'');
-            row.appendChild(body);
-            // Clicking a row takes the map to it: the moment and the place.
-            row.onclick=()=>{ cursorAt=a.at; cursorSet=true; live=false; allDim=a.dim;
-              view.cx=a.x; view.cz=a.z; view.set=true;
-              if(usingBlueMap()) focusBlueMap(a.x,a.y,a.z,110);
-              stopPlay(); paintAll(); };
-            side.appendChild(row);
-          }
+          const draw=(from)=>{
+            const end=Math.min(near.length,from+SIDE_CHUNK);
+            for(let i=from;i<end;i++) side.appendChild(sideRow(near[i]));
+            if(end<near.length) sideTail=setTimeout(()=>{ sideTail=null; draw(end); },0);
+          };
+          draw(0);
+        }
+
+        function sideRow(a){
+          const row=document.createElement('div');
+          row.className='sideact'+(a.action==='chat'?' say':'');
+          row.appendChild(avatar(a.player,(allData.ids||{})[a.player],'sm'));
+          const body=document.createElement('div');
+          body.innerHTML='<div class="l1"><span class="nm">'+esc(a.mask||a.player)+'</span>'+
+            '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+esc(a.action)+
+            (a.count>1?' ×'+a.count:'')+'</span>'+
+            '<span class="tm">'+esc(fmtAgo(a.at).replace(' ago',''))+'</span></div>'+
+            (a.detail?'<div class="dt">'+esc(a.detail)+'</div>':'');
+          row.appendChild(body);
+          // Clicking a row takes the map to it: the moment and the place.
+          row.onclick=()=>{ cursorAt=a.at; cursorSet=true; live=false; allDim=a.dim;
+            view.cx=a.x; view.cz=a.z; view.set=true;
+            if(usingBlueMap()) focusBlueMap(a.x,a.y,a.z,110);
+            stopPlay(); paintAll(); };
+          return row;
         }
 
         /**
@@ -6072,13 +6117,23 @@ final class WebPage {
                 (e.player+' '+e.action+' '+e.detail+' '+e.where).toLowerCase().includes(q))
               : activityRows;
           if(meta && activityMeta){
+            // Two numbers that were one, because they were confused for one:
+            // what is kept, and how much of it this menu is showing.
+            const shown=+activityMeta.rowsShown||0;
+            const kept=+activityMeta.total||0;
             meta.innerHTML = (activityMeta.enabled
-                ? activityMeta.total+' row'+(activityMeta.total===1?'':'s')
-                : '<span class="state warn">recording is off</span> · '+activityMeta.total+' kept')+
+                ? kept.toLocaleString()+' row'+(kept===1?'':'s')+' kept'
+                : '<span class="state warn">recording is off</span> · '+
+                  kept.toLocaleString()+' kept')+
+              (shown?' · newest '+shown.toLocaleString()+' shown here'+
+                (kept>shown?'':' (all of them)'):'')+
               ' · deleted after '+esc(humanMinutes(activityMeta.retentionMinutes))+
               (activityMeta.blocks?'':' · block edits excluded')+
-              (q?' · '+rows.length+' shown':'');
+              (q?' · '+rows.length.toLocaleString()+' match the filter':'');
           }
+          const pick=mayWrite('settings')?$('a-rowcount'):null;
+          if(pick && activityMeta && +activityMeta.rowsShown)
+            pick.value=String(activityMeta.rowsShown);
           if(!rows.length){ box.innerHTML='<div class="note">'+
             (q?'Nothing matches that filter.'
               :'Nothing recorded. Ops and trusted UUIDs are never recorded.')+'</div>'; return; }
@@ -6098,6 +6153,31 @@ final class WebPage {
             box.appendChild(d);
           }
         }
+        /**
+         * Changes how much of the log this menu shows.
+         *
+         * <p>It is an ordinary setting written the ordinary way, and it is
+         * offered here as well because this is where somebody is standing when
+         * they decide the list is too short. Only offered to an account that
+         * may change settings, since that is who the server will accept it
+         * from.
+         */
+        async function setRowsShown(){
+          const pick=$('a-rowcount'), msg=$('a-msg'); if(!pick) return;
+          const want=pick.value;
+          pick.disabled=true;
+          const r=await jpost('/api/config',{name:'activity-rows-shown',value:String(want)});
+          pick.disabled=false;
+          if(msg){
+            msg.className='msg '+(r.status===200?'ok':'err');
+            msg.textContent=r.status===200
+              ? ('Showing the newest '+(+want).toLocaleString()+' rows.')
+              : (r.body.error||'failed');
+          }
+          if(r.status!==200) return;
+          loadActivity(); loadAll(true); loadInsights();
+        }
+
         function humanMinutes(m){
           if(!m) return 'never';
           if(m%1440===0) return (m/1440)+(m/1440===1?' day':' days');
