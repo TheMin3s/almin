@@ -10,6 +10,14 @@ const vm = require('vm');
 // changed; the code under test is otherwise byte-for-byte the shipped page.
 const src = fs.readFileSync(process.argv[2], 'utf8')
   .replace(/^(\s*)let /gm, '$1var ');
+// The stylesheet, from the page the script was dumped out of. A handful of
+// checks here are about shape rather than behaviour and need to read it.
+const css = (() => {
+  try {
+    const page = fs.readFileSync(process.argv[2].replace(/\.js$/, '.html'), 'utf8');
+    return page.slice(page.indexOf('<style>'), page.indexOf('</style>'));
+  } catch (e) { return ''; }
+})();
 
 let failures = [];
 const byId = new Map();
@@ -43,6 +51,20 @@ function deepText(el) {
   return out;
 }
 
+// deepText's siblings: the panel builds most of Settings out of elements, so
+// asking what is in it means walking rather than matching markup.
+function deepAll(el, want) {
+  const out = [];
+  (function walk(n) {
+    for (const kid of (n && n.children) || []) { if (want(kid)) out.push(kid); walk(kid); }
+  })(el);
+  return out;
+}
+function deepFind(el, want) { return deepAll(el, want)[0] || null; }
+function hasClass(el, name) {
+  return new RegExp('(^| )' + name + '( |$)').test((el && el.className) || '');
+}
+
 function headSize() {
   const html = byId.get('t-map')._html || '';
   const m = html.match(/class="thead[^"]*"[^>]*>[\s\S]{0,160}?width="([\d.]+)"/);
@@ -52,6 +74,7 @@ function headSize() {
 function stub(tag) {
   const el = {
     tagName: tag, id: '', className: '', textContent: '', title: '', value: '',
+    _attr: {},
     type: '', min: '', max: '', disabled: false, checked: false, files: [],
     style: {}, children: [], _html: '',
     alt: '', src: '', loading: '', referrerPolicy: '', parentNode: null,
@@ -65,10 +88,18 @@ function stub(tag) {
     insertAdjacentHTML(_pos, html) { register(html); this._html += html; },
     addEventListener() {},
     removeEventListener() {},
-    setAttribute(k, v) { if (k === 'id') { this.id = v; byId.set(v, this); } },
-    getAttribute() { return 'x'; },
-    querySelector() { return stub('div'); },
-    querySelectorAll() { return []; },
+    setAttribute(k, v) { this._attr[k] = v;
+                         if (k === 'id') { this.id = v; byId.set(v, this); } },
+    getAttribute(k) { return this._attr[k] === undefined ? 'x' : this._attr[k]; },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || stub('div'); },
+    // Tag names only. Anything with a class or an attribute in it still comes
+    // back empty, exactly as it did before, because the elements those reach
+    // for are built from markup and have no children here to walk.
+    querySelectorAll(sel) {
+      const tags = String(sel || '').split(',').map((t) => t.trim());
+      if (!tags.length || tags.some((t) => !/^[a-z]+$/.test(t))) return [];
+      return deepAll(this, (el) => tags.indexOf(el.tagName) >= 0);
+    },
     getBoundingClientRect() { return { left: 0, top: 0, right: 200, bottom: 32,
                                        width: 200, height: 32 }; },
     focus() {}, remove() {}, select() {}, click() {},
@@ -2015,6 +2046,66 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     check('clearing the search brings the groups back', () =>
       byId.get('s-keys').children.length >= 4
         ? true : 'the groups did not come back');
+
+    // ---- and the look of a group ----
+    const allRows = () => deepAll(byId.get('s-keys'), (e) => hasClass(e, 'cfgrow'));
+
+    // Fifty settings in a flat list is a wall whichever way it is folded. A
+    // group is one inset card with the rows inside it, the way settings have
+    // looked on a phone for fifteen years, because that shape is read by
+    // grouping and alignment rather than by reading it.
+    check('a group draws its rows inside one card, not loose on the page', () => {
+      const g = byId.get('s-keys').children[0];
+      const body = (g.children || []).find((c) => /foldb/.test(c.className || ''));
+      if (!body) return 'the group has no body';
+      const card = (body.children || [])[0];
+      if (!card || !/cfggroup/.test(card.className || '')) return 'the rows are loose';
+      return (card.children || []).some((r) => /cfgrow/.test(r.className || ''))
+        ? true : 'the card is empty';
+    });
+    check('the separators start where the text does, not at the card edge', () => {
+      return /\.cfggroup\{[^}]*padding-left/.test(css) && /\.cfgrow\{[^}]*border-top/.test(css)
+        ? true : 'the hairlines run the full width';
+    });
+
+    // Three quarters of the list is on or off, and "on"/"off" spelled out on
+    // a button is a thing to read where a switch is a thing to see.
+    check('a setting that is on or off is a switch', () => {
+      const bool = allRows().find((r) => /activity-log/.test(deepText(r)));
+      if (!bool) return 'no on/off setting drawn';
+      const sw = deepFind(bool, (e) => hasClass(e, 'sw'));
+      if (!sw) return 'it is still a button with a word on it';
+      return sw.getAttribute('role') === 'switch' &&
+             sw.getAttribute('aria-checked') === 'true'
+        ? true : 'the switch does not say what it is to a screen reader';
+    });
+    check('...and the switch shows the state it is actually in', () => {
+      const off = sandbox.cfgKeys.find((k) => k.name === 'activity-log');
+      const was = off.value; off.value = 'false';
+      sandbox.paintKeys();
+      const row = allRows().find((r) => /activity-log/.test(deepText(r)));
+      const sw = deepFind(row, (e) => hasClass(e, 'sw'));
+      off.value = was; sandbox.paintKeys();
+      if (!sw) return 'the switch went missing';
+      return !hasClass(sw, 'on') && sw.getAttribute('aria-checked') === 'false'
+        ? true : 'an off setting drew as on';
+    });
+
+    // A switch you can flick that then bounces off the server is worse than
+    // one that will not move.
+    check('a read-only account gets the real state, dead', () => {
+      const owner = sandbox.me;
+      sandbox.me = { username: 'watcher', owner: false, audited: false,
+                     access: { settings: 'read', dash: 'read' } };
+      sandbox.paintKeys();
+      const live = allRows().filter((r) => {
+        const c = deepFind(r, (e) => e.tagName === 'button' || e.tagName === 'input');
+        return c && !c.disabled;
+      });
+      sandbox.me = owner; sandbox.paintKeys();
+      return live.length === 0
+        ? true : live.length + ' controls stayed live for a read-only account';
+    });
   }
 
   check('changing one value arms Save and nothing else', () => {

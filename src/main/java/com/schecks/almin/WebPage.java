@@ -433,12 +433,17 @@ final class WebPage {
           .facts b{color:var(--ink);font-weight:600;word-break:break-word}
           .csec{margin:16px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.9px;
                 color:var(--brand)}
-          .aiform{display:grid;gap:9px;margin-top:12px;max-width:620px}
-          .aiform label{display:flex;align-items:center;gap:10px}
+          .aiform{display:grid;margin-top:12px;max-width:620px;padding-left:13px;
+                  background:var(--card2);border:1px solid var(--line);border-radius:11px}
+          .aiform label{display:flex;align-items:center;gap:10px;
+                  padding:8px 13px 8px 0;border-top:1px solid var(--line)}
+          .aiform>:first-child{border-top:0}
           .aiform label span{flex:none;width:150px;color:var(--dim);font-size:13px}
           .aiform input,.aiform select{flex:1;min-width:0;padding:7px 10px;font-size:13px}
+          .aiform>.note{margin:0 13px 10px 0}
           .airow{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}
-          @media(max-width:620px){.aiform label{flex-wrap:wrap}
+          @media(max-width:620px){.aiform{padding-left:11px}
+                                  .aiform label{flex-wrap:wrap;gap:6px;padding-right:11px}
                                   .aiform label span{width:100%}}
           .cmod{display:flex;gap:8px;align-items:baseline;padding:4px 2px;font-size:12.5px;
                 border-bottom:1px solid rgba(255,255,255,.05)}
@@ -471,14 +476,39 @@ final class WebPage {
           .arow .at{color:var(--mute);font-size:12px;white-space:nowrap}
           @media(max-width:760px){.arow{grid-template-columns:19px 46px minmax(0,1fr);row-gap:2px}
                                   .arow .det,.arow .at{grid-column:1/-1}}
-          .cfgrow{display:flex;gap:14px;align-items:center;padding:9px 0;
-                  border-bottom:1px solid rgba(255,255,255,.045)}
-          .cfgrow:last-child{border-bottom:0}
+          /* ---- grouped lists ----
+             A settings screen is a heading with a group of rows under it: one
+             inset card, hairlines between the rows that start where the text
+             starts rather than at the card's edge, and the control at the
+             right of the row it belongs to. It is the shape phone settings
+             have used for fifteen years, and the reason is that it makes a
+             long page of unrelated switches readable by grouping and
+             alignment rather than by asking anyone to read it. */
+          .cfggroup{background:var(--card2);border:1px solid var(--line);
+                  border-radius:11px;padding-left:13px}
+          .cfgrow{display:flex;gap:14px;align-items:center;padding:10px 13px 10px 0;
+                  border-top:1px solid var(--line)}
+          .cfgrow:first-child{border-top:0}
           .cfgrow>div:first-child{flex:1;min-width:0}
           .cfgname{font:12.5px ui-monospace,Menlo,monospace;color:var(--ink)}
+          .cfgrow .muted{font-size:12px;line-height:1.45;margin-top:1px}
           .cfgctl{display:flex;gap:8px;align-items:center;flex:none}
-          .cfgctl input{width:auto}
+          .cfgctl input{width:auto;text-align:right}
+          .cfgctl input[type=number]{text-align:right}
           section+section{margin-top:13px}
+
+          /* A switch, for the settings that are simply on or off. Three
+             quarters of the list is one of those, and "on"/"off" written on a
+             button is a thing to read where a switch is a thing to see. */
+          .sw{position:relative;width:38px;height:22px;flex:none;padding:0;cursor:pointer;
+                  border-radius:11px;background:var(--card);border:1px solid var(--line);
+                  transition:background .15s,border-color .15s}
+          .sw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+                  background:var(--dim);transition:transform .15s,background .15s}
+          .sw.on{background:var(--brand);border-color:var(--brand)}
+          .sw.on i{transform:translateX(16px);background:#1a1205}
+          .sw:disabled{opacity:.45;cursor:default}
+          .sw:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 
           /* ---- folds ----
              Settings is long, and nearly every line of it is set once and
@@ -506,7 +536,9 @@ final class WebPage {
           details.sub[open]>summary{border-bottom:0;padding-bottom:0}
           details.sub .foldb{padding-top:4px}
           @media(max-width:620px){.foldh{display:none}}
-          @media(max-width:620px){.cfgrow{flex-direction:column;align-items:stretch}
+          @media(max-width:620px){.cfgrow{flex-direction:column;align-items:stretch;
+                                          gap:8px;padding-right:11px}
+                                  .cfggroup{padding-left:11px}
                                   .cfgctl{justify-content:flex-end}}
           /* The header holds a lot for its height; shed the least important
              parts before anything is allowed to wrap onto a second line. */
@@ -7326,7 +7358,9 @@ final class WebPage {
             head.innerHTML='<span class="chev">\u25b8</span><span class="foldt">'+
               esc(label)+'</span><span class="foldh">'+keys.length+'</span>';
             const body=document.createElement('div'); body.className='foldb';
-            for(const k of keys) body.appendChild(cfgRow(k));
+            const card=document.createElement('div'); card.className='cfggroup';
+            for(const k of keys) card.appendChild(cfgRow(k));
+            body.appendChild(card);
             d.append(head,body);
             box.appendChild(d);
             // A filter that leaves its own results folded away has not found
@@ -8537,7 +8571,13 @@ final class WebPage {
           } else if(k.type==='BOOL'){
             const on=k.value==='true';
             const b=document.createElement('button');
-            b.className='btn'+(on?' on':''); b.textContent=on?'on':'off';
+            b.className='sw'+(on?' on':'');
+            b.type='button';
+            b.setAttribute('role','switch');
+            b.setAttribute('aria-checked',on?'true':'false');
+            b.setAttribute('aria-label',k.name);
+            b.title=on?'on':'off';
+            b.innerHTML='<i></i>';
             b.onclick=()=>setKey(k,on?'false':'true');
             ctl.appendChild(b);
           } else {
@@ -8549,6 +8589,12 @@ final class WebPage {
             i.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setKey(k,i.value); } };
             ctl.append(i,b);
           }
+          // A switch you can flick that then refuses is worse than one that
+          // will not move. Read-only accounts get the real state, dimmed.
+          if(k.editable && !mayWrite('settings'))
+            for(const el of ctl.querySelectorAll('input,button')){
+              el.disabled=true; el.title='read-only account';
+            }
           row.append(left,ctl);
           return row;
         }
