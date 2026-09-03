@@ -267,8 +267,10 @@ public final class ServerRelaunch {
             pb.redirectError(ProcessBuilder.Redirect.INHERIT);
             pb.environment().put(READY_TOKEN_ENV, token);
             pb.environment().put(READY_FILE_ENV, ready.toString());
+            long began = System.currentTimeMillis();
             Process p = pb.start();
             Result started = awaitReady(p, ready, token);
+            long ranMs = System.currentTimeMillis() - began;
             deleteReady(ready);
             if (!started.ok()) {
                 // What it ran, every time. "Exit 2" on its own is not something
@@ -278,7 +280,7 @@ public final class ServerRelaunch {
                 // was really started by is not the JVM's own argv.
                 Result told = new Result(false, started.message()
                     + " It ran, from " + plan.source() + ": " + plan.display()
-                    + " — the reason it stopped is in this console, just above.");
+                    + " (in " + dir + ")." + heapNote(plan) + saidWhat(plan, dir, ranMs));
                 lastError = told.message();
                 AlminLog.warn("[almin] replacement server failed before readiness: {}",
                     told.message());
@@ -298,6 +300,96 @@ public final class ServerRelaunch {
             CONSOLE.warn("[almin] Could not start the server again: {}", e.toString());
             return new Result(false, "Could not start the server again: " + e);
         }
+    }
+
+    /**
+     * A replacement that died this fast never reached the world.
+     *
+     * <p>Which is what makes running it a second time to watch it safe: a
+     * command that fails in the first few seconds fails in mod loading, in the
+     * JVM, or in the shell, all of which happen before anything on disk is
+     * touched. Anything slower than this has begun loading a world and must
+     * not be started again behind the operator's back.
+     */
+    private static final long FAST_FAIL_MS = 15_000L;
+
+    /** The most of the replacement's own output to quote back. */
+    private static final int SAID_CHARS = 1200;
+
+    /**
+     * What the replacement actually said, when it said it to nobody.
+     *
+     * <p>The child's output is inherited, which is right: after the handover
+     * it owns this console, and a host panel watching the original process's
+     * pipe keeps seeing a server. It also means that when the child dies in
+     * two seconds, whatever it printed went wherever this process's output
+     * goes — which, under a wrapper or a service manager, is regularly not
+     * where the person reading "exit 2" is looking. So a fast failure is run
+     * once more with its output captured, purely to be able to quote it.
+     *
+     * <p>Only ever after a failure, only when that failure was fast, and the
+     * second attempt is killed if it somehow starts succeeding.
+     */
+    private static String saidWhat(Plan plan, Path dir, long ranMs) {
+        if (ranMs > FAST_FAIL_MS) return " Nothing else is known about why.";
+        Path log = null;
+        try {
+            log = Files.createTempFile("almin-relaunch-", ".log");
+            ProcessBuilder pb = new ProcessBuilder(plan.argv());
+            pb.directory(dir.toFile());
+            pb.redirectInput(NULL_INPUT);
+            pb.redirectOutput(ProcessBuilder.Redirect.to(log.toFile()));
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            // Its own lifetime plus a little, so a command that dies at once is
+            // waited on for no longer than it takes to die.
+            if (!p.waitFor(Math.min(FAST_FAIL_MS + 5_000L, ranMs + 5_000L),
+                           TimeUnit.MILLISECONDS)) {
+                terminate(p);
+                return " Run again to see what it says, it stayed up that time — so the"
+                    + " failure comes and goes; the console above has its output.";
+            }
+            String said = tail(log);
+            if (said.isEmpty()) {
+                return " Run again with its output captured, it printed nothing at all"
+                    + " before exiting, which usually means the shell or the JVM never"
+                    + " got as far as starting the server.";
+            }
+            return " It was run again to catch what it prints, and it said: " + said;
+        } catch (Exception e) {
+            return " (Almin could not run it again to see what it says: " + e + ")";
+        } finally {
+            if (log != null) { try { Files.deleteIfExists(log); } catch (IOException ignored) { } }
+        }
+    }
+
+    /** The end of a captured log, flattened onto one line. */
+    private static String tail(Path log) {
+        try {
+            String all = Files.readString(log, StandardCharsets.UTF_8).strip();
+            if (all.length() > SAID_CHARS) all = "…" + all.substring(all.length() - SAID_CHARS);
+            return all.replace("\r", "").replace("\n", " / ").strip();
+        } catch (IOException | RuntimeException e) {
+            return "";
+        }
+    }
+
+    /**
+     * The heap the old server is still holding while the new one starts.
+     *
+     * <p>The handover is deliberately overlapping: this process stays alive
+     * until the replacement says it is ready, so that a failure leaves a
+     * running panel rather than nothing. The cost is that for those seconds
+     * both heaps are committed at once, and {@code -Xms8G} asks for its eight
+     * gigabytes on top of the eight this JVM has not given back yet.
+     */
+    private static String heapNote(Plan plan) {
+        String cmd = plan.display();
+        if (!cmd.contains("-Xms") && !cmd.contains("-Xmx")) return "";
+        long mb = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        return " Note that this server is still running while the replacement starts —"
+            + " it has to be, so a failed start leaves the panel up — so the new JVM's heap"
+            + " has to fit alongside this one's " + mb + " MB for a few seconds.";
     }
 
     private static Path readinessFile(Path serverDirectory) {

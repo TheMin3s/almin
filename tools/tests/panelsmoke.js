@@ -4125,6 +4125,61 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((named ? '  PASS  ' : '  FAIL  ') + 'the provider and model go with it');
     if (!named) failures.push('provider or model missing from the save');
 
+    // ---- what a restart runs ----
+    // Its own permission, because it is the one setting that becomes a shell
+    // line on the host rather than a value Almin reads.
+    {
+      const wasMe = sandbox.me;
+      const wasCmd = sandbox.startCommand, wasSrc = sandbox.startSource;
+      sandbox.startCommand = 'java -Xmx4G -jar server.jar';
+      sandbox.startSource = "this server's own command line";
+      sandbox.canStart = true;
+
+      sandbox.me = { ...wasMe, canSetStart: false };
+      sandbox.tab = 'settings'; sandbox.settingsTab = 'almin'; sandbox.render();
+      check('Settings alone does not offer to change what a restart runs', () =>
+        byId.get('s-startrow').style.display === 'none'
+          ? true : 'the field was offered to an account without the permission');
+
+      sandbox.me = { ...wasMe, canSetStart: true };
+      sandbox.render();
+      check('...and an account holding the permission is offered it', () =>
+        byId.get('s-startrow').style.display !== 'none'
+          ? true : 'the field stayed hidden');
+      check('...showing where the current one came from', () =>
+        /own command line/.test(byId.get('s-relaunch')._html || '')
+          ? true : byId.get('s-relaunch')._html);
+      check('...and not offering it back as if somebody had typed it', () =>
+        byId.get('s-startcmd').value === ''
+          ? true : 'the derived command was put in the box: ' + byId.get('s-startcmd').value);
+
+      byId.get('s-startcmd').value = 'cd /srv/mc && java -Xmx8G -jar server.jar';
+      posted = [];
+      sandbox.closeModal();
+      byId.get('s-startgo').onclick();
+      const warned = deepText(byId.get('modal-body'));
+      check('changing it warns before it saves, not after', () => {
+        if (posted.some((x) => x.url === '/api/config')) return 'it saved without asking';
+        if (!/Xmx8G/.test(warned)) return 'the warning does not show what would run';
+        return /nothing tests this until the next restart/i.test(warned)
+          ? true : 'the warning does not say when it would be found out: ' + warned.slice(0, 160);
+      });
+      check('...and says it is a command on this machine', () =>
+        /on this machine/i.test(warned) ? true : warned.slice(0, 200));
+
+      await byId.get('sc-go').onclick();
+      const sent = posted.filter((x) => x.url === '/api/config' && x.body)
+                         .map((x) => x.body.name + '=' + x.body.value);
+      check('...and only then sends it', () =>
+        sent.length === 1
+          && sent[0] === 'web-start-command=cd /srv/mc && java -Xmx8G -jar server.jar'
+          ? true : JSON.stringify(sent));
+
+      sandbox.closeModal();
+      sandbox.me = wasMe;
+      sandbox.startCommand = wasCmd; sandbox.startSource = wasSrc;
+    }
+
     sandbox.fetch = realFetch;
   } catch (e) {
     console.log('  FAIL  saving the model settings  -> ' + e.message);

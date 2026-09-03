@@ -706,7 +706,8 @@ final class WebPage {
          * session says otherwise nobody may see anything, so a panel that is
          * still loading does not flash a menu somebody is not allowed to open.
          */
-        let me={username:'',owner:false,access:{},linkedPlayer:'',audited:false};
+        let me={username:'',owner:false,access:{},linkedPlayer:'',audited:false,
+                canSetStart:false};
         function mayRead(menu){
           if(me.owner) return true;
           const v=me.access?me.access[menu]:'';
@@ -725,7 +726,8 @@ final class WebPage {
         // an open tab put itself onto the new panel instead of sitting there
         // showing an old one.
         let version=null, restarting=false, awaitingReturn=false, wasReachable=true;
-        let startCommand='', startProblem='', relaunchError='', waitingSince=0;
+        let startCommand='', startProblem='', startSource='';
+        let relaunchError='', waitingSince=0;
         // Long enough for a big world to boot; short enough that a restart
         // which is never coming back stops pretending it is.
         const WAIT_LIMIT=5*60*1000;
@@ -7567,9 +7569,14 @@ final class WebPage {
             '<div id="s-aclist"><div class="note">\u2026</div></div>'+FOLDEND+'</section>':'')+
             '<section>'+fold('f-relaunch','Restarting','what Start and Restart run')+
             '<p class="muted">Restart and Start run this, from this machine. Almin reads it off '+
-            'the running server, so it matches however this server was actually launched — '+
-            'set <code>web-start-command</code> only if you want something else.</p>'+
-            '<div id="s-relaunch" class="note">…</div>'+FOLDEND+'</section>'+
+            'the running server, so it matches however this server was actually launched. '+
+            'Setting one of your own replaces that until you clear it again.</p>'+
+            '<div id="s-relaunch" class="note">…</div>'+
+            '<div id="s-startrow" style="display:none;margin-top:10px">'+
+            '<div class="term"><input id="s-startcmd" spellcheck="false" autocomplete="off" '+
+            'placeholder="leave empty to use this server\u2019s own command line">'+
+            '<button class="btn" id="s-startgo">Change\u2026</button></div>'+
+            '<div class="msg" id="s-startmsg"></div></div>'+FOLDEND+'</section>'+
             '<section>'+fold('f-ai','Reading the log with a model','\u2026')+
             '<p class="muted">Almin works out what happened on its own — trees felled, '+
             'shafts dug, fights, someone pacing the same twenty blocks for ten minutes — '+
@@ -7650,6 +7657,12 @@ final class WebPage {
             }
             $('s-pw').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); setPassword(); } };
             $('s-check').onclick=()=>loadUpdate(true);
+            if($('s-startgo')){
+              $('s-startgo').onclick=startCommandDialog;
+              $('s-startcmd').oninput=()=>{ $('s-startcmd').almTouched=true; };
+              $('s-startcmd').onkeydown=e=>{
+                if(e.key==='Enter'){ e.preventDefault(); startCommandDialog(); } };
+            }
             $('s-apply').onclick=updateDialog;
             $('s-later').onclick=scheduleDialog;
             $('s-clearlog').onclick=clearLog;
@@ -7781,6 +7794,25 @@ final class WebPage {
             'it is recorded when they open it.';
           audit.append(box,t);
           card.appendChild(audit);
+
+          // Its own row, and only offered by somebody who holds it: what a
+          // restart runs is a shell line on the host, so it is not part of
+          // Settings and cannot be handed down by an account without it.
+          if(me.canSetStart){
+            const sc=document.createElement('label');
+            sc.className='note';
+            sc.style.display='flex'; sc.style.alignItems='center'; sc.style.gap='8px';
+            sc.style.marginTop='8px';
+            const scbox=document.createElement('input'); scbox.type='checkbox';
+            scbox.checked=!!a.startCommand;
+            scbox.onchange=()=>postAccount({action:'startcmd',id:a.id,on:scbox.checked});
+            const sct=document.createElement('span');
+            sct.innerHTML='Let '+esc(a.username)+' change what a restart runs. '+
+              '<b>This is a command line on this machine</b>, run as the user the server '+
+              'runs as \u2014 give it only to someone you would give a shell.';
+            sc.append(scbox,sct);
+            card.appendChild(sc);
+          }
           return card;
         }
 
@@ -8131,19 +8163,79 @@ final class WebPage {
           if(!canStart){
             box.innerHTML='<span class="state crit">Unavailable</span> '+
               esc(startProblem||'Almin cannot work out how to start this server.');
-            return;
+          } else {
+            box.innerHTML='<code>'+esc(startCommand)+'</code>'+
+              (startSource?'<br><span class="muted">from '+esc(startSource)+'</span>':'')+
+              (relaunchError?'<br><span class="state crit">Last attempt failed</span> '+
+                esc(relaunchError):'');
           }
-          box.innerHTML='<code>'+esc(startCommand)+'</code>'+
-            (relaunchError?'<br><span class="state crit">Last attempt failed</span> '+
-              esc(relaunchError):'');
+          // Its own permission, so its own question: an account may hold all
+          // of Settings and still not be one that gets to hand a command line
+          // to this machine.
+          const row=$('s-startrow'); if(!row) return;
+          row.style.display=me.canSetStart?'':'none';
+          if(!me.canSetStart) return;
+          const field=$('s-startcmd');
+          // Only ever filled from the server when nobody is mid-edit, and only
+          // with a command somebody typed: the one read off this process is
+          // shown above and is not a value to hand back as if it were saved.
+          if(field && !field.almTouched){
+            field.value=startSource==='web-start-command'?startCommand:'';
+          }
         }
+
         /**
-         * What turning this on would actually do, in words, before it is on.
+         * Changing what a restart runs, with the warning it deserves.
          *
-         * <p>The switch sends other people's activity to a company. Whoever
-         * flips it should be told that in the place where they flip it, not in
-         * a README, and told which company.
+         * <p>Every other setting in this page is a value Almin reads. This one
+         * is a line handed to a shell on the machine the server is on, run as
+         * whoever the server runs as, and it is what brings the server back
+         * after an update — so it is also the setting where a typo is not
+         * noticed until the day it matters. Both halves are said before it is
+         * saved, not after.
          */
+        function startCommandDialog(){
+          const field=$('s-startcmd'); if(!field) return;
+          const want=field.value.trim();
+          const msg=$('s-startmsg');
+          modal(want?'Change what a restart runs':'Go back to this server\u2019s own command',
+            (body,close)=>{
+            body.innerHTML=
+              (want
+                ? '<p>Restart, Start and every update will run this, on this machine, as the '+
+                  'user this server runs as:</p><p><code>'+esc(want)+'</code></p>'+
+                  '<p class="muted">It is handed to <code>/bin/sh</code>, so it can be any '+
+                  'shell line \u2014 which is also why this is its own permission rather than '+
+                  'part of Settings.</p>'
+                : '<p>Almin will go back to reading the command off this running server, which '+
+                  'is how it was launched:</p><p><code>'+esc(startCommand)+'</code></p>')+
+              '<p class="muted"><b>Nothing tests this until the next restart.</b> If it is '+
+              'wrong, the server stops and does not come back on its own \u2014 the panel '+
+              'stays up to say so, and starting it from there runs the same command. Check it '+
+              'against how this server is really launched before you rely on it.</p>'+
+              '<div class="row2"><button class="btn go" id="sc-go">'+
+              (want?'Save it':'Clear it')+'</button>'+
+              '<button class="btn" id="sc-no">Cancel</button></div>'+
+              '<div class="msg" id="sc-msg"></div>';
+            $('sc-no').onclick=close;
+            $('sc-go').onclick=async()=>{
+              $('sc-go').disabled=true;
+              const r=await jpost('/api/config',{name:'web-start-command',value:want});
+              const m=$('sc-msg');
+              const ok=r.status===200 && r.body && r.body.ok;
+              m.className='msg '+(ok?'ok':'err');
+              m.textContent=ok?'Saved.':((r.body&&r.body.error)||why(r));
+              if(!ok){ $('sc-go').disabled=false; return; }
+              field.almTouched=false;
+              if(msg){ msg.className='msg ok';
+                msg.textContent=want?'A restart will run that.'
+                                    :'Back to this server\u2019s own command line.'; }
+              await refreshOnce();
+              showRelaunch();
+              setTimeout(close,900);
+            };
+          });
+        }
         /**
          * What turning this on would actually do, in words, before it is on.
          *
@@ -9739,13 +9831,14 @@ final class WebPage {
           authed=!!s.body.authed; secure=!!s.body.secure; pwSet=!!s.body.passwordSet;
           me={username:s.body.username||'', owner:!!s.body.owner,
               access:s.body.access||{}, linkedPlayer:s.body.linkedPlayer||'',
-              audited:!!s.body.audited};
+              audited:!!s.body.audited, canSetStart:!!s.body.canSetStart};
           encrypted=!!s.body.encrypted;
           publicMetrics=!!s.body.publicMetrics; canStart=!!s.body.canStart;
           supervisor=!!s.body.supervisor;
           if(s.body.serverRunning!=null) serverRunning=!!s.body.serverRunning;
           restarting=!!s.body.restarting;
           startCommand=s.body.startCommand||''; startProblem=s.body.startProblem||'';
+          startSource=s.body.startSource||'';
           relaunchError=s.body.relaunchError||'';
           // Absent for a logged-out session, which never asks for a face anyway.
           if(s.body.heads!=null) headsOn=!!s.body.heads;

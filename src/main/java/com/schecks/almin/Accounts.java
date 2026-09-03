@@ -86,12 +86,26 @@ public final class Accounts {
      * @param mcUuid      that account's UUID, or ""
      * @param access      menu to {@link #NONE}/{@link #READ}/{@link #WRITE}
      * @param auditActivity whether their use of the Activity menu is recorded
+     * @param startCommand  whether they may change what a restart runs, which
+     *                      is a command on the host OS and so is granted on its
+     *                      own rather than with the rest of Settings
      * @param owner       true only for the synthesised owner, never on disk
      */
     public record Account(String id, String username, String hash, String mcName, String mcUuid,
                           Map<String, String> access, Map<String, String> folders,
-                          boolean auditActivity, int rank,
+                          boolean auditActivity, boolean startCommand, int rank,
                           long created, long lastLogin, boolean owner) {
+
+        /**
+         * Whether this account may set {@code web-start-command}.
+         *
+         * <p>Its own permission, and not part of Settings, because everything
+         * else in Settings is a value Almin reads: this one is a line handed
+         * to {@code /bin/sh} on the machine the server runs on. An account
+         * that holds it can run anything the server user can, which is a
+         * different question from whether they may change the AFK timeout.
+         */
+        public boolean canStartCommand() { return owner || startCommand; }
 
         /** What this account may do with one menu. The owner may do everything. */
         public String level(String menu) {
@@ -246,6 +260,7 @@ public final class Accounts {
             str(o, "id").isBlank() ? newId() : str(o, "id"),
             username, str(o, "hash"), str(o, "mcName"), str(o, "mcUuid"),
             access, folders, o.has("auditActivity") && o.get("auditActivity").getAsBoolean(),
+            o.has("startCommand") && o.get("startCommand").getAsBoolean(),
             rankOf((int) num(o, "rank")),
             num(o, "created"), num(o, "lastLogin"), false);
     }
@@ -274,6 +289,7 @@ public final class Accounts {
         o.addProperty("mcName", a.mcName());
         o.addProperty("mcUuid", a.mcUuid());
         o.addProperty("auditActivity", a.auditActivity());
+        o.addProperty("startCommand", a.startCommand());
         o.addProperty("rank", a.rank());
         o.addProperty("created", a.created());
         o.addProperty("lastLogin", a.lastLogin());
@@ -300,7 +316,7 @@ public final class Accounts {
         String name = cfg.webAdminUsername == null || cfg.webAdminUsername.isBlank()
             ? "admin" : cfg.webAdminUsername.trim();
         return new Account("owner", name, cfg.webAdminPasswordHash == null ? "" : cfg.webAdminPasswordHash,
-            "", "", Map.of(), Map.of(), false, OWNER_RANK, 0, 0, true);
+            "", "", Map.of(), Map.of(), false, true, OWNER_RANK, 0, 0, true);
     }
 
     /** Every account except the owner, in the order they were made. */
@@ -353,7 +369,7 @@ public final class Accounts {
         String pw = passwordProblem(password);
         if (!pw.isEmpty()) return Result.fail(pw);
         Account a = new Account(newId(), name, Passwords.hash(password), "", "",
-            new LinkedHashMap<>(), new LinkedHashMap<>(), false, rankOf(rank),
+            new LinkedHashMap<>(), new LinkedHashMap<>(), false, false, rankOf(rank),
             System.currentTimeMillis(), 0, false);
         byName.put(name.toLowerCase(Locale.ROOT), a);
         save();
@@ -368,7 +384,7 @@ public final class Accounts {
         String bad = passwordProblem(password);
         if (!bad.isEmpty()) return Result.fail(bad);
         put(a.username(), new Account(a.id(), a.username(), Passwords.hash(password), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + "'s password is changed.");
     }
@@ -382,7 +398,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) access.put(menu, level);
         else access.remove(menu);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            access, a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
+            access, a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + menuName(menu) + ".");
     }
@@ -412,7 +428,7 @@ public final class Accounts {
         if (level.equals(READ) || level.equals(WRITE)) folders.put(f, level);
         else folders.remove(f);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), folders, a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), folders, a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " " + describe(level) + " " + f + ".");
     }
@@ -422,7 +438,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), new LinkedHashMap<>(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " can reach every folder the Files menu shows.");
     }
@@ -438,7 +454,7 @@ public final class Accounts {
         if (a == null) return Result.fail("No such account.");
         int want = rankOf(rank);
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), want, a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), want, a.created(), a.lastLogin(), false));
         save();
         return Result.done(a.username() + " is now level " + want + ".");
     }
@@ -459,11 +475,30 @@ public final class Accounts {
             return Result.fail("That is not a Minecraft account name.");
         }
         put(a.username(), new Account(a.id(), a.username(), a.hash(), n, n.isEmpty() ? "" : u,
-            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done(n.isEmpty()
             ? a.username() + " is no longer linked to a player."
             : a.username() + " is " + n + ".");
+    }
+
+    /**
+     * Grants or withdraws the right to change what a restart runs.
+     *
+     * <p>Separate from every menu level because it is not a menu: it is the
+     * one setting in Almin that becomes a command line on the host, and an
+     * account holding it can do anything the server's user can.
+     */
+    public static synchronized Result setStartCommand(String id, boolean on) {
+        Account a = stored(id);
+        if (a == null) return Result.fail("No such account.");
+        put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
+            a.access(), a.folders(), a.auditActivity(), on, a.rank(), a.created(),
+            a.lastLogin(), false));
+        save();
+        return Result.done(on
+            ? a.username() + " can change what a restart runs on this machine."
+            : a.username() + " can no longer change what a restart runs.");
     }
 
     /** Turns Activity-menu recording on or off for one account. */
@@ -471,7 +506,8 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return Result.fail("No such account.");
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), on, a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), on, a.startCommand(), a.rank(), a.created(),
+            a.lastLogin(), false));
         save();
         return Result.done(on
             ? a.username() + "'s use of the Activity menu is recorded, and they are told so."
@@ -490,7 +526,7 @@ public final class Accounts {
         }
         byName.remove(a.username().toLowerCase(Locale.ROOT));
         byName.put(name.toLowerCase(Locale.ROOT), new Account(a.id(), name, a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), a.lastLogin(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), a.lastLogin(), false));
         save();
         return Result.done("Now called " + name + ".");
     }
@@ -509,7 +545,7 @@ public final class Accounts {
         Account a = stored(id);
         if (a == null) return;
         put(a.username(), new Account(a.id(), a.username(), a.hash(), a.mcName(), a.mcUuid(),
-            a.access(), a.folders(), a.auditActivity(), a.rank(), a.created(), System.currentTimeMillis(), false));
+            a.access(), a.folders(), a.auditActivity(), a.startCommand(), a.rank(), a.created(), System.currentTimeMillis(), false));
         save();
     }
 

@@ -136,15 +136,29 @@ public class WebFeatureTests {
         ck("each key carries its type", r.body().contains("\"type\":\"BOOL\"")
             && r.body().contains("\"type\":\"INT\""), "");
 
-        // The two locked keys must be marked, and refused.
-        ck("web-start-command is marked locked", locked(r.body(), "web-start-command"), r.body());
         ck("the password hash is marked locked", locked(r.body(), "web-admin-password-hash"), "");
         ck("the hash value is never shipped",
             !r.body().contains(String.valueOf(get("webAdminPasswordHash"))), "hash present in body");
 
-        var w = post("/api/config", "{\"name\":\"web-start-command\",\"value\":\"rm -rf /\"}");
-        ck("setting web-start-command -> 403", w.statusCode() == 403, w.body());
-        ck("...and it is untouched", "".equals(get("webStartCommand")), String.valueOf(get("webStartCommand")));
+        // What a restart runs is not part of Settings' own write level: it is
+        // a shell line on the host and carries its own permission, so it is
+        // marked as needing that rather than as plainly editable.
+        ck("web-start-command is not editable with the rest of Settings",
+            locked(r.body(), "web-start-command"), r.body());
+        ck("...and says which permission it wants instead",
+            field(r.body(), "web-start-command").contains("\"needsStartCommand\":true"),
+            field(r.body(), "web-start-command"));
+
+        // The main account holds that permission, so it may set it. Somebody
+        // who does not is refused; that is AccountTests' half of this.
+        var w = post("/api/config", "{\"name\":\"web-start-command\",\"value\":\"echo hi\"}");
+        ck("the main account may set web-start-command", w.statusCode() == 200, w.body());
+        ck("...and it lands", "echo hi".equals(get("webStartCommand")),
+            String.valueOf(get("webStartCommand")));
+        w = post("/api/config", "{\"name\":\"web-start-command\",\"value\":\"\"}");
+        ck("...and clearing it goes back to reading the command off this server",
+            w.statusCode() == 200 && "".equals(get("webStartCommand")),
+            String.valueOf(get("webStartCommand")));
 
         w = post("/api/config", "{\"name\":\"web-admin-password-hash\",\"value\":\"forged\"}");
         ck("setting the hash -> 403", w.statusCode() == 403, w.body());
@@ -196,10 +210,15 @@ public class WebFeatureTests {
     }
 
     static boolean locked(String body, String key) {
+        return field(body, key).contains("\"editable\":false");
+    }
+
+    /** One key's object out of the config listing. */
+    static String field(String body, String key) {
         int i = body.indexOf("\"name\":\"" + key + "\"");
-        if (i < 0) return false;
+        if (i < 0) return "";
         int end = body.indexOf("}", i);
-        return body.substring(i, end).contains("\"editable\":false");
+        return end < 0 ? body.substring(i) : body.substring(i, end);
     }
 
     static void password() throws Exception {

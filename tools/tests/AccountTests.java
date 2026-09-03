@@ -107,6 +107,26 @@ public class AccountTests {
         Accounts.setAudit(mod.id(), true);
         check("...and can be turned on", Accounts.byUsername("moderator").auditActivity());
 
+        // ---- handing over a shell, deliberately ----
+        // What a restart runs is a command line on the host, so it is not part
+        // of Settings: an account can hold all of Settings and still not be
+        // one that gets to decide what this machine executes.
+        check("nobody may change the start command to begin with",
+            !Accounts.byUsername("moderator").canStartCommand());
+        Accounts.setAccess(mod.id(), "settings", Accounts.WRITE);
+        check("...not even with the whole of Settings",
+            Accounts.byUsername("moderator").canWrite("settings")
+                && !Accounts.byUsername("moderator").canStartCommand());
+        Accounts.setStartCommand(mod.id(), true);
+        check("...and it is a grant of its own",
+            Accounts.byUsername("moderator").canStartCommand());
+        check("the main account has it without being given it",
+            Accounts.owner().canStartCommand());
+        Accounts.setStartCommand(mod.id(), false);
+        check("...and it can be taken back",
+            !Accounts.byUsername("moderator").canStartCommand());
+        Accounts.setStartCommand(mod.id(), true);
+
         // ---- it survives a restart ----
         Accounts.setAccess(mod.id(), "files", Accounts.READ);
         Accounts.init(dir);
@@ -114,6 +134,7 @@ public class AccountTests {
         check("the list is read back from disk", back != null);
         check("...with its grants", back.canRead("files") && !back.canWrite("files"));
         check("...and its recording setting", back.auditActivity());
+        check("...and the start-command grant", back.canStartCommand());
         check("...and its password still verifies",
             Passwords.verify("hunter2hunter2", back.hash()));
 

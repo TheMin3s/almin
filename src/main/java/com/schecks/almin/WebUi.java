@@ -982,6 +982,10 @@ public final class WebUi {
             if (authed(ex)) {
                 o.addProperty("canRelaunch", ServerRelaunch.enabled() && plan.ok());
                 o.addProperty("startCommand", plan.ok() ? plan.display() : "");
+                // Which of the two it is. "Almin reads it off the running
+                // server" and "somebody typed this" are different facts about
+                // the same string, and only one of them can be edited.
+                o.addProperty("startSource", plan.source());
                 if (!plan.ok()) o.addProperty("startProblem", plan.problem());
                 if (!relaunchError.isEmpty()) o.addProperty("relaunchError", relaunchError);
                 // Whether to ask for faces at all. Without this the panel would
@@ -997,6 +1001,7 @@ public final class WebUi {
                     o.addProperty("owner", me.owner());
                     o.addProperty("linkedPlayer", me.mcName());
                     o.addProperty("audited", me.auditActivity());
+                    o.addProperty("canSetStart", me.canStartCommand());
                     JsonObject access = new JsonObject();
                     for (String menu : Accounts.MENUS) access.addProperty(menu, me.level(menu));
                     o.add("access", access);
@@ -1864,13 +1869,25 @@ public final class WebUi {
      * Settings the web panel may read but not write.
      *
      * <p>The password hash has its own route, which hashes rather than storing
-     * what it is given. {@code web-start-command} is the one setting that turns
-     * into a command on the host OS, so it stays where only someone at the
-     * console or in game can set it — the same rule the in-game Web tab
-     * follows.
+     * what it is given.
      */
     private static final java.util.Set<String> WEB_LOCKED_KEYS = java.util.Set.of(
-        "web-admin-password-hash",
+        "web-admin-password-hash"
+    );
+
+    /**
+     * Settings that need the start-command permission rather than Settings.
+     *
+     * <p>{@code web-start-command} is the one setting in Almin that becomes a
+     * command line on the host OS. It used to be refused to the panel outright,
+     * on the grounds that a shell is not what the panel is for — but that
+     * left an owner who had typed one wrong with no way to correct it except a
+     * console they may not have, and an owner editing config.json by hand while
+     * the server was up would have their edit written over by the next save.
+     * So it is settable, and gated on its own permission, which nobody but the
+     * owner holds until it is given away deliberately.
+     */
+    private static final java.util.Set<String> START_COMMAND_KEYS = java.util.Set.of(
         "web-start-command"
     );
 
@@ -1911,6 +1928,14 @@ public final class WebUi {
             if (WEB_LOCKED_KEYS.contains(key.name)) {
                 json(ex, 403, err(key.name + " can't be changed from the web panel."));
                 return;
+            }
+            if (START_COMMAND_KEYS.contains(key.name)) {
+                Accounts.Account me = who(ex);
+                if (me == null || !me.canStartCommand()) {
+                    json(ex, 403, err(key.name + " runs on this machine, so it needs the "
+                        + "start-command permission, which this account does not have."));
+                    return;
+                }
             }
             if (OWNER_ONLY_KEYS.contains(key.name)) {
                 Accounts.Account me = who(ex);
@@ -1967,7 +1992,11 @@ public final class WebUi {
             o.addProperty("type", k.type.name());
             o.addProperty("min", k.min);
             o.addProperty("max", k.max);
-            o.addProperty("editable", !WEB_LOCKED_KEYS.contains(k.name));
+            o.addProperty("editable", !WEB_LOCKED_KEYS.contains(k.name)
+                && !START_COMMAND_KEYS.contains(k.name));
+            // Not "editable", because it is not part of Settings' own write
+            // level: the page has to ask a different question about it.
+            if (START_COMMAND_KEYS.contains(k.name)) o.addProperty("needsStartCommand", true);
             o.addProperty("reloadsPanel", PANEL_RELOADS.contains(k.name));
             // The hash is never shipped, even to a logged-in admin: it is a
             // password equivalent offline, and nothing here needs its value.
@@ -4171,6 +4200,14 @@ public final class WebUi {
                 case "link" -> Accounts.link(id, text(body, "mcName"), text(body, "mcUuid"));
                 case "audit" -> Accounts.setAudit(id,
                     body.has("on") && body.get("on").getAsBoolean());
+                // The same rule as every other grant: you cannot hand over
+                // something you do not hold. Nobody can bootstrap themselves
+                // a shell by granting it to an account they then sign in as.
+                case "startcmd" -> me.canStartCommand()
+                    ? Accounts.setStartCommand(id,
+                        body.has("on") && body.get("on").getAsBoolean())
+                    : Accounts.Result.fail("You cannot give away the start command — you "
+                        + "cannot change it yourself.");
                 case "delete" -> {
                     Accounts.Account going = Accounts.byId(id);
                     Accounts.Result done = Accounts.delete(id);
@@ -4248,6 +4285,7 @@ public final class WebUi {
             o.addProperty("mcName", a.mcName());
             o.addProperty("mcUuid", a.mcUuid());
             o.addProperty("auditActivity", a.auditActivity());
+            o.addProperty("startCommand", a.startCommand());
             o.addProperty("rank", a.level());
             o.addProperty("created", a.created());
             o.addProperty("lastLogin", a.lastLogin());

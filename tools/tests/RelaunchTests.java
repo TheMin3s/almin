@@ -60,6 +60,7 @@ public class RelaunchTests {
         javaBin = ProcessHandle.current().info().command().orElse("java");
 
         planning();
+        saying();
         arming();
         launching();
         lockRoundTrip();
@@ -103,6 +104,51 @@ public class RelaunchTests {
         ck("the new process starts where this one did",
             wd.equals(Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()),
             wd.toString());
+    }
+
+    /**
+     * What a failed relaunch is able to say about itself.
+     *
+     * <p>The replacement's output is inherited, which is right for the case
+     * that works and useless for the case that does not: under a wrapper or a
+     * service manager it goes somewhere other than the console the operator is
+     * reading, and "exit 2" arrives with nothing attached to it. A fast
+     * failure is therefore run once more with its output captured.
+     */
+    static void saying() throws Exception {
+        Method said = ServerRelaunch.class.getDeclaredMethod(
+            "saidWhat", ServerRelaunch.Plan.class, Path.class, long.class);
+        said.setAccessible(true);
+        Method heap = ServerRelaunch.class.getDeclaredMethod("heapNote", ServerRelaunch.Plan.class);
+        heap.setAccessible(true);
+        Path here = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+
+        ServerRelaunch.Plan loud = new ServerRelaunch.Plan(
+            List.of("/bin/sh", "-c", "echo 'cannot cd to /nope' >&2; exit 2"),
+            "sh -c ...", "web-start-command", "");
+        String out = (String) said.invoke(null, loud, here, 300L);
+        ck("a replacement that failed fast is asked again, and quoted",
+            out.contains("cannot cd to /nope"), out);
+
+        ServerRelaunch.Plan quiet = new ServerRelaunch.Plan(
+            List.of("/bin/sh", "-c", "exit 2"), "sh -c ...", "web-start-command", "");
+        String none = (String) said.invoke(null, quiet, here, 300L);
+        ck("...and one that says nothing at all is told that that is what happened",
+            none.contains("printed nothing at all"), none);
+
+        // Anything that lived this long was loading a world, and starting it a
+        // second time behind the operator's back is not a diagnostic.
+        String slow = (String) said.invoke(null, loud, here, 60_000L);
+        ck("a slow failure is never run again",
+            !slow.contains("cannot cd to /nope") && slow.contains("Nothing else is known"), slow);
+
+        ck("a command with a heap size is told the old one is still holding its own",
+            ((String) heap.invoke(null, new ServerRelaunch.Plan(List.of("x"),
+                "java -Xmx8G -jar server.jar", "web-start-command", "")))
+                .contains("still running while the replacement starts"), "");
+        ck("...and one without a heap size is not lectured about heaps",
+            ((String) heap.invoke(null, new ServerRelaunch.Plan(List.of("x"),
+                "./start.sh", "web-start-command", ""))).isEmpty(), "");
     }
 
     /** Arming is what turns a stop into a restart, and it can be refused. */
