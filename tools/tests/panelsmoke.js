@@ -443,7 +443,9 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
                     'loadBlueMapStatus', 'usingBlueMap', 'setBlueMapMode', 'paintBlueMap',
                     'resetBlueMapDialog',
                     'blueMapPayload', 'openBlueScene', 'inspectBlueWorld',
-                    'fold', 'foldSetup', 'foldHint', 'paintKeys', 'cfgGroupOf']) {
+                    'fold', 'foldSetup', 'foldHint', 'paintKeys', 'cfgGroupOf',
+                    'sceneTrails', 'sceneWalkers', 'sceneHolds', 'thinScenePath',
+                    'paintSceneWho']) {
     if (typeof sandbox[fn] !== 'function') {
       console.log('  FAIL  ' + fn + ' is defined');
       failures.push(fn + ' missing');
@@ -1508,6 +1510,103 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     return witness && witness.y === 82 && /Witness · 3,82,-2/.test(svg)
       ? true : 'the altitude-aware witness was not plotted';
   });
+
+  // ---- trails in the 3D view ----
+  // The map has always drawn where people walked, one colour each. The 3D
+  // view drew only where they were standing when the frame was taken, which
+  // answered "who was here" but not "where did they come from".
+  {
+    const savedData = sandbox.allData, savedScene = sandbox.scene;
+    const at = Date.now();
+    const walk = (x0, y, n, step) => {
+      const out = [];
+      for (let i = 0; i < n; i++)
+        out.push({ at: at + i * step, dim: 'overworld', x: x0 + i, y: y, z: i % 3 });
+      return out;
+    };
+    sandbox.allData = { trackSeconds: 5, tracks: {
+      Builder: walk(0, 64, 6, 100),
+      Witness: walk(2, 66, 6, 100)
+    }, actions: [
+      { at: at, player: 'Builder', dim: 'overworld', action: 'place', detail: 'Stone',
+        x: 0, y: 64, z: 0, count: 1 },
+      { at: at + 500, player: 'Builder', dim: 'overworld', action: 'place', detail: 'Stone',
+        x: 1, y: 64, z: 0, count: 1 }
+    ] };
+    sandbox.scene = sandbox.sceneOf({ kind: 'build', events: 20, player: 'Builder',
+      dim: 'overworld', from: at - 1, to: at + 600, x: 0, y: 64, z: 0 });
+    sandbox.mapOpts.scenePaths = true;
+    const base = sandbox.scene.minY;
+    const strokes = (svg) => (svg.match(/stroke="([^"]+)"/g) || []).map((m) =>
+      m.slice(8, -1));
+
+    check('each player walks their own colour in the 3D view', () => {
+      const svg = sandbox.sceneTrails(at + 600, 10, base);
+      const mine = sandbox.playerColor('Builder'), theirs = sandbox.playerColor('Witness');
+      if (mine === theirs) return 'two players were given one colour';
+      const drawn = strokes(svg);
+      return drawn.includes(mine) && drawn.includes(theirs)
+        ? true : 'the trails came out as: ' + drawn.join(', ');
+    });
+
+    check('...the same colour as the marker it ends at', () => {
+      const people = sandbox.scenePeopleAt(at + 600);
+      const who = people.find((p) => p.player === 'Witness');
+      if (!who) return 'the second player was not in the scene at all';
+      const marker = sandbox.scenePlayer(who.x, who.y - base, who.z, 10, who);
+      return strokes(marker).includes(sandbox.playerColor('Witness'))
+        ? true : 'the marker and the trail disagree about who that is';
+    });
+
+    check('a trail stops where the replay has got to', () => {
+      const points = (svg, colour) => {
+        const re = new RegExp('points="([^"]*)"[^>]*stroke="' +
+          colour.replace(/[()%]/g, (c) => '\\' + c) + '"');
+        const m = svg.match(re);
+        return m ? m[1].trim().split(' ').length : 0;
+      };
+      const mine = sandbox.playerColor('Builder');
+      const early = points(sandbox.sceneTrails(at + 100, 10, base), mine);
+      const late = points(sandbox.sceneTrails(at + 600, 10, base), mine);
+      return late > early && early > 0
+        ? true : 'the whole path was drawn whatever frame it was (' + early + '/' + late + ')';
+    });
+
+    check('...and where they went next is drawn faintly', () => {
+      const svg = sandbox.sceneTrails(at + 200, 10, base);
+      return /opacity="\.2"/.test(svg) ? true : 'no line ahead of the frame';
+    });
+
+    check('a long walk is thinned rather than drawn sample by sample', () => {
+      sandbox.allData.tracks.Builder = walk(0, 64, 900, 1);
+      sandbox.scene = sandbox.sceneOf({ kind: 'build', events: 20, player: 'Builder',
+        dim: 'overworld', from: at - 1, to: at + 600, x: 0, y: 64, z: 0 });
+      const svg = sandbox.sceneTrails(at + 1000, 10, sandbox.scene.minY);
+      const worst = Math.max(0, ...(svg.match(/points="([^"]*)"/g) || [])
+        .map((m) => m.slice(8, -1).trim().split(' ').length));
+      return worst > 1 && worst <= 201
+        ? true : 'one trail was drawn with ' + worst + ' points';
+    });
+
+    check('turning paths off takes them out of the picture', () => {
+      sandbox.mapOpts.scenePaths = false;
+      const off = sandbox.sceneTrails(at + 600, 10, sandbox.scene.minY);
+      sandbox.mapOpts.scenePaths = true;
+      return off === '' ? true : 'the trails were still drawn';
+    });
+
+    check('the key under the picture names whose colour is whose', () => {
+      const box = document.createElement('div');
+      box.id = 'sc-who';
+      sandbox.paintSceneWho();
+      const html = box._html || '';
+      return /Builder/.test(html) && /Witness/.test(html)
+          && html.includes(sandbox.playerColor('Witness'))
+        ? true : 'the colour key came out as: ' + html;
+    });
+
+    sandbox.scene = savedScene; sandbox.allData = savedData;
+  }
 
   // ---- forgetting with age ----
   check('nothing fades until it is asked to', () => {

@@ -2480,7 +2480,7 @@ final class WebPage {
                             paths:true, players:true,
                             cluster:true, overlays:true,
                             sequences:true, refresh:10, v:3, sceneGround:true,
-                            sceneGrid:true, sceneEvents:false, grid:true,
+                            sceneGrid:true, sceneEvents:false, scenePaths:true, grid:true,
                             // Off by default: the map's job is to show what
                             // happened, and something that quietly removes
                             // things should be asked for rather than assumed.
@@ -5217,6 +5217,7 @@ final class WebPage {
                 '<button class="btn go" id="sc-play">Replay</button>'+
                 '<button class="btn" id="sc-ground">World</button>'+
                 '<button class="btn" id="sc-grid">Grid</button>'+
+                '<button class="btn" id="sc-paths">Paths</button>'+
                 '<input type="range" id="sc-at" min="1" max="'+
                   Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length)+
                   '" value="'+
@@ -5225,6 +5226,7 @@ final class WebPage {
               '</div>'+
               '<div class="scenepick" id="sc-picked">Click a block to identify it and read '+
                 'its exact world coordinates.</div>'+
+              '<div class="scenekey" id="sc-who"></div>'+
               '<div class="scenekey">'+
                 (built.look==='fight'
                   ? '<span><i style="background:#ff3b3b"></i>something was hit</span>'+
@@ -5253,6 +5255,10 @@ final class WebPage {
               grid.className='btn'+(mapOpts.sceneGrid?' on':'');
               grid.onclick=()=>{ mapOpts.sceneGrid=!mapOpts.sceneGrid; saveMapOpts();
                 grid.className='btn'+(mapOpts.sceneGrid?' on':''); paintScene(); };
+              const paths=$('sc-paths');
+              paths.className='btn'+(mapOpts.scenePaths?' on':'');
+              paths.onclick=()=>{ mapOpts.scenePaths=!mapOpts.scenePaths; saveMapOpts();
+                paths.className='btn'+(mapOpts.scenePaths?' on':''); paintScene(); };
               paintScene();
             },0);
           },{onClose:()=>{ stopScene(); scene=null; }});
@@ -5337,9 +5343,7 @@ final class WebPage {
             // A sampling tick can fall just after the first build event. Use
             // that nearest sample until an earlier one exists.
             if(!found) found=points[0];
-            if(found && Math.abs(found.x)<=scene.radius && Math.abs(found.z)<=scene.radius
-               && found.y>=scene.contextMinY-24 && found.y<=scene.contextMaxY+24)
-              out.push(found);
+            if(found && sceneHolds(found)) out.push(found);
           }
           return out;
         }
@@ -5376,6 +5380,11 @@ final class WebPage {
           // chosen to fit rather than hoped at. The grid's four real-world
           // corners are part of the frame even before live context arrives.
           const framed=all.slice();
+          // The trail is part of the picture, so the picture has to be big
+          // enough for it. Only the samples that passed sceneHolds, which is
+          // also all that gets drawn.
+          if(mapOpts.scenePaths)
+            for(const p of scene.players||[]) if(sceneHolds(p)) framed.push(p);
           if(mapOpts.sceneGrid){
             const r=scene.radius, y=base-1;
             framed.push({x:-r,z:-r,y:y},{x:r,z:-r,y:y},{x:r,z:r,y:y},{x:-r,z:r,y:y},
@@ -5424,8 +5433,9 @@ final class WebPage {
             sceneTextureDefs(shown.concat(world))+
             '<g transform="translate('+tx.toFixed(1)+' '+ty.toFixed(1)+')">'+
             groundPlane(S,base)+sceneGridSvg(S,base,top)+
-            items.map(i=>i.svg).join('')+'</g></svg>';
+            items.map(i=>i.svg).join('')+sceneTrails(frameAt,S,base)+'</g></svg>';
           wireSceneInspect(box);
+          paintSceneWho();
 
           const count=$('sc-count');
           if(count){
@@ -5444,6 +5454,24 @@ final class WebPage {
                 (scene.worldTruncated?' \u00b7 world context trimmed':'');
             }
           }
+        }
+
+        /**
+         * Whose colour is whose, under the picture.
+         *
+         * <p>The markers carry names, but a marker can be behind a wall or
+         * off in a corner while its trail runs right through the middle of
+         * the scene. This is the list that makes a colour readable on its
+         * own.
+         */
+        function paintSceneWho(){
+          const box=$('sc-who'); if(!box) return;
+          const walkers=mapOpts.scenePaths?sceneWalkers():[];
+          if(!walkers.length){ box.innerHTML=''; return; }
+          box.innerHTML=walkers.map(w=>'<span><i style="background:'+playerColor(w)+
+            '"></i>'+esc(w)+'</span>').join('')+
+            '<span class="muted">Each person walks their own colour, the same one the '+
+            'map gives them. The faint line is where they went next.</span>';
         }
 
         /** A world-aligned X/Z floor and Y ruler for the isometric view. */
@@ -5729,6 +5757,90 @@ final class WebPage {
           return '<polygon points="'+points+'" fill="url(#'+texturePatternId(c.what,face)+
             ')" opacity="'+opacity+'"/>'+(shade?'<polygon points="'+points+
             '" fill="#000" opacity="'+shade+'"/>':'');
+        }
+
+        /**
+         * The most points one player's trail is drawn with.
+         *
+         * <p>A replay repaints the whole scene every sixty milliseconds, so a
+         * long session sampled every few seconds has to be thinned or the
+         * picture is a thousand line segments redrawn seventeen times a
+         * second. Two hundred is more than an isometric window can resolve.
+         */
+        const SCENE_PATH_POINTS=200;
+
+        function thinScenePath(points){
+          if(points.length<=SCENE_PATH_POINTS) return points;
+          const out=[], step=points.length/SCENE_PATH_POINTS;
+          for(let i=0;i<SCENE_PATH_POINTS;i++) out.push(points[Math.floor(i*step)]);
+          // The end of a path is the one point that must survive thinning:
+          // it is where the player is standing.
+          if(out[out.length-1]!==points[points.length-1]) out.push(points[points.length-1]);
+          return out;
+        }
+
+        /** Every trail owner in this scene, so the colours can be named. */
+        function sceneWalkers(){
+          const out=[];
+          for(const p of (scene&&scene.players)||[])
+            if(sceneHolds(p) && out.indexOf(p.player)<0) out.push(p.player);
+          return out;
+        }
+
+        /** Whether a recorded position is inside the picture at all. */
+        function sceneHolds(p){
+          return !!scene && Math.abs(p.x)<=scene.radius && Math.abs(p.z)<=scene.radius
+            && p.y>=scene.contextMinY-24 && p.y<=scene.contextMaxY+24;
+        }
+
+        /**
+         * Where each player walked, in that player's own colour.
+         *
+         * <p>The same colour the map gives them and the same colour as the
+         * marker the trail ends at, because the whole use of colouring a path
+         * is being able to say "that is the same person" across two pictures
+         * without reading a label.
+         *
+         * <p>Drawn over the blocks rather than sorted into them. A path is a
+         * line through a volume \u2014 half of most segments is behind
+         * something and half in front \u2014 and with the loaded world turned
+         * on, the ground somebody walked on is precisely what would swallow
+         * the trail. A thin line over the top is legible; a correctly
+         * occluded one would be mostly missing.
+         */
+        function sceneTrails(at,S,base){
+          if(!scene || !mapOpts.scenePaths) return '';
+          const grouped=new Map();
+          for(const p of scene.players||[]){
+            if(!sceneHolds(p)) continue;
+            if(!grouped.has(p.player)) grouped.set(p.player,[]);
+            grouped.get(p.player).push(p);
+          }
+          const out=[];
+          for(const [who,points] of grouped){
+            const colour=playerColor(who);
+            const xy=p=>{
+              const r=turned(p,scene.turn);
+              return isoX(r.x,r.z,S).toFixed(1)+','+isoY(r.x,p.y-base,r.z,S).toFixed(1);
+            };
+            const line=(pts,stroke,width,opacity,title)=>
+              '<polyline points="'+pts.map(xy).join(' ')+'" fill="none" stroke="'+stroke+
+              '" stroke-width="'+width.toFixed(1)+'" stroke-linejoin="round" '+
+              'stroke-linecap="round" opacity="'+opacity+'" pointer-events="none">'+
+              (title?'<title>'+esc(title)+'</title>':'')+'</polyline>';
+            // Where they went afterwards, faint: it is context for the frame
+            // on screen, not part of it.
+            const ahead=thinScenePath(points.filter(p=>p.at>=at));
+            if(ahead.length>1)
+              out.push(line(ahead,colour,Math.max(1,S*0.09),'.2',''));
+            const walked=thinScenePath(points.filter(p=>p.at<=at));
+            if(walked.length>1){
+              const w=Math.max(1.6,S*0.15);
+              out.push(line(walked,'#0b0d11',w+2,'.5',''));
+              out.push(line(walked,colour,w,'.85',who+' walked here'));
+            }
+          }
+          return out.length?'<g class="sc-trails">'+out.join('')+'</g>':'';
         }
 
         /** A recorded player position, with altitude visible in the label. */
