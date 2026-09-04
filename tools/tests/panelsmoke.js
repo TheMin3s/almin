@@ -3937,7 +3937,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     const wasLive=sandbox.live; sandbox.live=true;
     const departed=sandbox.blueMapPayload(leftData,[],[],[]).players[0];
     const leftHead=departed&&departed.gone&&departed.text==='Alex'&&
-      departed.title.includes('Alex · left at '+sandbox.fmtWhen(leftAt))&&
+      departed.title.includes('Alex left here')&&
+      departed.title.includes('at '+sandbox.fmtWhen(leftAt))&&
       !departed.title.includes('afk');
     console.log((leftHead ? '  PASS  ' : '  FAIL  ') +
       'a departed BlueMap player is a timed head, not an AFK player');
@@ -3962,6 +3963,151 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log((ownHeads ? '  PASS  ' : '  FAIL  ') +
       "BlueMap's own live player heads are turned off once the timeline moves back");
     if (!ownHeads) failures.push('the BlueMap payload does not say whether it is live');
+
+    // ---- what the flat map could do and the 3D one could not ----
+    // Eleven of these were only ever wired to the SVG. The point of each
+    // check is that the two renderers now answer the same way, so the next
+    // one that drifts fails here rather than being noticed in a screenshot.
+    {
+      // 1. Zoom, as buttons. BlueMap zooms on the wheel, which is not a
+      // control on a touchscreen.
+      const zin = byId.get('t-blue-in'), zout = byId.get('t-blue-out');
+      check('the 3D map has zoom buttons, like the flat one', () =>
+        zin && zout ? true : 'no + / − on the 3D map');
+
+      sandbox.blueCamera = { x: 10, y: 70, z: 20, distance: 400, map: 'world' };
+      sandbox.zoomBlue(1 / 1.5);
+      const closer = sandbox.bluePendingState.focus;
+      check('...and pressing + moves the camera closer', () =>
+        closer && Math.round(closer.distance) === Math.round(400 / 1.5)
+          ? true : 'distance went to ' + (closer && closer.distance));
+      check('...without putting the view back overhead', () =>
+        closer && closer.keep === true ? true : 'zoom reset the camera angle');
+
+      // 2. The head says the same thing on both maps, including that it does
+      // something when clicked.
+      const stillAt = clock - 5 * 60000;
+      const hereData = { shownNames: ['Alex'], shownActs: [],
+        tracks: { Alex: [{ at: stillAt, dim: 'overworld', x: 12, y: 64, z: 18 }] },
+        ids: {}, online: [{ name: 'Alex' }], away: {}, afkSecs: 20,
+        cursor: clock, now: clock, leftPlayerHours: 24, windowMs: 4 * 3600000 };
+      const head = sandbox.blueMapPayload(hereData, [], [], []).players[0];
+      check('a 3D player head says what clicking it does, as the flat one does', () =>
+        head && /click to show only them/.test(head.title)
+          ? true : 'head said: ' + (head && head.title));
+      check('...and an idle one says how long they have not moved', () =>
+        head && /not moving for/.test(head.title)
+          ? true : 'idle head said: ' + (head && head.title));
+
+      // 3. Faces obey the server's own switch.
+      const wasHeads = sandbox.headsOn;
+      sandbox.headsOn = false;
+      const faceless = sandbox.blueMapPayload({ ...hereData,
+        ids: { Alex: '00000000-0000-0000-0000-0000000000bb' } }, [], [], []).players[0];
+      sandbox.headsOn = wasHeads;
+      check('the 3D map stops asking for faces when the server has them off', () =>
+        faceless && !faceless.icon ? true : 'it still asked for ' + faceless.icon);
+
+      // 4. A group of marks says how many rows are behind it, and that it opens.
+      const group = [
+        { at: clock - 3000, player: 'Steve', mask: '', action: 'break',
+          detail: 'Stone', count: 2, x: 4, y: 63, z: 8, dim: 'overworld' },
+        { at: clock - 2000, player: 'Alex', mask: '', action: 'place',
+          detail: 'Oak Planks', count: 3, x: 6, y: 64, z: 10, dim: 'overworld' }];
+      const tale = sandbox.clusterTale(group);
+      check('a group of marks says its rows, its total, and that it opens', () =>
+        /2 entries/.test(tale) && /5 in total/.test(tale)
+          && /click to list them/.test(tale) ? true : tale);
+
+      // 5. The rows inside it go somewhere.
+      const listed = sandbox.blueClusterHtml(group);
+      const moments = [...listed.matchAll(/data-at="(\d+)"/g)].map((m) => +m[1]);
+      check('...and each row inside carries the moment it happened', () =>
+        moments.length === 2 && moments.every((n) => n > 0)
+          ? true : 'row moments: ' + moments.join(','));
+      const wasCursor = sandbox.cursorAt, wasLiveNow = sandbox.live;
+      // Inside the period the map is showing, or the cursor is clamped to its
+      // end and the check is about the clamp rather than about the row.
+      const inRange = Math.round((sandbox.allData.from + sandbox.allData.to) / 2);
+      sandbox.blueGoTo(inRange, 'overworld', 4, 63, 8);
+      check('...and going to one takes the timeline there and stops playing', () =>
+        sandbox.cursorAt === inRange && sandbox.live === false
+          ? true : 'cursor is ' + sandbox.cursorAt + ', live ' + sandbox.live);
+      check('...and takes the 3D camera with it, without resetting the angle', () =>
+        sandbox.bluePendingState.focus && sandbox.bluePendingState.focus.x === 4
+          && sandbox.bluePendingState.focus.keep === true
+          ? true : JSON.stringify(sandbox.bluePendingState.focus));
+      sandbox.cursorAt = wasCursor; sandbox.live = wasLiveNow;
+
+      // 6. The strip shuts.
+      sandbox.bluePicked = listed;
+      sandbox.paintBluePicked();
+      const shut = byId.get('t-blue-shut');
+      check('the 3D map’s info panel can be closed, as the flat one’s can', () =>
+        shut && shut.onclick ? true : 'no close button on the picked panel');
+      shut.onclick();
+      check('...and closing it empties it', () =>
+        sandbox.bluePicked === '' ? true : 'still: ' + sandbox.bluePicked.slice(0, 60));
+
+      // 7. The legend draws the marks it is naming.
+      sandbox.paintAll();
+      const legend = byId.get('t-legend')._html || '';
+      check('the 3D legend draws the real marks, not a stand-in dot', () =>
+        /<svg /.test(legend) && !/●/.test(legend) ? true : legend.slice(0, 140));
+    }
+
+    // ---- putting a build up a block at a time, in the world ----
+    {
+      const built = { player: 'Steve', headline: 'Built something', kind: 'build',
+        events: 20, dim: 'overworld', from: clock - 60000, to: clock - 1000,
+        x: 4, y: 64, z: 8 };
+      const wasActs = sandbox.allData.actions;
+      const cubes = [];
+      for (let i = 0; i < 12; i++) {
+        cubes.push({ at: clock - 60000 + i * 1000, player: 'Steve', mask: '',
+          action: 'place', detail: 'Oak Planks', count: 1, dim: 'overworld',
+          x: 4 + i, y: 64, z: 8 });
+      }
+      sandbox.allData.actions = wasActs.concat(cubes);
+      sandbox.blueCamera = { x: 8, y: 70, z: 8, distance: 300, map: 'world' };
+      sandbox.openBlueScene(built);
+
+      const total = sandbox.blueSceneSteps();
+      const blocks = () => (sandbox.bluePendingState.scenes || [])
+        .filter((m) => m.kind === 'block').length;
+      check('a 3D event knows how many pieces it goes up in', () =>
+        total >= 8 ? true : 'steps: ' + total);
+      check('...and opens with the whole thing standing', () =>
+        blocks() === total ? true : blocks() + ' of ' + total + ' blocks');
+
+      sandbox.blueSceneUpto = 4;
+      sandbox.paintAll();
+      check('...and scrubbing back leaves only what was there by then', () =>
+        blocks() === 4 ? true : blocks() + ' blocks at step 4');
+
+      const bar = byId.get('t-blue-scenebar');
+      check('the replay bar is on the map while the event is open', () =>
+        bar && bar.style.display !== 'none' && /t-blue-play/.test(bar._html || '')
+          ? true : 'no replay bar');
+      check('...and says where in it you are', () =>
+        (byId.get('t-blue-count').textContent || '') === '4 / ' + total
+          ? true : byId.get('t-blue-count').textContent);
+
+      sandbox.toggleBlueScene();
+      const playing = byId.get('t-blue-play').textContent === 'Pause';
+      tick(3, 200);
+      const moved = sandbox.blueSceneUpto > 4;
+      sandbox.stopBlueScene();
+      check('...and Replay puts the rest of it up on its own', () =>
+        playing && moved ? true : 'playing=' + playing + ' upto=' + sandbox.blueSceneUpto);
+
+      sandbox.blueScene = null; sandbox.bluePicked = '';
+      sandbox.allData.actions = wasActs;
+      sandbox.paintAll();
+      check('closing the event takes the replay bar with it', () =>
+        byId.get('t-blue-scenebar').style.display === 'none'
+          ? true : 'the bar stayed');
+    }
 
     // ---- an account that is not shown coordinates ----
     // The map still draws; it stops being a list of grid references.

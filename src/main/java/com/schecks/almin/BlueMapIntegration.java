@@ -475,18 +475,57 @@ final class BlueMapIntegration {
             const n=m?parseInt(m[1],16):0x9aa3ae;
             return {r:(n>>16)&255,g:(n>>8)&255,b:n&255,a:0.72};
           };
+          // What a mark says, as Almin's own tooltip rather than the
+          // browser's. `title` waits about a second, cannot be styled, and is
+          // cut short on some platforms — and the flat map has never used it:
+          // it draws its own, instantly, wherever the mark is. `aria-label`
+          // carries the same sentence for anything that is not a pointer.
+          const says=m=>'data-almin-tip="'+esc(m.title||'')+'" aria-label="'+
+            esc(m.title||'')+'" ';
           const markerHtml=m=>'<button class="almin-mark '+esc(m.shape||'dot')+'" '+
             'data-almin-kind="'+esc(m.kind||'action')+'" data-almin-id="'+esc(m.id)+'" '+
             'style="--almin-color:'+esc(m.color||'#9aa3ae')+';--almin-size:'+
-            esc(m.size||1)+';opacity:'+(m.opacity==null?1:m.opacity)+'" title="'+
-            esc(m.title||'')+'">'+esc(m.text||'')+'</button>';
+            esc(m.size||1)+';opacity:'+(m.opacity==null?1:m.opacity)+'" '+says(m)+'>'+
+            esc(m.text||'')+'</button>';
           const headHtml=m=>'<button class="almin-head'+(m.gone?' gone':'')+'" data-almin-kind="player" '+
             'data-almin-id="'+esc(m.id)+'" style="--almin-color:'+esc(m.color)+';--almin-size:'+
-            esc(m.size||1)+'" title="'+esc(m.title||'')+'">'+
+            esc(m.size||1)+'" '+says(m)+'>'+
             (m.icon?'<img src="'+esc(m.icon)+'" alt="">':'<span class="almin-fallback">'+
               esc(m.fallback||'?')+'</span>')+
             (m.gone?'<i class="almin-left-clock" aria-hidden="true"></i>':
               '<span class="almin-name">'+esc(m.text)+'</span>')+'</button>';
+
+          /**
+           * Almin's tooltip, inside BlueMap's page.
+           *
+           * <p>Fixed to the viewport and clamped to it, so a mark at the edge
+           * is described on screen rather than half off it. Hidden on every
+           * render: the mark it was describing may not be in the new one.
+           */
+          let tipEl=null;
+          function tipBox(){
+            if(tipEl && tipEl.parentNode) return tipEl;
+            tipEl=document.createElement('div');
+            tipEl.id='almin-tip';
+            tipEl.setAttribute('aria-hidden','true');
+            document.body.appendChild(tipEl);
+            return tipEl;
+          }
+          function hideTip(){ if(tipEl) tipEl.style.opacity='0'; }
+          function showTip(el){
+            const text=el.getAttribute('data-almin-tip')||'';
+            const tip=tipBox();
+            tip.textContent=text;
+            if(!text){ tip.style.opacity='0'; return; }
+            tip.style.opacity='1';
+            const r=el.getBoundingClientRect(), t=tip.getBoundingClientRect();
+            const x=Math.max(6,Math.min(window.innerWidth-t.width-6,
+              r.left+r.width/2-t.width/2));
+            // Above the mark, unless there is no room above it.
+            const above=r.top-t.height-8;
+            tip.style.left=x+'px';
+            tip.style.top=(above>6?above:r.bottom+8)+'px';
+          }
 
           function ensureRoot(){
             const app=window.bluemap, api=window.BlueMap;
@@ -587,6 +626,7 @@ final class BlueMapIntegration {
 
           async function render(){
             if(!state||!ensureRoot()) return;
+            hideTip();
             livePlayers(state.livePlayers!==false);
             hideCoords(state.hideCoords===true);
             await chooseMap(state.dimension);
@@ -613,7 +653,10 @@ final class BlueMapIntegration {
               const c=window.bluemap.mapViewer.controlsManager;
               c.position.set(state.focus.x,state.focus.y||0,state.focus.z);
               c.distance=Math.max(20,state.focus.distance||140);
-              window.bluemap.setPerspectiveView(0,20);
+              // Zooming is not asking to be put back overhead. Everything else
+              // that moves this camera is going somewhere, and wants the
+              // straight-down view it arrives in.
+              if(!state.focus.keep) window.bluemap.setPerspectiveView(0,20);
               window.bluemap.mapViewer.updateLoadedMapArea();
               window.bluemap.mapViewer.redraw();
             }
@@ -624,6 +667,14 @@ final class BlueMapIntegration {
                !e.data||e.data.source!==SOURCE) return;
             if(e.data.type==='state'){ state=e.data.state; render().catch(console.error); }
           });
+          document.addEventListener('mouseover',e=>{
+            const t=e.target.closest&&e.target.closest('[data-almin-tip]');
+            if(t) showTip(t); else hideTip();
+          },true);
+          document.addEventListener('mouseout',e=>{
+            if(e.target.closest&&e.target.closest('[data-almin-tip]')) hideTip();
+          },true);
+          window.addEventListener('blur',hideTip);
           document.addEventListener('click',e=>{
             const target=e.target.closest&&e.target.closest('[data-almin-id]');
             if(!target) return;
@@ -660,7 +711,12 @@ final class BlueMapIntegration {
           function injectStyle(){
             if(document.getElementById('almin-bridge-style')) return;
             const s=document.createElement('style'); s.id='almin-bridge-style';
-            s.textContent='body.almin-no-coords .hud,'+
+            s.textContent='#almin-tip{position:fixed;z-index:2147483000;pointer-events:none;'+
+              'opacity:0;transition:opacity .08s;max-width:min(360px,70vw);'+
+              'background:rgba(11,13,17,.95);border:1px solid #2b3039;border-radius:7px;'+
+              'padding:5px 9px;color:#e8eaed;font:12px system-ui;box-shadow:0 6px 20px #000a;'+
+              'white-space:pre-wrap;left:0;top:0}'+
+              'body.almin-no-coords .hud,'+
               'body.almin-no-coords .bm-position,'+
               'body.almin-no-coords .position,'+
               'body.almin-no-coords [class*="position"],'+

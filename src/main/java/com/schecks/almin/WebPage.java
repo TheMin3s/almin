@@ -152,6 +152,28 @@ final class WebPage {
           .bluepicked .bcl .bx{color:var(--brand);font-variant-numeric:tabular-nums}
           .bluepicked .bcl .bd{word-break:break-word}
           .bluepicked .bcl .bt{color:var(--mute);white-space:nowrap}
+          .bluepicked .bcl[data-at]{cursor:pointer;border-radius:5px;
+                                    padding-left:4px;padding-right:4px;margin:0 -4px}
+          .bluepicked .bcl[data-at]:hover{background:rgba(255,255,255,.06)}
+          .bluepicked .bcl[data-at]:focus-visible{outline:2px solid var(--brand);
+                                                  outline-offset:-2px}
+          .bluepicked .bshut{float:right;margin:-2px -4px 0 8px;width:20px;height:20px;
+                             padding:0;line-height:1;border-radius:5px;border:0;
+                             background:transparent;color:var(--dim);cursor:pointer;
+                             font-size:15px}
+          .bluepicked .bshut:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+          /* The replay for whatever 3D event is open, over the map it is being
+             put up on — beside the panel that names it rather than under the
+             map, because you are watching the world, not this strip. */
+          .bluescenebar{position:absolute;right:12px;bottom:12px;display:flex;gap:9px;
+                        align-items:center;max-width:min(420px,64%);
+                        background:rgba(11,13,17,.9);border:1px solid var(--line);
+                        border-radius:8px;padding:6px 10px;pointer-events:auto}
+          .bluescenebar .btn{padding:4px 10px;font-size:12.5px}
+          .bluescenebar input[type=range]{flex:1;min-width:110px;accent-color:var(--brand);
+                                          padding:0}
+          .bluescenebar .num{white-space:nowrap;font-variant-numeric:tabular-nums}
+          .fullmap .bluescenebar{bottom:150px}
           .legend svg{width:15px;height:15px;display:inline-block;vertical-align:-3px}
           /* ---- the timeline map ---- */
           .maplayout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
@@ -4433,8 +4455,21 @@ final class WebPage {
             '<text x="'+x.toFixed(1)+'" y="'+(y+h*0.30).toFixed(1)+'" text-anchor="middle" '+
             'fill="'+c+'" font-size="'+(h*0.66).toFixed(1)+'" font-weight="700" '+
             'font-family="inherit">'+label+'</text>'+
-            '<title>'+items.length+' entr'+(items.length===1?'y':'ies')+', '+total+
-            ' in total — click to list them</title></g>';
+            '<title>'+clusterTale(items)+'</title></g>';
+        }
+
+        /**
+         * What a group of marks is saying, wherever it is drawn.
+         *
+         * <p>The number on the box is the total; the number of separate rows
+         * behind it is not the same thing, and which one you are looking at
+         * matters. The 3D map said neither, and did not say the box opened.
+         */
+        function clusterTale(items){
+          let total=0;
+          for(const a of items) total+=Math.max(1,a.count||1);
+          return items.length+' entr'+(items.length===1?'y':'ies')+', '+total+
+            ' in total \u2014 click to list them';
         }
 
         /**
@@ -4584,6 +4619,20 @@ final class WebPage {
           return '';
         }
 
+        /**
+         * What a badge on the map is saying, wherever it is drawn.
+         *
+         * <p>The headline says what somebody did; the meaning underneath it
+         * says what the model made of it, which is the part worth hovering
+         * for. The 3D map used to show only the headline.
+         */
+        function episodeTale(e){
+          const note=momentFor(e), means=meaningFor(e);
+          return (e.mask||e.player)+' · '+e.headline+
+            (means?' — '+means:(note&&note.why?' — '+note.why:''))+
+            ' · '+fmtAgo(e.to)+(hasShape(e)?' · click to see it':'');
+        }
+
         function wireSequences(box,shown){
           const svg=$('t-svg'), tip=$('t-tip');
           box.querySelectorAll('.tsq').forEach(el=>{
@@ -4598,11 +4647,7 @@ final class WebPage {
             el.addEventListener('mouseenter',()=>{
               const e=shown[+el.getAttribute('data-i')];
               if(!e) return;
-              const note=momentFor(e);
-              const means=meaningFor(e);
-              tip.textContent=(e.mask||e.player)+' · '+e.headline+
-                (means?' — '+means:(note&&note.why?' — '+note.why:''))+
-                ' · '+fmtAgo(e.to)+(hasShape(e)?' · click to see it':'');
+              tip.textContent=episodeTale(e);
               placeTip(tip,el,svg,box);
             });
             el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
@@ -4713,11 +4758,22 @@ final class WebPage {
           }
         }
 
-        function paintLegend(shownNames,shownActs,span,shot){
-          const used=[...new Set(shownActs.map(a=>a.action))];
-          const key=used.map(u=>'<span><svg width="16" height="16" viewBox="-9 -9 18 18" '+
+        /**
+         * The shapes on the map, named.
+         *
+         * <p>The same drawing the map uses, not a coloured dot standing in for
+         * it: a key whose marks do not match the marks is a key you have to
+         * translate before you can use it.
+         */
+        function actionKeyHtml(used){
+          return used.map(u=>'<span><svg width="16" height="16" viewBox="-9 -9 18 18" '+
             'style="vertical-align:-3px">'+marker(u,0,0,ACTION_COLOR[u]||'#9aa3ae',1.1)+
             '</svg> '+esc(u)+'</span>').join('');
+        }
+
+        function paintLegend(shownNames,shownActs,span,shot){
+          const used=[...new Set(shownActs.map(a=>a.action))];
+          const key=actionKeyHtml(used);
           $('t-legend').innerHTML=
             shownNames.map(n=>'<span class="pill-who" data-who="'+esc(n)+'" '+
               'style="cursor:pointer"><i style="background:'+playerColor(n)+'"></i>'+
@@ -5234,10 +5290,19 @@ final class WebPage {
          * anything else you know.
          */
         function headStory(el){
-          const who=el.getAttribute('data-who')||'';
-          const state=el.getAttribute('data-state');
-          const at=+el.getAttribute('data-at')||0;
-          const still=+el.getAttribute('data-still')||0;
+          return headTale(el.getAttribute('data-who')||'',el.getAttribute('data-state'),
+            +el.getAttribute('data-at')||0,+el.getAttribute('data-still')||0);
+        }
+
+        /**
+         * What a face on the map is saying, wherever it is drawn.
+         *
+         * <p>Written once because both renderers draw the same face for the
+         * same reason. The flat map hovers it as its own tooltip and the 3D
+         * one hands it to the bridge; a shorter sentence in the second was not
+         * a different design, it was the first one going stale.
+         */
+        function headTale(who,state,at,still){
           if(state==='gone'){
             return who+' left here '+fmtAgo(at)+
               (fmtWhen(at)?', at '+fmtWhen(at):'')+
@@ -6909,6 +6974,10 @@ final class WebPage {
         let blueMapStatus=null, blueMapMode='', blueFrameReady=false, blueCamera=null;
         let blueFrameBox=null;
         let blueFocus=null, blueFocusNonce=0, blueScene=null, bluePicked='';
+        // How much of the open 3D event is standing. The flat map's scene
+        // viewer has always been able to put a build up a block at a time;
+        // in the world it went up all at once and there was no watching it.
+        let blueSceneUpto=0, blueSceneTimer=null;
         let blueRefs=new Map(), lastBlueStatus=0, blueLastSend=0, blueSendTimer=null;
         let bluePendingState=null;
         try { blueMapMode=localStorage.getItem('almin.mapMode')||''; }
@@ -7102,14 +7171,79 @@ final class WebPage {
           });
         }
 
-        function focusBlueMap(x,y,z,distance){
+        function focusBlueMap(x,y,z,distance,keepAngle){
           blueFocus={x:+x||0,y:+y||0,z:+z||0,distance:distance||140,
-                     nonce:++blueFocusNonce};
+                     keep:!!keepAngle,nonce:++blueFocusNonce};
+        }
+
+        /** Where the 3D camera is, or where it would be if it has not said yet. */
+        function blueEye(){
+          return blueCamera||{x:view.cx||0,y:64,z:view.cz||0,
+                              distance:Math.max(90,(view.span||320)/2)};
+        }
+
+        /**
+         * The zoom buttons, on the 3D map as on the flat one.
+         *
+         * <p>BlueMap zooms on the wheel, which is not a control on a trackpad
+         * with the page scrolling under it, and is not a control at all on a
+         * touchscreen. The flat map has had + and − since it existed.
+         *
+         * <p>The angle is kept: pressing zoom is not asking to be put back
+         * overhead, which is what every other thing that moves this camera
+         * does.
+         */
+        function zoomBlue(k){
+          const c=blueEye();
+          focusBlueMap(c.x,c.y,c.z,
+            Math.max(20,Math.min(30000,(+c.distance||300)*k)),true);
+          paintAll();
+        }
+
+        /** How many pieces the open 3D event goes up in. */
+        function blueSceneSteps(){
+          const built=blueScene?sceneOf(blueScene):null;
+          if(!built) return 1;
+          return Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length);
+        }
+
+        function stopBlueScene(){
+          if(!blueSceneTimer) return;
+          clearInterval(blueSceneTimer); blueSceneTimer=null;
+          const b=$('t-blue-play');
+          if(b){ b.textContent='Replay'; b.className='btn go'; }
+        }
+
+        /**
+         * Puts the open 3D event up one piece at a time, in the order it
+         * happened.
+         *
+         * <p>The same replay the flat map's scene viewer has, driven the same
+         * way: the slider is the state and the button walks it. Watching a
+         * shaft go down, or a wall go along, is most of what tells you whether
+         * somebody was building or stripping.
+         */
+        function toggleBlueScene(){
+          if(!blueScene) return;
+          if(blueSceneTimer){ stopBlueScene(); return; }
+          const b=$('t-blue-play'); if(b){ b.textContent='Pause'; b.className='btn on'; }
+          const total=blueSceneSteps();
+          if(blueSceneUpto>=total) blueSceneUpto=1;
+          const step=Math.max(1,Math.round(total/120));
+          blueSceneTimer=setInterval(()=>{
+            if(!blueScene){ stopBlueScene(); return; }
+            blueSceneUpto=Math.min(total,blueSceneUpto+step);
+            const at=$('t-blue-at'); if(at) at.value=blueSceneUpto;
+            paintAll();
+            if(blueSceneUpto>=total) stopBlueScene();
+          },160);
         }
 
         function openBlueScene(e){
           const built=sceneOf(e); if(!built) return;
           blueScene=e;
+          stopBlueScene();
+          blueSceneUpto=Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length);
           live=false; stopPlay(); cursorAt=e.to; cursorSet=true;
           allDim=e.dim; focusBlueMap(e.x,e.y,e.z,Math.max(55,built.radius*3.5));
           bluePicked='<strong>'+esc(e.player)+'</strong> · '+esc(e.headline)+
@@ -7147,7 +7281,10 @@ final class WebPage {
               '<div class="onlinebar" id="t-online"></div>'+
               '<button class="sceneexpand" id="t-scene-events"></button>'+
               '<div class="bluepicked" id="t-blue-picked"></div>'+
+              '<div class="bluescenebar" id="t-blue-scenebar"></div>'+
               '<div class="mapbtns">'+
+                '<button id="t-blue-in" title="Zoom in">+</button>'+
+                '<button id="t-blue-out" title="Zoom out">−</button>'+
                 '<button id="t-blue-home" title="Fit recorded activity">⌂</button>'+
                 '<button id="t-blue-scene-close" title="Close the selected 3D event">×</button>'+
                 '<button id="t-full" title="'+(fullMap?'Leave fullscreen (Esc)':'Fullscreen')+
@@ -7174,6 +7311,8 @@ final class WebPage {
           const full=$('t-full'); if(full){ full.textContent=fullMap?'⤡':'⤢';
             full.onclick=()=>setFull(!fullMap); }
           const cog=$('t-cog'); if(cog) cog.onclick=()=>{ optsOpen=!optsOpen; paintAll(); };
+          const zin=$('t-blue-in'); if(zin) zin.onclick=()=>zoomBlue(1/1.5);
+          const zout=$('t-blue-out'); if(zout) zout.onclick=()=>zoomBlue(1.5);
           const home=$('t-blue-home'); if(home) home.onclick=()=>{
             blueCamera=null; view.set=false;
             const pts=d.shownActs.length?d.shownActs:[].concat(...d.shownNames.map(n=>d.tracks[n]||[]));
@@ -7190,8 +7329,10 @@ final class WebPage {
           const closeScene=$('t-blue-scene-close');
           if(closeScene){
             closeScene.style.display=blueScene?'':'none';
-            closeScene.onclick=()=>{ blueScene=null; bluePicked=''; paintAll(); };
+            closeScene.onclick=()=>{ stopBlueScene(); blueScene=null; bluePicked='';
+              paintAll(); };
           }
+          paintBlueSceneBar();
 
           const payload=blueMapPayload(d,seqCandidates,buildScenes,scenePlaces);
           queueBlueMapState(payload);
@@ -7245,9 +7386,8 @@ final class WebPage {
               markers.push({id:id,kind:'cluster',x:sx/group.length+.5,y:sy/group.length+1.5,
                 z:sz/group.length+.5,color:colour(fresh),size:mapOpts.mark*.72,
                 shape:'cluster',text:total>999?'999+':String(total),
-                title:total+' actions'+(noCoords()?'':' around '+
-                  coords(Math.round(sx/group.length),Math.round(sy/group.length),
-                         Math.round(sz/group.length)))});
+                title:clusterTale(group)+atTail(Math.round(sx/group.length),
+                  Math.round(sy/group.length),Math.round(sz/group.length))});
               blueRefs.set(id,{type:'cluster',data:group});
             }
           }
@@ -7283,15 +7423,17 @@ final class WebPage {
             if(gone&&(!leftWindow||playerClock-leftAt>=leftWindow)) continue;
             const stillFor=d.cursor-last.at;
             const idle=!gone&&d.afkSecs>0&&stillFor>d.afkSecs*1000;
-            const icon=(mapOpts.faces&&d.ids[who])?'/api/head?uuid='+
+            // headsOn is the server's own web-player-heads switch. Without it
+            // the 3D map asked for a face per player on a server that had
+            // turned them off, and took a 404 for each one.
+            const icon=(headsOn&&mapOpts.faces&&d.ids[who])?'/api/head?uuid='+
               encodeURIComponent(d.ids[who])+'&name='+encodeURIComponent(who):'';
             players.push({id:id,x:last.x+.5,y:last.y+2.2,z:last.z+.5,
               color:(gone||idle)?'#6d7682':playerColor(who),
               size:mapOpts.head*(gone?.78:1),gone:gone,fallback:who.charAt(0),
               text:who+(idle?' · afk':''),icon:icon,
-              title:who+(gone?' · left at '+fmtWhen(leftAt):
-                idle?' · not moving for '+humanSeconds(Math.round(stillFor/1000)):'')+
-                atTail(last.x,last.y,last.z)+' · '+fmtAgo(last.at)});
+              title:headTale(who,gone?'gone':idle?'afk':'here',gone?leftAt:last.at,
+                Math.round(stillFor/1000))+atTail(last.x,last.y,last.z)});
             blueRefs.set(id,{type:'player',data:{name:who,point:last}});
           }
 
@@ -7301,7 +7443,7 @@ final class WebPage {
             scenes.push({id:id,type:'marker',kind:'episode',shape:'scene',
               text:(hasShape(e)?'3D ':'')+e.kind,
               x:e.x+.5,y:e.y+2.2,z:e.z+.5,color:SEQUENCE_COLOR[e.kind]||'#ffab33',size:1,
-              title:e.player+' · '+e.headline+atTail(e.x,e.y,e.z)});
+              title:episodeTale(e)+atTail(e.x,e.y,e.z)});
             blueRefs.set(id,{type:'episode',data:e});
           }
 
@@ -7354,9 +7496,13 @@ final class WebPage {
           if(blueScene && blueScene.dim===allDim){
             const built=sceneOf(blueScene);
             if(built){
-              for(const c of built.cubes) putCube(c);
+              // Only as far as the replay has got. Cubes are already in the
+              // order they happened, which is what makes stepping through them
+              // a recording rather than a fade.
+              const upto=blueSceneUpto>0?blueSceneUpto:Number.MAX_SAFE_INTEGER;
+              for(const c of built.cubes.slice(0,upto)) putCube(c);
               let q=0;
-              for(const m of built.marks.slice(0,500)) scenes.push({id:'fight'+(q++),
+              for(const m of built.marks.slice(0,upto).slice(0,500)) scenes.push({id:'fight'+(q++),
                 type:'marker',kind:'fight',shape:'dot',text:'',x:m.wx+.5,y:m.y+1,z:m.wz+.5,
                 color:'#ff3d6e',size:1,
                 title:m.kind+(m.what?' · '+m.what:'')+atTail(m.wx,m.y,m.wz)});
@@ -7449,8 +7595,7 @@ final class WebPage {
           const used=[...new Set(acts.map(a=>a.action))];
           host.innerHTML=names.map(n=>'<span class="pill-who" data-who="'+esc(n)+
             '" style="cursor:pointer"><i style="background:'+playerColor(n)+'"></i>'+esc(n)+
-            '</span>').join('')+used.map(a=>'<span style="color:'+
-              (ACTION_COLOR[a]||'#9aa3ae')+'">● '+esc(a)+'</span>').join('')+
+            '</span>').join('')+actionKeyHtml(used)+
             '<span class="muted">'+names.length+' player(s) · '+acts.length+
             ' action(s) by then · '+payload.counts.markers+' visible 3D mark(s) · terrain by BlueMap'+
             (focusPlayer?' · showing only '+esc(focusPlayer):'')+'</span>';
@@ -7480,9 +7625,79 @@ final class WebPage {
           paintBluePicked();
         }
 
+        /**
+         * The panel that says what you just clicked on the 3D map.
+         *
+         * <p>It shuts. The flat map's equivalent has always had a cross on it
+         * and closed when you clicked away; this one could only be dismissed
+         * by the button that closes a 3D event, which is not there unless one
+         * is open — so a list of forty grouped actions sat over the map until
+         * something else replaced it.
+         */
+        /**
+         * Replay and a scrubber, while a 3D event is the thing on the map.
+         *
+         * <p>Built once per event and then only read from. Rebuilding it on
+         * every paint would take the slider out from under the pointer that is
+         * dragging it, and dragging it is what repaints.
+         */
+        function paintBlueSceneBar(){
+          const bar=$('t-blue-scenebar'); if(!bar) return;
+          if(!blueScene){
+            stopBlueScene();
+            bar.style.display='none'; bar.innerHTML=''; bar.almFor=null; return;
+          }
+          const total=blueSceneSteps();
+          if(!(blueSceneUpto>0) || blueSceneUpto>total) blueSceneUpto=total;
+          bar.style.display='';
+          if(bar.almFor!==blueScene || bar.almTotal!==total){
+            bar.almFor=blueScene; bar.almTotal=total;
+            bar.innerHTML='<button class="btn go" id="t-blue-play">Replay</button>'+
+              '<input type="range" id="t-blue-at" min="1" max="'+total+'" value="'+
+              blueSceneUpto+'">'+
+              '<span class="muted num" id="t-blue-count"></span>';
+            $('t-blue-play').onclick=toggleBlueScene;
+            $('t-blue-at').oninput=()=>{
+              stopBlueScene();
+              blueSceneUpto=+$('t-blue-at').value;
+              paintAll();
+            };
+          }
+          const play=$('t-blue-play');
+          if(play){
+            play.textContent=blueSceneTimer?'Pause':'Replay';
+            play.className='btn '+(blueSceneTimer?'on':'go');
+          }
+          const at=$('t-blue-at');
+          if(at && +at.value!==blueSceneUpto) at.value=blueSceneUpto;
+          const count=$('t-blue-count');
+          if(count) count.textContent=blueSceneUpto+' / '+total;
+        }
+
         function paintBluePicked(){
           const p=$('t-blue-picked'); if(!p) return;
-          p.innerHTML=bluePicked; p.style.display=bluePicked?'':'none';
+          if(!bluePicked){ p.innerHTML=''; p.style.display='none'; return; }
+          p.innerHTML='<button class="bshut" id="t-blue-shut" title="Close">\u00d7</button>'+
+            bluePicked;
+          p.style.display='';
+          const shut=$('t-blue-shut');
+          if(shut) shut.onclick=()=>{ bluePicked=''; paintBluePicked(); };
+          for(const row of p.querySelectorAll('div')){
+            const at=+row.getAttribute('data-at'); if(!at) continue;
+            const go=()=>blueGoTo(at,row.getAttribute('data-dim'),
+              +row.getAttribute('data-x'),+row.getAttribute('data-y'),
+              +row.getAttribute('data-z'));
+            row.onclick=go;
+            row.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
+          }
+        }
+
+        /** The moment and the place one of those rows stands for. */
+        function blueGoTo(at,dim,x,y,z){
+          cursorAt=at; cursorSet=true; live=false; stopPlay();
+          if(dim) allDim=dim;
+          if(Number.isFinite(x)&&Number.isFinite(z)) focusBlueMap(x,y||0,z,110,true);
+          paintAll();
         }
 
         /** The contents of a BlueMap cluster, folded the same way as Legacy 2D. */
@@ -7495,7 +7710,13 @@ final class WebPage {
           return '<strong>'+total+' grouped action'+(total===1?'':'s')+'</strong>'+
             (noCoords()?'':' around '+coords(x,y,z))+'<div class="bcls">'+rows.map(row=>{
               const a=row.a;
-              return '<div class="bcl"><span class="bn">'+esc(a.mask||a.player)+'</span>'+
+              // The moment travels with the row, so clicking it can take the
+              // timeline there — which is what the same list does on the flat
+              // map, and was the only thing this one could not do.
+              return '<div class="bcl" data-at="'+row.at+'" data-dim="'+esc(a.dim)+
+                '" data-x="'+a.x+'" data-y="'+a.y+'" data-z="'+a.z+
+                '" tabindex="0" role="button" title="Go to this moment">'+
+                '<span class="bn">'+esc(a.mask||a.player)+'</span>'+
                 '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+
                 esc(a.action)+'</span>'+(row.n>1?'<span class="bx">×'+row.n+'</span>':
                 '<span></span>')+'<span class="bd">'+esc(a.detail||'')+'</span>'+
@@ -7531,7 +7752,15 @@ final class WebPage {
               setFocus(ref.data.name); return;
             }
             if(ref.type==='cluster'){
-              bluePicked=blueClusterHtml(ref.data); paintBluePicked(); return;
+              // Recorded on both maps or on neither. A watched account that
+              // read forty people's actions out of a group left no trace of it
+              // as long as it was looking at the 3D one.
+              const g=ref.data;
+              let gx=0, gz=0;
+              for(const a of g){ gx+=a.x; gz+=a.z; }
+              noteWatch('cluster',g.length+' events \u00b7 '+g[0].dim+' '+
+                Math.round(gx/g.length)+','+Math.round(gz/g.length));
+              bluePicked=blueClusterHtml(g); paintBluePicked(); return;
             }
             const a=ref.data;
             bluePicked='<strong>'+esc(a.detail||a.action)+'</strong> · '+esc(a.player)+' · '+

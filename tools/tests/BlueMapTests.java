@@ -189,6 +189,49 @@ public class BlueMapTests {
                     && integration.contains("m.gone?' gone'")
                     && integration.contains("bottom:-5px"),
                 "departed-head clock styling missing");
+            // What the flat map could do and the 3D one could not. Each of
+            // these was wired to the SVG alone; the pairs are named together
+            // so the next one that drifts apart fails here.
+            check("the 3D map draws Almin's own tooltip rather than the browser's",
+                integration.contains("#almin-tip")
+                    && integration.contains("data-almin-tip")
+                    && integration.contains("function showTip")
+                    && integration.contains("aria-label=")
+                    && !integration.contains("' title=\"'+"),
+                "the 3D marks still rely on a native title tooltip");
+            check("zooming the 3D map does not put the view back overhead",
+                integration.contains("if(!state.focus.keep)")
+                    && page.contains("function zoomBlue")
+                    && page.contains("t-blue-in") && page.contains("t-blue-out"),
+                "3D zoom buttons or the angle guard are missing");
+            check("both maps say the same thing about a face, a badge and a group",
+                page.contains("function headTale")
+                    && page.contains("function episodeTale")
+                    && page.contains("function clusterTale")
+                    && page.contains("title:headTale(")
+                    && page.contains("title:episodeTale(")
+                    && page.contains("title:clusterTale("),
+                "the two renderers still write their own hover text");
+            check("the 3D legend draws the same marks the map does",
+                page.contains("function actionKeyHtml")
+                    && page.contains("actionKeyHtml(used)"),
+                "the 3D legend still stands in a dot for the mark");
+            check("the 3D map obeys the server's own player-heads switch",
+                page.contains("headsOn&&mapOpts.faces&&d.ids[who]"),
+                "the 3D map asks for faces a server has turned off");
+            check("a group opened on the 3D map is recorded and can be walked",
+                page.contains("noteWatch('cluster'")
+                    && page.contains("function blueGoTo")
+                    && page.contains("data-at=\"'+row.at+'\"")
+                    && page.contains("t-blue-shut"),
+                "the 3D group list is inert, unrecorded, or cannot be shut");
+            check("a 3D event can be put up a block at a time",
+                page.contains("function toggleBlueScene")
+                    && page.contains("function blueSceneSteps")
+                    && page.contains("built.cubes.slice(0,upto)")
+                    && page.contains("t-blue-scenebar"),
+                "the 3D event has no replay");
+
             check("BlueMap messages are accepted only from Almin's own iframe",
                 page.contains("e.source!==f.contentWindow")
                     && page.contains("e.origin!==location.origin"),
