@@ -2575,6 +2575,10 @@ public final class WebUi {
      * is what it is not — it does not decide how much is kept. Raising
      * {@code activity-max-entries} to see more of the menu did nothing at all,
      * and did it silently.
+     *
+     * <p>It is no longer a ceiling on what the menu can reach, either. This is
+     * one page of it: {@code offset} asks for the next, and the list asks for
+     * one as it is scrolled, so the log runs out before the menu does.
      */
     private static int rowsShown() {
         int n = AlminConfig.get().activityRowsShown;
@@ -2607,7 +2611,8 @@ public final class WebUi {
         try {
             if ("GET".equals(ex.getRequestMethod())) {
                 if (!requireAuth(ex)) return;
-                json(ex, 200, activityJson(who(ex)));
+                json(ex, 200, activityJson(who(ex), intParam(ex, "offset"),
+                    queryParam(ex, "find")));
                 return;
             }
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
@@ -2677,12 +2682,42 @@ public final class WebUi {
         }
     }
 
-    private String activityJson(Accounts.Account me) {
+    /**
+     * Whether one row answers what was typed in the filter.
+     *
+     * <p>Matched against what this account is shown rather than against what
+     * was recorded. An account that may not read chat must not be able to
+     * find a row by typing what was said in it: a filter that answers yes is
+     * the same secret arriving one letter at a time.
+     */
+    private static boolean matches(String needle, Accounts.Account me, ActivityEntry e) {
+        if (needle.isEmpty()) return true;
+        String hay = e.player() + " " + maskOf(e.uuid()) + " " + e.action() + " "
+            + detailFor(me, e) + " " + e.where();
+        return hay.toLowerCase(java.util.Locale.ROOT).contains(needle);
+    }
+
+    /**
+     * One page of the activity log.
+     *
+     * <p>The filter is applied here rather than in the browser, which is what
+     * makes the page honest: a filter over the page you happen to be holding
+     * finds nothing from yesterday and does not say so. Paging and searching
+     * the same walk also means the count beside the box is the number of
+     * matches in the whole log, not the number on screen.
+     *
+     * @param offset how many matching rows the browser already has
+     * @param find   what is typed in the filter box, or "" for all of it
+     */
+    private String activityJson(Accounts.Account me, int offset, String find) {
         AlminConfig cfg = AlminConfig.get();
         String only = onlyPlayer(me);
+        String needle = find == null ? "" : find.trim().toLowerCase(java.util.Locale.ROOT);
+        ActivityLog.Page page = ActivityLog.page(offset, rowsShown(),
+            e -> visible(only, e.player()) && matches(needle, me, e));
+
         JsonArray arr = new JsonArray();
-        for (ActivityEntry e : ActivityLog.recent(rowsShown())) {
-            if (!visible(only, e.player())) continue;
+        for (ActivityEntry e : page.rows()) {
             JsonObject o = new JsonObject();
             o.addProperty("at", e.at());
             o.addProperty("player", e.player());
@@ -2692,7 +2727,10 @@ public final class WebUi {
             // called at the time.
             o.addProperty("mask", maskOf(e.uuid()));
             o.addProperty("action", e.action());
-            o.addProperty("detail", e.detail());
+            // What this account may read, which is not always what happened.
+            // The map and the per-player track have always answered that way;
+            // this list was handing over the same rows in full.
+            o.addProperty("detail", detailFor(me, e));
             o.addProperty("where", e.where());
             o.addProperty("dim", e.dim());
             o.addProperty("x", e.x());
@@ -2704,11 +2742,14 @@ public final class WebUi {
         JsonObject root = new JsonObject();
         root.add("rows", arr);
         root.addProperty("total", ActivityLog.size());
+        root.addProperty("matched", page.matched());
+        root.addProperty("offset", Math.max(0, offset));
+        root.addProperty("more", page.more());
+        root.addProperty("find", needle);
         root.addProperty("enabled", cfg.activityLog);
         root.addProperty("blocks", cfg.activityBlocks);
         root.addProperty("retentionMinutes", cfg.activityRetentionMinutes);
         root.addProperty("rowsShown", rowsShown());
-        root.addProperty("maxRowsShown", 20000);
         root.add("admins", adminPolicyJson());
         return root.toString();
     }
@@ -4863,6 +4904,16 @@ public final class WebUi {
             return JsonParser.parseString(new String(data, StandardCharsets.UTF_8)).getAsJsonObject();
         } catch (RuntimeException e) {
             return new JsonObject();
+        }
+    }
+
+    /** A query parameter that should be a whole number; anything else is 0. */
+    private static int intParam(HttpExchange ex, String name) {
+        try {
+            String v = queryParam(ex, name).trim();
+            return v.isEmpty() ? 0 : Math.max(0, Integer.parseInt(v));
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 

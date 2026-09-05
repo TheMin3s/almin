@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 /**
  * What ordinary players did, kept for a while and then thrown away.
@@ -387,6 +388,45 @@ public final class ActivityLog {
         Iterator<ActivityEntry> it = entries.descendingIterator();
         while (it.hasNext() && out.size() < max) out.add(it.next());
         return out;
+    }
+
+    /** One window into the log, and how much there was to take it from. */
+    public record Page(List<ActivityEntry> rows, int matched, boolean more) {}
+
+    /**
+     * A window into the log, newest first.
+     *
+     * <p>{@link #recent} answers "the newest N", which is the whole log only
+     * while the log is shorter than N — and the menu reading it had no way
+     * to ask for the rest. Every setting that sounded like it would help
+     * ("the amount of activity log entries") governs how much is <em>kept</em>,
+     * so raising them made the list no longer, and said nothing about why.
+     * The list pages now, so the number it stops at is where somebody has
+     * scrolled to rather than a ceiling they have to find and lift.
+     *
+     * <p>{@code keep} runs before the skip, so paging a filtered log walks the
+     * matches rather than the rows: page two of "steve" is the next twenty
+     * things Steve did, not whatever is left after skipping twenty rows that
+     * were mostly somebody else's.
+     *
+     * @param skip how many matching rows to pass over, newest first
+     * @param max  how many to return after that
+     * @param keep which rows count at all, or null for every one of them
+     */
+    public static synchronized Page page(int skip, int max, Predicate<ActivityEntry> keep) {
+        dropExpired();
+        int want = Math.max(0, max);
+        int past = Math.max(0, skip);
+        List<ActivityEntry> out = new ArrayList<>(Math.min(want, entries.size()));
+        int matched = 0;
+        Iterator<ActivityEntry> it = entries.descendingIterator();
+        while (it.hasNext()) {
+            ActivityEntry e = it.next();
+            if (keep != null && !keep.test(e)) continue;
+            if (matched >= past && out.size() < want) out.add(e);
+            matched++;
+        }
+        return new Page(out, matched, matched > past + out.size());
     }
 
     public static synchronized int size() {

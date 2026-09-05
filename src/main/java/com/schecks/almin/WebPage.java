@@ -491,6 +491,8 @@ final class WebPage {
                 gap:10px;align-items:center;
                 padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.045);font-size:13px}
           .arow:last-child{border-bottom:0}
+          .amore{display:flex;gap:10px;align-items:center;justify-content:center;
+                 padding:12px;font-size:12px;border-top:1px solid var(--line)}
           .arow .ago{color:var(--mute);font-variant-numeric:tabular-nums}
           .arow .who{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
           .arow .what{font-weight:600}
@@ -2730,16 +2732,16 @@ final class WebPage {
             '</section>'+
             '<div id="a-admins" class="note" style="margin:12px 0"></div>'+
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
-            '<input id="a-filter" placeholder="filter by player, action, detail or place" '+
+            '<input id="a-filter" placeholder="search the whole log by player, action, detail or place" '+
             'style="flex:1;min-width:200px">'+
-            // The number people come here to change, where they are when they
-            // want it changed. It lived only in Settings, next to the ceiling
-            // on the log, and raising that one did nothing visible.
+            // How big a bite the list takes. It is not a ceiling any more —
+            // scrolling asks for the next one — so this is only about how much
+            // arrives at once on a connection somebody has to wait on.
             (mayWrite('settings')
-              ? '<span class="muted">Show</span>'+
-                '<select id="a-rowcount" style="width:auto;min-width:104px">'+
+              ? '<span class="muted">Load</span>'+
+                '<select id="a-rowcount" style="width:auto;min-width:118px">'+
                   [250,500,1000,2000,3000,5000,10000,20000].map(n=>
-                    '<option value="'+n+'">'+n.toLocaleString()+' rows</option>').join('')+
+                    '<option value="'+n+'">'+n.toLocaleString()+' at a time</option>').join('')+
                 '</select>'
               : '')+
             '<button class="btn" id="a-refresh">Refresh</button>'+
@@ -2772,9 +2774,11 @@ final class WebPage {
               clearFilter(); paintAsked(); paintFilters(); paintAll(); paintInsights(); };
             $('i-ask').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); runAsk(false); } };
             $('a-clear').onclick=clearActivity;
-            // Filtering is client-side over the rows already fetched, so
-            // typing here asks the server for nothing.
-            $('a-filter').oninput=()=>{ paintActivity(); noteSearchSoon(); };
+            // Filtering is the server's job now: over the page in front of you
+            // it could only ever answer "nothing here", in the words of
+            // "nothing at all".
+            $('a-filter').oninput=()=>{ findActivitySoon(); noteSearchSoon(); };
+            $('a-rows').onscroll=activityScrolled;
             $('a-who').onchange=()=>loadTrack($('a-who').value);
           },0);
           return wrap;
@@ -6820,67 +6824,181 @@ final class WebPage {
           const dimButtons=$('a-dims').querySelectorAll('[data-dim]');
           dimButtons.forEach(b=>b.onclick=()=>{ trackDim=b.getAttribute('data-dim'); paintMap(); });
         }
-        let activityRows=[], activityMeta=null;
-        async function loadActivity(){
-          if(!$('a-rows')) return;
-          const r=await jget('/api/activity');
-          if(r.status!==200){ $('a-rows').innerHTML='<div class="note">'+
-            esc(r.body.error||'unavailable')+'</div>'; return; }
-          activityRows=r.body.rows||[]; activityMeta=r.body;
-          showAdmins(r.body.admins);
+        let activityRows=[], activityMeta=null, activityFind='';
+        let activityBusy=false, activityGen=0, findTimer=null;
+
+        /**
+         * A page of the log.
+         *
+         * <p>The list used to be one response and that was the whole of it:
+         * whatever number the server stopped at was the end of the menu, and
+         * the settings people reached for to lift it are about how much is
+         * kept rather than how much is shown. It pages now. Scrolling asks for
+         * the next one, so the number the list stops at is where somebody got
+         * to rather than a ceiling they have to go and find.
+         *
+         * @param more append the next page rather than starting again
+         */
+        async function loadActivity(more){
+          const box=$('a-rows'); if(!box) return;
+          if(more && (activityBusy || !(activityMeta && activityMeta.more))) return;
+          const f=$('a-filter');
+          if(!more) activityFind=f?f.value:'';
+          const offset=more?activityRows.length:0;
+          const gen=++activityGen;
+          activityBusy=true;
+          if(more) markMore('loading\u2026',true);
+          const r=await jget('/api/activity?offset='+offset+
+            '&find='+encodeURIComponent(activityFind.trim()));
+          // Something newer is already on its way; this answer is about a
+          // filter or a position the list has left behind.
+          if(gen!==activityGen) return;
+          activityBusy=false;
+          if(r.status!==200){
+            if(offset) markMore('could not load more',false);
+            else box.innerHTML='<div class="note">'+esc(r.body.error||'unavailable')+'</div>';
+            return;
+          }
+          activityMeta=r.body;
+          if(offset && offset===+r.body.offset) activityRows=activityRows.concat(r.body.rows||[]);
+          else { activityRows=r.body.rows||[]; box.almDrawn=0; }
+          if(!offset) showAdmins(r.body.admins);
           paintActivity();
         }
+
+        /**
+         * The filter asks the server now, so it waits for a pause in typing.
+         *
+         * <p>It searches the whole log rather than the page in front of you,
+         * which is the difference between "nothing matches" and "nothing on
+         * this screen matches" — the second was being said in the first's
+         * words.
+         */
+        function findActivitySoon(){
+          if(findTimer) clearTimeout(findTimer);
+          findTimer=setTimeout(()=>{ findTimer=null; loadActivity(); },260);
+        }
+
+        /** Loads the next page once the list is nearly used up. */
+        function activityScrolled(){
+          const box=$('a-rows'); if(!box) return;
+          if(box.scrollTop+box.clientHeight >= box.scrollHeight-320) loadActivity(true);
+        }
+
+        let moreBtn=null;
+        function markMore(text,busy){
+          if(!moreBtn) return;
+          moreBtn.textContent=text; moreBtn.disabled=busy;
+        }
+
+        /**
+         * The end of the list: either a way to see more of it, or the plain
+         * fact that there is no more.
+         *
+         * <p>Scrolling loads the next page on its own. The button is for a
+         * keyboard, a screen reader, and anyone who would rather ask than
+         * discover — and it is where the count that used to be a silent
+         * ceiling is finally said out loud.
+         */
+        function paintActivityFoot(box){
+          dropActivityFoot(box);
+          const d=document.createElement('div');
+          d.className='amore'; d.id='a-more';
+          if(activityMeta && activityMeta.more){
+            const left=Math.max(0,(+activityMeta.matched||0)-activityRows.length);
+            const step=Math.min(+activityMeta.rowsShown||left,left);
+            const b=document.createElement('button');
+            b.className='btn'; b.id='a-morebtn';
+            b.textContent='Show '+step.toLocaleString()+' more';
+            b.onclick=()=>loadActivity(true);
+            d.appendChild(b);
+            moreBtn=b;
+            const rest=document.createElement('span');
+            rest.className='muted';
+            rest.textContent=left.toLocaleString()+' still to come';
+            d.appendChild(rest);
+          } else {
+            d.className='amore muted';
+            d.textContent=activityRows.length.toLocaleString()+
+              ' row'+(activityRows.length===1?'':'s')+' \u2014 that is all of them.';
+          }
+          box.almFoot=d;
+          box.appendChild(d);
+        }
+
+        /** Takes the end off, so the next page is appended to the rows. */
+        function dropActivityFoot(box){
+          if(box.almFoot) box.almFoot.remove();
+          box.almFoot=null; moreBtn=null;
+        }
+
+        /** One line of the log. */
+        function activityRow(e){
+          const d=document.createElement('div'); d.className='arow';
+          const col=ACTION_COLOR[e.action]||'#9aa3ae';
+          d.appendChild(avatar(e.player,e.uuid,'sm'));
+          d.insertAdjacentHTML('beforeend','<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
+            '<span class="who">'+esc(e.player)+
+              (e.mask?' <span class="muted" style="font-weight:400">as '+
+                esc(e.mask)+'</span>':'')+'</span>'+
+            '<span class="what" style="color:'+col+'">'+esc(e.action)+
+              (e.count>1?' &times;'+e.count:'')+'</span>'+
+            '<span class="det" title="'+esc(e.detail)+'">'+esc(e.detail)+'</span>'+
+            '<span class="at">'+esc(e.where)+'</span>');
+          return d;
+        }
+
         function paintActivity(){
           const box=$('a-rows'), meta=$('a-meta'); if(!box) return;
-          const f=$('a-filter'), q=(f?f.value:'').trim().toLowerCase();
-          const rows=q ? activityRows.filter(e=>
-                (e.player+' '+e.action+' '+e.detail+' '+e.where).toLowerCase().includes(q))
-              : activityRows;
+          const q=activityFind.trim();
           if(meta && activityMeta){
-            // Two numbers that were one, because they were confused for one:
-            // what is kept, and how much of it this menu is showing.
-            const shown=+activityMeta.rowsShown||0;
+            // Three numbers that were being read as one: how much is kept, how
+            // much of it answers the filter, and how much of that is on screen.
+            // Only the first has a setting behind it, and it was the one people
+            // were raising to make the third move.
             const kept=+activityMeta.total||0;
+            const found=+activityMeta.matched||0;
+            const here=activityRows.length;
             meta.innerHTML = (activityMeta.enabled
                 ? kept.toLocaleString()+' row'+(kept===1?'':'s')+' kept'
                 : '<span class="state warn">recording is off</span> · '+
                   kept.toLocaleString()+' kept')+
-              (shown?' · newest '+shown.toLocaleString()+' shown here'+
-                (kept>shown?'':' (all of them)'):'')+
+              (q?' · '+found.toLocaleString()+' match \u201c'+esc(q)+'\u201d':'')+
+              ' · '+(here>=found
+                ? (q?'all '+found.toLocaleString()+' shown':'all of them shown')
+                : 'showing '+here.toLocaleString()+', scroll for more')+
               ' · deleted after '+esc(humanMinutes(activityMeta.retentionMinutes))+
-              (activityMeta.blocks?'':' · block edits excluded')+
-              (q?' · '+rows.length.toLocaleString()+' match the filter':'');
+              (activityMeta.blocks?'':' · block edits excluded');
           }
           const pick=mayWrite('settings')?$('a-rowcount'):null;
           if(pick && activityMeta && +activityMeta.rowsShown)
             pick.value=String(activityMeta.rowsShown);
-          if(!rows.length){ box.innerHTML='<div class="note">'+
-            (q?'Nothing matches that filter.'
-              :'Nothing recorded. Ops and trusted UUIDs are never recorded.')+'</div>'; return; }
-          box.innerHTML='';
-          for(const e of rows){
-            const d=document.createElement('div'); d.className='arow';
-            const col=ACTION_COLOR[e.action]||'#9aa3ae';
-            d.appendChild(avatar(e.player,e.uuid,'sm'));
-            d.insertAdjacentHTML('beforeend','<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
-              '<span class="who">'+esc(e.player)+
-                (e.mask?' <span class="muted" style="font-weight:400">as '+
-                  esc(e.mask)+'</span>':'')+'</span>'+
-              '<span class="what" style="color:'+col+'">'+esc(e.action)+
-                (e.count>1?' &times;'+e.count:'')+'</span>'+
-              '<span class="det" title="'+esc(e.detail)+'">'+esc(e.detail)+'</span>'+
-              '<span class="at">'+esc(e.where)+'</span>');
-            box.appendChild(d);
+          if(!activityRows.length){
+            box.almDrawn=0; box.almFoot=null; moreBtn=null;
+            box.innerHTML='<div class="note">'+
+              (q?'Nothing matches that filter.'
+                :'Nothing recorded. Ops and trusted UUIDs are never recorded.')+'</div>';
+            return;
           }
+          // Counted on the element rather than beside it, so a menu that has
+          // been rebuilt since the last page draws from the top by itself.
+          const drawn=+box.almDrawn||0;
+          if(!drawn) box.innerHTML='';
+          dropActivityFoot(box);
+          for(let i=drawn;i<activityRows.length;i++)
+            box.appendChild(activityRow(activityRows[i]));
+          box.almDrawn=activityRows.length;
+          paintActivityFoot(box);
         }
         /**
-         * Changes how much of the log this menu shows.
+         * Changes how much of the log arrives at a time.
          *
          * <p>It is an ordinary setting written the ordinary way, and it is
          * offered here as well because this is where somebody is standing when
-         * they decide the list is too short. Only offered to an account that
-         * may change settings, since that is who the server will accept it
-         * from.
+         * they decide the list is too slow to fill. Only offered to an account
+         * that may change settings, since that is who the server will accept
+         * it from. It stopped being the end of the list when the list learned
+         * to ask for the next page.
          */
         async function setRowsShown(){
           const pick=$('a-rowcount'), msg=$('a-msg'); if(!pick) return;
@@ -6891,7 +7009,7 @@ final class WebPage {
           if(msg){
             msg.className='msg '+(r.status===200?'ok':'err');
             msg.textContent=r.status===200
-              ? ('Showing the newest '+(+want).toLocaleString()+' rows.')
+              ? ('Loading '+(+want).toLocaleString()+' rows at a time.')
               : (r.body.error||'failed');
           }
           if(r.status!==200) return;

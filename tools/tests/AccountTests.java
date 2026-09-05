@@ -198,6 +198,26 @@ public class AccountTests {
                 && WebUi.detailFor(Accounts.owner(), chat("Steve", "chat", "hello"))
                     .equals("hello"));
 
+        // Every route that hands a recorded row to a browser has to go through
+        // detailFor. The map and the per-player track always did; the log list
+        // — the one place the whole point of the setting is on screen —
+        // was sending e.detail() straight out.
+        String rowSrc = web0();
+        for (String fn : new String[]{"private String activityJson(",
+                                      "private JsonObject allTracksJson("}) {
+            int i = rowSrc.indexOf(fn);
+            check(fn.split("\\(")[0].replaceAll(".* ", "") + " exists", i > 0);
+            String body = rowSrc.substring(i, rowSrc.indexOf("\n    }", i));
+            check("  ...and it sends what the account may read",
+                body.contains("detailFor(me, e)") && !body.contains("\"detail\", e.detail()"));
+        }
+
+        // Searching is the same secret arriving one letter at a time, so the
+        // filter has to run over what the account is shown.
+        int mi = rowSrc.indexOf("private static boolean matches(String needle");
+        check("the log's filter is matched against what is shown, not what happened",
+            mi > 0 && rowSrc.substring(mi, rowSrc.indexOf("\n    }", mi)).contains("detailFor(me, e)"));
+
         // Narrowed to their own player.
         Accounts.link(mod.id(), "Steve", "00000000-0000-0000-0000-0000000000aa");
         Accounts.setExtra(mod.id(), Accounts.OWN_ACTIVITY, true);

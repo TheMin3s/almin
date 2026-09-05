@@ -51,6 +51,7 @@ public class ActivityTests {
         defaults();
         folding();
         cap();
+        paging();
         expiry();
         disk();
         codec();
@@ -222,6 +223,60 @@ public class ActivityTests {
             ActivityLog.recent(3).get(0).detail().equals("line 699"),
             ActivityLog.recent(3).get(0).detail());
         ck("recent() honours its limit", ActivityLog.recent(3).size() == 3, "");
+    }
+
+    /**
+     * The log is reachable a page at a time.
+     *
+     * <p>{@link ActivityLog#recent} answers "the newest N", which is the whole
+     * log only while the log is shorter than N. The menu that reads it had no
+     * way to ask for the rest, and every setting that sounded like it would
+     * lift that ("the amount of activity log entries") is about how much is
+     * kept instead — so raising them changed nothing and said nothing.
+     */
+    static void paging() throws Exception {
+        reset();
+        set("activityMaxEntries", 120000);
+        for (int i = 0; i < 700; i++) rec("P" + (i % 5), "chat", "line " + i, false);
+
+        ActivityLog.Page first = ActivityLog.page(0, 250, null);
+        ck("a page is as long as it was asked for", first.rows().size() == 250,
+            String.valueOf(first.rows().size()));
+        ck("...and says how much it came out of", first.matched() == 700,
+            String.valueOf(first.matched()));
+        ck("...and that there is more of it", first.more(), "it said that was all");
+        ck("...starting at the newest", first.rows().get(0).detail().equals("line 699"),
+            first.rows().get(0).detail());
+
+        ActivityLog.Page second = ActivityLog.page(250, 250, null);
+        ck("the next page carries on where the last one stopped",
+            second.rows().get(0).detail().equals("line 449"), second.rows().get(0).detail());
+
+        ActivityLog.Page last = ActivityLog.page(500, 250, null);
+        ck("the last page is however much is left", last.rows().size() == 200,
+            String.valueOf(last.rows().size()));
+        ck("...and says so", !last.more(), "it said there was more");
+
+        ck("past the end is empty rather than wrong",
+            ActivityLog.page(700, 250, null).rows().isEmpty(), "it returned rows");
+
+        // The filter has to run before the skip, or page two of a search is
+        // whatever is left after skipping rows that were mostly somebody else.
+        ActivityLog.Page mine = ActivityLog.page(0, 50, e -> e.player().equals("P3"));
+        ck("a filtered page counts only what matched", mine.matched() == 140,
+            String.valueOf(mine.matched()));
+        ck("...and returns only what matched",
+            mine.rows().stream().allMatch(e -> e.player().equals("P3")), mine.rows().toString());
+        ActivityLog.Page mine2 = ActivityLog.page(50, 50, e -> e.player().equals("P3"));
+        ck("...and every row of the next page matched too",
+            mine2.rows().stream().allMatch(e -> e.player().equals("P3")), mine2.rows().toString());
+        // P3 wrote every fifth line, so the fiftieth match back from the end
+        // is "line 453" and the fifty-first is "line 448". Skipping fifty
+        // rows instead would have started this page at "line 649".
+        ck("...and the skip is counted in matches, not in rows",
+            mine.rows().get(49).detail().equals("line 453")
+                && mine2.rows().get(0).detail().equals("line 448"),
+            mine.rows().get(49).detail() + " then " + mine2.rows().get(0).detail());
     }
 
     /** The whole point: rows go away on their own. */

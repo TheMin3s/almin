@@ -131,6 +131,80 @@ public class PanelApiTests {
 
         send("POST", "/api/config",
             "{\"name\":\"activity-rows-shown\",\"value\":\"2000\"}", cookie);
+        paging();
+    }
+
+    /**
+     * The whole log is reachable, a page at a time.
+     *
+     * <p>What the menu was given used to be all it could ever show, and the
+     * settings named like they would lift that are about how much is kept.
+     * So the number that matters here is not the one in the metadata — it
+     * is how many rows actually come back, and whether asking again gets the
+     * rest of them.
+     */
+    static void paging() throws Exception {
+        java.lang.reflect.Field ef = com.schecks.almin.ActivityLog.class
+            .getDeclaredField("entries");
+        ef.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Deque<com.schecks.almin.ActivityEntry> log =
+            (java.util.Deque<com.schecks.almin.ActivityEntry>) ef.get(null);
+        log.clear();
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < 5200; i++)
+            log.addLast(new com.schecks.almin.ActivityEntry(now - (5200 - i) * 10L,
+                i % 4 == 0 ? "Alex" : "Steve", "u" + (i % 4), "chat", "line " + i,
+                "overworld", i, 64, i, 1));
+
+        var first = send("GET", "/api/activity", null, cookie);
+        ck("a page is as long as the setting says", rows(first.body()) == 2000,
+            String.valueOf(rows(first.body())));
+        ck("...out of the whole log", first.body().contains("\"total\":5200")
+            && first.body().contains("\"matched\":5200"), meta(first.body()));
+        ck("...and it says there is more", first.body().contains("\"more\":true"),
+            meta(first.body()));
+
+        int got = 2000;
+        for (int page = 0; page < 4; page++) {
+            var next = send("GET", "/api/activity?offset=" + got, null, cookie);
+            got += rows(next.body());
+            if (!next.body().contains("\"more\":true")) break;
+        }
+        ck("...and asking again reaches every row of it", got == 5200, String.valueOf(got));
+
+        // The point of moving the filter to the server. "line 5100" is deep
+        // past the first page, so a filter over what the browser had been
+        // given would have said there was no such row.
+        var found = send("GET", "/api/activity?find=line%205100", null, cookie);
+        ck("the filter searches the log rather than the page",
+            rows(found.body()) == 1 && found.body().contains("\"matched\":1"),
+            meta(found.body()));
+        var alex = send("GET", "/api/activity?find=Alex", null, cookie);
+        ck("...and counts every match in the log, not the ones on screen",
+            alex.body().contains("\"matched\":1300") && rows(alex.body()) == 1300,
+            meta(alex.body()));
+        var none = send("GET", "/api/activity?find=nothinglikethis", null, cookie);
+        ck("...and finds nothing when there is nothing",
+            rows(none.body()) == 0 && none.body().contains("\"matched\":0")
+                && !none.body().contains("\"more\":true"), meta(none.body()));
+
+        // Junk in the query is a page, not a stack trace.
+        var junk = send("GET", "/api/activity?offset=notanumber", null, cookie);
+        ck("a nonsense offset is the first page", junk.statusCode() == 200
+            && rows(junk.body()) == 2000, String.valueOf(junk.statusCode()));
+
+        log.clear();
+    }
+
+    static int rows(String body) {
+        return body.split("\\{\"at\":", -1).length - 1;
+    }
+
+    /** The counts without the four hundred kilobytes of rows around them. */
+    static String meta(String body) {
+        int i = body.lastIndexOf("\"total\"");
+        return i < 0 ? body.substring(0, Math.min(200, body.length())) : body.substring(i);
     }
 
     /** Which UUIDs a server knows is not public information. */

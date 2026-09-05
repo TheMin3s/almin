@@ -1402,8 +1402,8 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
                    audited: false };
     const asOwner = deepText(sandbox.activityPanel());
-    check('how many rows to show is offered in the Activity menu', () =>
-      /id="a-rowcount"/.test(asOwner) && /2,000 rows|2000 rows/.test(asOwner)
+    check('how much to load at a time is offered in the Activity menu', () =>
+      /id="a-rowcount"/.test(asOwner) && /2,000 at a time|2000 at a time/.test(asOwner)
         ? true : 'the control is not in the menu');
 
     sandbox.me = { username: 'mod', owner: false, access: { activity: 'read' },
@@ -1432,6 +1432,161 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
       return put && put.value !== null && put.body.value === '5000'
         ? true : 'it sent: ' + JSON.stringify(sent.map((x) => x.body));
     });
+  }
+
+  // ---- the log list reaches the whole log, not one page of it ----
+  //
+  // It used to be one response and that was the end of the menu. Everything
+  // named like it would lift that ceiling ("the amount of activity log
+  // entries") governs how much is kept instead, so raising them changed
+  // nothing and said nothing about why.
+  {
+    const now = Date.now();
+    const whole = [];
+    for (let i = 0; i < 4500; i++)
+      whole.push({ at: now - i * 1000, player: i % 3 ? 'Steve' : 'Alex', uuid: 'u',
+                   mask: '', action: 'chat', detail: 'line ' + i,
+                   where: 'overworld 0,64,0', dim: 'overworld', x: 0, y: 64, z: 0, count: 1 });
+    const PAGE = 2000;
+    const trail = [];
+    const realFetch = sandbox.fetch;
+    const answer = (url) => {
+      const u = String(url);
+      trail.push(u);
+      if (u.split('?')[0] !== '/api/activity')
+        return { status: 200, json: async () => bodyFor(u) };
+      const q = new Map((u.split('?')[1] || '').split('&').filter(Boolean)
+        .map((kv) => kv.split('=').map(decodeURIComponent)));
+      const find = (q.get('find') || '').trim().toLowerCase();
+      const offset = +(q.get('offset') || 0);
+      const hits = find ? whole.filter((e) =>
+        (e.player + ' ' + e.action + ' ' + e.detail + ' ' + e.where)
+          .toLowerCase().includes(find)) : whole;
+      const rows = hits.slice(offset, offset + PAGE);
+      return { status: 200, json: async () => ({
+        rows, total: whole.length, matched: hits.length, offset, find,
+        more: hits.length > offset + rows.length,
+        enabled: true, blocks: true, retentionMinutes: 7200, rowsShown: PAGE,
+        admins: { ok: true, includeAdmins: false, temporary: false, configured: false } }) };
+    };
+    sandbox.fetch = async (url) => answer(url);
+
+    sandbox.tab = 'activity';
+    sandbox.me = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                   audited: false };
+    sandbox.activityPanel();
+    const box = byId.get('a-rows');
+    const rowsIn = () => (box.children || []).filter((c) => hasClass(c, 'arow')).length;
+    const foot = () => (box.children || []).filter((c) => hasClass(c, 'amore')).pop();
+
+    await sandbox.loadActivity();
+    const firstPage = rowsIn();
+    const firstRow = (box.children || [])[0];
+    check('the log list opens on one page of a longer log', () =>
+      sandbox.activityRows.length === PAGE && firstPage === PAGE
+        ? true : 'it holds ' + sandbox.activityRows.length + ' and drew ' + firstPage);
+
+    check('...and says how much of the log is still behind it', () => {
+      const f = foot();
+      const said = (f ? f.textContent : '') +
+        ((f && f.children || []).map((c) => c.textContent).join(' '));
+      return /Show 2,000 more/.test(said) && /2,500 still to come/.test(said)
+        ? true : 'the end of the list said: ' + said;
+    });
+
+    check('...and the line above it stops calling that the whole log', () => {
+      const said = byId.get('a-meta')._html || '';
+      return /4,500 rows kept/.test(said) && /showing 2,000, scroll for more/.test(said)
+        ? true : 'it said: ' + said;
+    });
+
+    await sandbox.loadActivity(true);
+    check('the next page is one click away', () =>
+      sandbox.activityRows.length === 4000 && rowsIn() === 4000
+        ? true : 'it holds ' + sandbox.activityRows.length + ' and drew ' + rowsIn());
+
+    check('...appended, rather than four thousand rows built again', () =>
+      (box.children || [])[0] === firstRow
+        ? true : 'the top of the list was rebuilt');
+
+    check('...and asked for the rows it did not have', () =>
+      /\/api\/activity\?offset=2000/.test(trail[trail.length - 1])
+        ? true : 'it asked for ' + trail[trail.length - 1]);
+
+    await sandbox.loadActivity(true);
+    check('...until the log runs out rather than the menu', () => {
+      const f = foot();
+      return sandbox.activityRows.length === 4500 && rowsIn() === 4500
+        && /that is all of them/.test((f && f.textContent) || '')
+        ? true : 'it holds ' + sandbox.activityRows.length + ', end says ' +
+                 ((f && f.textContent) || '');
+    });
+
+    const settled = trail.length;
+    await sandbox.loadActivity(true);
+    check('...and asks for nothing once there is nothing left', () =>
+      trail.length === settled ? true : 'it asked again: ' + trail[trail.length - 1]);
+
+    // The point of moving the filter to the server: line 4400 is nowhere near
+    // the first page, so filtering what had already been fetched said there
+    // was no such row.
+    trail.length = 0;
+    byId.get('a-filter').value = 'line 4400';
+    await sandbox.loadActivity();
+    check('the filter searches the whole log, not the page in front of you', () =>
+      sandbox.activityRows.length === 1 && sandbox.activityRows[0].detail === 'line 4400'
+        ? true : 'it found ' + sandbox.activityRows.length);
+
+    check('...by asking the server for it', () =>
+      /find=line%204400/.test(trail[0] || '') && /offset=0/.test(trail[0] || '')
+        ? true : 'it asked for ' + trail[0]);
+
+    check('...and counts the matches in the log rather than on screen', () => {
+      const said = byId.get('a-meta')._html || '';
+      return /1 match/.test(said) ? true : 'it said: ' + said;
+    });
+
+    byId.get('a-filter').value = 'nothing like this';
+    await sandbox.loadActivity();
+    check('...and an empty answer is about the log, not the screen', () =>
+      /Nothing matches that filter/.test(box._html || '')
+        ? true : 'it said: ' + (box._html || '').slice(0, 90));
+
+    // Two filters in flight. The slower answer is about a list that has
+    // already moved on, and must not land on it.
+    const gate = [];
+    sandbox.fetch = (url) => new Promise((go) => gate.push(() => go(answer(url))));
+    byId.get('a-filter').value = 'alex';
+    const older = sandbox.loadActivity();
+    byId.get('a-filter').value = 'steve';
+    const newer = sandbox.loadActivity();
+    gate[1](); gate[0]();
+    await newer; await older;
+    check('a page that answered an older filter cannot land on the list', () =>
+      sandbox.activityRows.length && sandbox.activityRows.every((e) => e.player === 'Steve')
+        ? true : 'the list came back as ' +
+                 [...new Set(sandbox.activityRows.map((e) => e.player))].join('/'));
+
+    // Scrolling is the other way to ask, and the one nobody has to find.
+    sandbox.fetch = async (url) => answer(url);
+    byId.get('a-filter').value = '';
+    await sandbox.loadActivity();
+    trail.length = 0;
+    box.scrollTop = 0; box.clientHeight = 600; box.scrollHeight = 40000;
+    sandbox.activityScrolled();
+    check('scrolling nowhere near the end asks for nothing', () =>
+      trail.length === 0 ? true : 'it asked for ' + trail[0]);
+
+    box.scrollTop = 39200;
+    sandbox.activityScrolled();
+    await new Promise((r) => process.nextTick(r));
+    check('scrolling to the end of the list asks for the next page', () =>
+      /offset=2000/.test(trail[0] || '') ? true : 'it asked for ' + trail[0]);
+
+    sandbox.fetch = realFetch;
+    byId.get('a-filter').value = '';
+    sandbox.activityRows = []; sandbox.activityMeta = null;
+    box.almDrawn = 0; box.innerHTML = '';
   }
 
   check('a server that says nothing gets two thousand, not a hundred', () => {
