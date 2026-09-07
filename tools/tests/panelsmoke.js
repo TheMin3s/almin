@@ -1463,8 +1463,11 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
         (e.player + ' ' + e.action + ' ' + e.detail + ' ' + e.where)
           .toLowerCase().includes(find)) : whole;
       const rows = hits.slice(offset, offset + PAGE);
+      const sig = [rows.length, rows.length ? rows[0].at : 0,
+                   rows.length ? rows[rows.length - 1].at : 0,
+                   hits.length, whole.length, offset, find].join(':');
       return { status: 200, json: async () => ({
-        rows, total: whole.length, matched: hits.length, offset, find,
+        rows, sig, total: whole.length, matched: hits.length, offset, find,
         more: hits.length > offset + rows.length,
         enabled: true, blocks: true, retentionMinutes: 7200, rowsShown: PAGE,
         admins: { ok: true, includeAdmins: false, temporary: false, configured: false } }) };
@@ -1582,6 +1585,87 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     await new Promise((r) => process.nextTick(r));
     check('scrolling to the end of the list asks for the next page', () =>
       /offset=2000/.test(trail[0] || '') ? true : 'it asked for ' + trail[0]);
+
+    // ---- the three-second refresh must not undo the reading ----
+    //
+    // It reloaded the list from page one every three seconds. That threw away
+    // whatever had been scrolled to, and the browser clamping the scroll
+    // position fired a scroll event, which asked for the next page again: a
+    // fetch and a two-thousand-row rebuild, twice, every three seconds, for as
+    // long as the menu was left open near the bottom of it.
+    byId.get('a-filter').value = '';
+    await sandbox.loadActivity();
+    await sandbox.loadActivity(true);
+    const paged = sandbox.activityRows.length;
+    trail.length = 0;
+    sandbox.refreshActivity();
+    await new Promise((r) => process.nextTick(r));
+    check('a refresh leaves the pages somebody scrolled through alone', () =>
+      sandbox.activityRows.length === paged && trail.length === 0
+        ? true : 'it holds ' + sandbox.activityRows.length + ' of ' + paged +
+                 ' and asked ' + trail.length + ' time(s)');
+
+    // Back on page one it does refresh, but hands over the fingerprint of
+    // what it has so a quiet server can answer with the counts alone.
+    await sandbox.loadActivity();
+    trail.length = 0;
+    sandbox.refreshActivity();
+    await new Promise((r) => process.nextTick(r));
+    check('...and on page one it says what it is already holding', () =>
+      /sig=/.test(trail[0] || '') ? true : 'it asked for ' + trail[0]);
+
+    {
+      // The answer to that is the counts and no rows at all.
+      const held = sandbox.activityRows;
+      const drawn = box.children.length;
+      sandbox.fetch = async () => ({ status: 200, json: async () => ({
+        sig: 'same', total: 4500, matched: 4500, offset: 0, find: '', more: true,
+        unchanged: true, enabled: true, blocks: true, retentionMinutes: 7200,
+        rowsShown: PAGE,
+        admins: { ok: true, includeAdmins: false, temporary: false, configured: false } }) });
+      await sandbox.loadActivity(false, true);
+      check('an unchanged page is not two thousand rows built again', () =>
+        sandbox.activityRows === held && box.children.length === drawn
+          ? true : 'it rebuilt ' + box.children.length + ' (was ' + drawn + ')');
+      check('...while the counts above it still move', () => {
+        const said = byId.get('a-meta')._html || '';
+        return /4,500 rows kept/.test(said) ? true : 'it said: ' + said;
+      });
+      sandbox.fetch = async (url) => answer(url);
+    }
+
+    // A dropped connection must not latch the busy flag on: the refresh checks
+    // it before asking, so one unhandled throw would end the list's life.
+    {
+      const held = sandbox.fetch;
+      sandbox.fetch = async () => { throw new Error('connection lost'); };
+      await sandbox.loadActivity();
+      sandbox.fetch = held;
+      trail.length = 0;
+      await sandbox.loadActivity();
+      check('a dropped connection does not end the list for good', () =>
+        trail.length === 1 && sandbox.activityRows.length
+          ? true : 'it asked ' + trail.length + ' time(s) and holds ' +
+                   sandbox.activityRows.length);
+    }
+
+    // A rebuild shortens the list under the pointer, so the browser clamps the
+    // scroll position and fires a scroll event at the new bottom. That is the
+    // page moving, not somebody reading, and it must not fetch anything.
+    await sandbox.loadActivity();
+    box.scrollTop = 9000; box.clientHeight = 600; box.scrollHeight = 40000;
+    sandbox.activityScrolled();
+    trail.length = 0;
+    box.scrollTop = 200;
+    sandbox.activityScrolled();
+    check('a list that jumped upwards is not asking for more', () =>
+      trail.length === 0 ? true : 'it asked for ' + trail[0]);
+
+    box.scrollTop = 39500;
+    sandbox.activityScrolled();
+    await new Promise((r) => process.nextTick(r));
+    check('...but reading down to the end of it still is', () =>
+      /offset=/.test(trail[0] || '') ? true : 'it asked for ' + trail[0]);
 
     sandbox.fetch = realFetch;
     byId.get('a-filter').value = '';

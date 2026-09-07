@@ -2612,7 +2612,7 @@ public final class WebUi {
             if ("GET".equals(ex.getRequestMethod())) {
                 if (!requireAuth(ex)) return;
                 json(ex, 200, activityJson(who(ex), intParam(ex, "offset"),
-                    queryParam(ex, "find")));
+                    queryParam(ex, "find"), queryParam(ex, "sig")));
                 return;
             }
             if (!"POST".equals(ex.getRequestMethod())) { json(ex, 405, "{\"error\":\"method\"}"); return; }
@@ -2698,6 +2698,24 @@ public final class WebUi {
     }
 
     /**
+     * A fingerprint of one page, so a browser that already has it is not sent
+     * it again.
+     *
+     * <p>The menu asks every three seconds and the answer is usually the same
+     * four hundred kilobytes it was given last time, which it then rebuilds
+     * two thousand rows out of. The log only ever grows at the newest end,
+     * expires at the oldest, and folds its own tail row, so where the page
+     * starts and stops, how long it is and how much it came out of is enough
+     * to tell "the same again" from "something happened".
+     */
+    private static String pageSig(ActivityLog.Page page, int offset, String needle, int total) {
+        java.util.List<ActivityEntry> rows = page.rows();
+        return rows.size() + ":" + (rows.isEmpty() ? 0 : rows.get(0).at())
+            + ":" + (rows.isEmpty() ? 0 : rows.get(rows.size() - 1).at())
+            + ":" + page.matched() + ":" + total + ":" + offset + ":" + needle.hashCode();
+    }
+
+    /**
      * One page of the activity log.
      *
      * <p>The filter is applied here rather than in the browser, which is what
@@ -2708,13 +2726,35 @@ public final class WebUi {
      *
      * @param offset how many matching rows the browser already has
      * @param find   what is typed in the filter box, or "" for all of it
+     * @param had    the fingerprint of the page the browser is holding; when
+     *               it still describes this one, the counts go back without
+     *               the rows
      */
-    private String activityJson(Accounts.Account me, int offset, String find) {
+    private String activityJson(Accounts.Account me, int offset, String find, String had) {
         AlminConfig cfg = AlminConfig.get();
         String only = onlyPlayer(me);
         String needle = find == null ? "" : find.trim().toLowerCase(java.util.Locale.ROOT);
         ActivityLog.Page page = ActivityLog.page(offset, rowsShown(),
             e -> visible(only, e.player()) && matches(needle, me, e));
+        int total = ActivityLog.size();
+        String sig = pageSig(page, offset, needle, total);
+
+        JsonObject root = new JsonObject();
+        root.addProperty("sig", sig);
+        root.addProperty("total", total);
+        root.addProperty("matched", page.matched());
+        root.addProperty("offset", Math.max(0, offset));
+        root.addProperty("more", page.more());
+        root.addProperty("find", needle);
+        root.addProperty("enabled", cfg.activityLog);
+        root.addProperty("blocks", cfg.activityBlocks);
+        root.addProperty("retentionMinutes", cfg.activityRetentionMinutes);
+        root.addProperty("rowsShown", rowsShown());
+        root.add("admins", adminPolicyJson());
+        if (had != null && !had.isEmpty() && had.equals(sig)) {
+            root.addProperty("unchanged", true);
+            return root.toString();
+        }
 
         JsonArray arr = new JsonArray();
         for (ActivityEntry e : page.rows()) {
@@ -2739,18 +2779,7 @@ public final class WebUi {
             o.addProperty("count", e.count());
             arr.add(o);
         }
-        JsonObject root = new JsonObject();
         root.add("rows", arr);
-        root.addProperty("total", ActivityLog.size());
-        root.addProperty("matched", page.matched());
-        root.addProperty("offset", Math.max(0, offset));
-        root.addProperty("more", page.more());
-        root.addProperty("find", needle);
-        root.addProperty("enabled", cfg.activityLog);
-        root.addProperty("blocks", cfg.activityBlocks);
-        root.addProperty("retentionMinutes", cfg.activityRetentionMinutes);
-        root.addProperty("rowsShown", rowsShown());
-        root.add("admins", adminPolicyJson());
         return root.toString();
     }
 

@@ -6685,6 +6685,18 @@ final class WebPage {
             '<title>'+esc(m.kind+(m.what?' — '+m.what:''))+'</title></g>';
         }
 
+        """;
+
+    /**
+     * The log itself: who is recorded, the movement map, and the list of
+     * rows under it.
+     *
+     * <p>Its own piece for the same reason as the others \u2014 the 64KB ceiling
+     * on one string constant \u2014 and the one it was cut out of had five
+     * kilobytes left, which is one ordinary change away from a build that
+     * fails for a reason nobody would guess from the error.
+     */
+    private static final String PARTLOG = """
         // ---- who is recorded ----
         function showAdmins(p){
           const box=$('a-admins'); if(!box) return;
@@ -6837,9 +6849,12 @@ final class WebPage {
          * the next one, so the number the list stops at is where somebody got
          * to rather than a ceiling they have to go and find.
          *
-         * @param more append the next page rather than starting again
+         * @param more  append the next page rather than starting again
+         * @param quiet a background refresh: it tells the server what it is
+         *              already holding, and is answered with the counts alone
+         *              when that is still the right answer
          */
-        async function loadActivity(more){
+        async function loadActivity(more,quiet){
           const box=$('a-rows'); if(!box) return;
           if(more && (activityBusy || !(activityMeta && activityMeta.more))) return;
           const f=$('a-filter');
@@ -6848,8 +6863,20 @@ final class WebPage {
           const gen=++activityGen;
           activityBusy=true;
           if(more) markMore('loading\u2026',true);
-          const r=await jget('/api/activity?offset='+offset+
-            '&find='+encodeURIComponent(activityFind.trim()));
+          // Only worth telling the server what we are holding when we really
+          // are holding it: after a filter change or a rebuilt menu the rows
+          // on screen are not the ones that fingerprint describes.
+          const known=(quiet && !more && activityMeta && box.almDrawn)?(activityMeta.sig||''):'';
+          // A dropped connection has to come back as a failure rather than a
+          // rejected promise: the busy flag below is what stops the refresh
+          // asking twice at once, and one unhandled throw would leave it stuck
+          // on and the list would never load again.
+          let r;
+          try { r=await jget('/api/activity?offset='+offset+
+            '&find='+encodeURIComponent(activityFind.trim())+
+            (known?'&sig='+encodeURIComponent(known):'')); }
+          catch(e){ r={status:0,body:{error:'No answer from the panel itself ('+
+            (e&&e.message?e.message:'connection lost')+').'}}; }
           // Something newer is already on its way; this answer is about a
           // filter or a position the list has left behind.
           if(gen!==activityGen) return;
@@ -6859,11 +6886,36 @@ final class WebPage {
             else box.innerHTML='<div class="note">'+esc(r.body.error||'unavailable')+'</div>';
             return;
           }
+          // Nothing has happened since we last asked, so the rows on screen
+          // are still the right rows and there is nothing to build.
+          if(r.body.unchanged){
+            activityMeta=r.body; showAdmins(r.body.admins); paintActivityMeta();
+            return;
+          }
           activityMeta=r.body;
           if(offset && offset===+r.body.offset) activityRows=activityRows.concat(r.body.rows||[]);
           else { activityRows=r.body.rows||[]; box.almDrawn=0; }
           if(!offset) showAdmins(r.body.admins);
           paintActivity();
+        }
+
+        /**
+         * The three-second refresh of the log.
+         *
+         * <p>Two things it must not do. It must not throw away the pages
+         * somebody has scrolled through \u2014 reading page four of a log is not
+         * something a refresh should interrupt \u2014 and on a quiet server it
+         * must not rebuild two thousand rows to arrive at the two thousand
+         * rows already on the screen. So it stands down once the list has
+         * grown past its first page, and otherwise hands the server the
+         * fingerprint of what it is holding, which is answered with the counts
+         * and no rows when nothing has happened.
+         */
+        function refreshActivity(){
+          if(activityBusy) return;
+          const page=+((activityMeta||{}).rowsShown)||0;
+          if(page && activityRows.length>page) return;
+          loadActivity(false,true);
         }
 
         /**
@@ -6879,10 +6931,21 @@ final class WebPage {
           findTimer=setTimeout(()=>{ findTimer=null; loadActivity(); },260);
         }
 
-        /** Loads the next page once the list is nearly used up. */
+        /**
+         * Loads the next page once the list is nearly used up.
+         *
+         * <p>Only when the scroll went down. Replacing the rows makes the
+         * browser clamp the position and fire this, and a list that asked for
+         * the next page every time it was rebuilt spent its life fetching and
+         * rebuilding \u2014 which is what it did, three seconds apart, for as
+         * long as somebody left the menu open near the bottom of it.
+         */
         function activityScrolled(){
           const box=$('a-rows'); if(!box) return;
-          if(box.scrollTop+box.clientHeight >= box.scrollHeight-320) loadActivity(true);
+          const top=box.scrollTop, was=+box.almTop||0;
+          box.almTop=top;
+          if(top<=was) return;
+          if(top+box.clientHeight >= box.scrollHeight-320) loadActivity(true);
         }
 
         let moreBtn=null;
@@ -6948,28 +7011,33 @@ final class WebPage {
           return d;
         }
 
-        function paintActivity(){
-          const box=$('a-rows'), meta=$('a-meta'); if(!box) return;
+        /** The counts above the list, which move without the rows moving. */
+        function paintActivityMeta(){
+          const meta=$('a-meta'); if(!meta || !activityMeta) return;
           const q=activityFind.trim();
-          if(meta && activityMeta){
-            // Three numbers that were being read as one: how much is kept, how
-            // much of it answers the filter, and how much of that is on screen.
-            // Only the first has a setting behind it, and it was the one people
-            // were raising to make the third move.
-            const kept=+activityMeta.total||0;
-            const found=+activityMeta.matched||0;
-            const here=activityRows.length;
-            meta.innerHTML = (activityMeta.enabled
-                ? kept.toLocaleString()+' row'+(kept===1?'':'s')+' kept'
-                : '<span class="state warn">recording is off</span> · '+
-                  kept.toLocaleString()+' kept')+
-              (q?' · '+found.toLocaleString()+' match \u201c'+esc(q)+'\u201d':'')+
-              ' · '+(here>=found
-                ? (q?'all '+found.toLocaleString()+' shown':'all of them shown')
-                : 'showing '+here.toLocaleString()+', scroll for more')+
-              ' · deleted after '+esc(humanMinutes(activityMeta.retentionMinutes))+
-              (activityMeta.blocks?'':' · block edits excluded');
-          }
+          // Three numbers that were being read as one: how much is kept, how
+          // much of it answers the filter, and how much of that is on screen.
+          // Only the first has a setting behind it, and it was the one people
+          // were raising to make the third move.
+          const kept=+activityMeta.total||0;
+          const found=+activityMeta.matched||0;
+          const here=activityRows.length;
+          meta.innerHTML = (activityMeta.enabled
+              ? kept.toLocaleString()+' row'+(kept===1?'':'s')+' kept'
+              : '<span class="state warn">recording is off</span> · '+
+                kept.toLocaleString()+' kept')+
+            (q?' · '+found.toLocaleString()+' match \u201c'+esc(q)+'\u201d':'')+
+            ' · '+(here>=found
+              ? (q?'all '+found.toLocaleString()+' shown':'all of them shown')
+              : 'showing '+here.toLocaleString()+', scroll for more')+
+            ' · deleted after '+esc(humanMinutes(activityMeta.retentionMinutes))+
+            (activityMeta.blocks?'':' · block edits excluded');
+        }
+
+        function paintActivity(){
+          const box=$('a-rows'); if(!box) return;
+          const q=activityFind.trim();
+          paintActivityMeta();
           const pick=mayWrite('settings')?$('a-rowcount'):null;
           if(pick && activityMeta && +activityMeta.rowsShown)
             pick.value=String(activityMeta.rowsShown);
@@ -6988,6 +7056,7 @@ final class WebPage {
           for(let i=drawn;i<activityRows.length;i++)
             box.appendChild(activityRow(activityRows[i]));
           box.almDrawn=activityRows.length;
+          box.almTop=box.scrollTop;
           paintActivityFoot(box);
         }
         /**
@@ -10490,7 +10559,7 @@ final class WebPage {
           if(tab==='dash') updateMetrics();
           else if(tab==='term') loadConsole();
           else if(tab==='players') loadPlayers();
-          else if(tab==='activity'){ loadActivity(); liveTick(); }
+          else if(tab==='activity'){ refreshActivity(); liveTick(); }
         }
         $('logout').onclick=async()=>{ await jpost('/api/logout',{}); authed=false; tab='dash'; last=null; render(); };
         (async()=>{ await refreshOnce(); render(); offerUpdateOnArrival(false).catch(()=>{});
@@ -10509,5 +10578,5 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTBLUE, PART3, PARTUPDATE, PARTSETTINGS);
+        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PART3, PARTUPDATE, PARTSETTINGS);
 }

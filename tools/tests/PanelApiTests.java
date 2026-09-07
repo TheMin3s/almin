@@ -194,7 +194,49 @@ public class PanelApiTests {
         ck("a nonsense offset is the first page", junk.statusCode() == 200
             && rows(junk.body()) == 2000, String.valueOf(junk.statusCode()));
 
+        // The menu asks every three seconds. Sending the same four hundred
+        // kilobytes back each time, for the browser to rebuild two thousand
+        // rows it already had, is most of what made the page unusable with the
+        // 3D map open beside it.
+        String sig = between(first.body(), "\"sig\":\"", "\"");
+        ck("a page comes with a fingerprint", !sig.isEmpty(), first.body().substring(0, 120));
+        var again = send("GET", "/api/activity?offset=0&sig="
+            + java.net.URLEncoder.encode(sig, java.nio.charset.StandardCharsets.UTF_8),
+            null, cookie);
+        ck("...and holding it back gets the counts instead of the rows",
+            again.body().contains("\"unchanged\":true") && rows(again.body()) == 0,
+            meta(again.body()));
+        ck("...which is a few hundred bytes rather than a few hundred thousand",
+            again.body().length() < 1000 && first.body().length() > 100000,
+            again.body().length() + " vs " + first.body().length());
+        ck("...and still says how much there is", again.body().contains("\"total\":5200")
+            && again.body().contains("\"matched\":5200"), meta(again.body()));
+
+        // One new row and the fingerprint no longer describes it.
+        log.addLast(new com.schecks.almin.ActivityEntry(now + 1000, "Alex", "u0",
+            "chat", "something new", "overworld", 1, 64, 1, 1));
+        var moved = send("GET", "/api/activity?offset=0&sig="
+            + java.net.URLEncoder.encode(sig, java.nio.charset.StandardCharsets.UTF_8),
+            null, cookie);
+        ck("...but one new row and the rows come back", !moved.body().contains("\"unchanged\"")
+            && rows(moved.body()) == 2000, meta(moved.body()));
+
+        // A fingerprint from a different question is not this one's.
+        var wrongFilter = send("GET", "/api/activity?offset=0&find=Alex&sig="
+            + java.net.URLEncoder.encode(sig, java.nio.charset.StandardCharsets.UTF_8),
+            null, cookie);
+        ck("a fingerprint from another search does not hold back this one",
+            !wrongFilter.body().contains("\"unchanged\""), meta(wrongFilter.body()));
+
         log.clear();
+    }
+
+    /** The bit of a JSON body between two markers, for reading one field out. */
+    static String between(String body, String from, String to) {
+        int i = body.indexOf(from);
+        if (i < 0) return "";
+        int j = body.indexOf(to, i + from.length());
+        return j < 0 ? "" : body.substring(i + from.length(), j);
     }
 
     static int rows(String body) {
