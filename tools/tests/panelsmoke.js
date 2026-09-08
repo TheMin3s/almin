@@ -289,7 +289,34 @@ const responses = {
                             { at: Date.now() - 43000, player: 'Steve', mask: '', action: 'break',
                               detail: 'Stone', dim: 'overworld', x: 23, y: 63, z: 34, count: 5 },
                             { at: Date.now() - 42000, player: 'Steve', mask: '', action: 'place',
-                              detail: 'Torch', dim: 'overworld', x: 24, y: 64, z: 33, count: 1 }] },
+                              detail: 'Torch', dim: 'overworld', x: 24, y: 64, z: 33, count: 1 }],
+                  // Three places the activity pass would have found: one
+                  // somebody's own, one behind a mask, one shared by nobody in
+                  // particular. The mine is in range of the map's default view
+                  // so the ring has somewhere to land.
+                  places: [
+                    { kind: 'base', headline: 'slept here \u00b7 41 chest visits',
+                      dim: 'overworld', x: 20, y: 64, z: 40, radius: 38,
+                      from: Date.now() - 9 * 86400e3, to: Date.now() - 40000,
+                      events: 620, visits: 14, days: 9, weight: 78,
+                      player: 'Steve', mask: '', people: 1 },
+                    { kind: 'mine', headline: 'down at y 12 \u00b7 1,204 blocks broken',
+                      dim: 'overworld', x: -120, y: 12, z: -40, radius: 64,
+                      from: Date.now() - 6 * 86400e3, to: Date.now() - 3600e3,
+                      events: 1204, visits: 8, days: 6, weight: 61,
+                      player: 'Alex', mask: 'Ghost', people: 1 },
+                    { kind: 'hub', headline: '5 players \u00b7 340 actions',
+                      dim: 'overworld', x: 110, y: 70, z: -90, radius: 96,
+                      from: Date.now() - 11 * 86400e3, to: Date.now() - 200000,
+                      events: 340, visits: 19, days: 11, weight: 55,
+                      player: '', mask: '', people: 5 },
+                    // Somewhere else entirely, so the dimension filter has
+                    // something to leave out.
+                    { kind: 'portal', headline: 'crossed 22 times',
+                      dim: 'the_nether', x: 6, y: 40, z: 9, radius: 24,
+                      from: Date.now() - 5 * 86400e3, to: Date.now() - 90000,
+                      events: 44, visits: 11, days: 5, weight: 40,
+                      player: 'Steve', mask: '', people: 2 }] },
   '/api/map': { every: 30, shots: [
       { at: Date.now() - 55000, dim: 'overworld', minX: -200, minZ: -200, span: 384 },
       { at: Date.now() - 15000, dim: 'overworld', minX: -180, minZ: -190, span: 384 }] },
@@ -1754,6 +1781,125 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
     sandbox.mapOpts.cluster = true;
     sandbox.paintAll();
     return byPlayer !== byAction ? true : 'the colouring did not change';
+  });
+
+  // ---- places ----
+  // A place is a claim about somebody's world that nobody asked for: draw one
+  // in the wrong dimension, or before it existed, or over somebody the reader
+  // is not allowed to see, and it is worse than an empty map. So most of what
+  // these check is what does *not* get drawn.
+  const placeSvg = () => {
+    sandbox.paintAll();
+    return byId.get('t-map')._html || '';
+  };
+  const placeCount = (html) => (html.match(/class="tplace"/g) || []).length;
+
+  check('the map marks the places the activity pass found', () => {
+    const html = placeSvg();
+    if (placeCount(html) !== 3) return placeCount(html) + ' marks, not 3';
+    for (const name of ["Steve’s base", "Ghost’s mine", 'a shared gathering place']) {
+      if (!html.includes(name)) return 'no ' + name;
+    }
+    // The ring is the ground it covers; without one the pill is a pin, and a
+    // base is not a pin.
+    return /stroke-dasharray="/.test(html) ? true : 'the places have no extent';
+  });
+
+  check('...and it says what the evidence was, on hover', () => {
+    const mine = sandbox.allData.places.find((q) => q.kind === 'mine');
+    const tale = sandbox.placeTale(mine);
+    // The mask beside the real name, the way the rest of the panel does it.
+    if (!tale.includes('Ghost (Alex)')) return tale;
+    return tale.includes('down at y 12') ? true : tale;
+  });
+
+  check('...and a place somewhere else stays somewhere else', () => {
+    const html = placeSvg();
+    if (html.includes('portal')) return 'a Nether portal drew on the Overworld';
+    const was = sandbox.allDim;
+    sandbox.allDim = 'the_nether';
+    const there = placeSvg();
+    sandbox.allDim = was;
+    sandbox.paintAll();
+    return placeCount(there) === 1 ? true : placeCount(there) + ' marks in the Nether';
+  });
+
+  check('...and the layer can be turned off', () => {
+    sandbox.mapOpts.places = false;
+    const off = placeSvg();
+    sandbox.mapOpts.places = true;
+    const on = placeSvg();
+    if (placeCount(off) !== 0) return 'the marks stayed';
+    return placeCount(on) === 3 ? true : 'they did not come back';
+  });
+
+  check('a place is not drawn before there was one', () => {
+    // The timeline is the whole point of the cursor: a base that shows up on
+    // ground nobody had touched yet would make the map lie about the past.
+    const early = sandbox.placesHere(Date.now() - 20 * 86400e3);
+    const late = sandbox.placesHere(Date.now());
+    if (early.length !== 0) return early.length + ' places before any of them existed';
+    return late.length === 3 ? true : late.length + ' places now';
+  });
+
+  check('focusing one player leaves the shared places alone', () => {
+    // Only the dominant contributor is recorded, so hiding an unowned place
+    // while somebody is focused would be claiming they had no part in it.
+    sandbox.focusPlayer = 'Steve';
+    const html = placeSvg();
+    sandbox.focusPlayer = '';
+    sandbox.paintAll();
+    if (html.includes("Ghost’s mine")) return "Alex's mine showed under a focus on Steve";
+    if (!html.includes("Steve’s base")) return "Steve's own base went missing";
+    return html.includes('a shared gathering place') ? true : 'the shared place vanished';
+  });
+
+  check('every place a label points at is one somebody can click', () => {
+    // wirePlaces indexes into the list of places it was handed; if paintAll
+    // labelled one it skipped, the indices slide and a click on a base opens
+    // a mine somewhere else.
+    const seen = (placeSvg().match(/class="tplace" data-i="(\d+)"/g) || [])
+      .map((m) => +m.replace(/\D/g, ''));
+    const want = seen.map((_, i) => i).join(',');
+    return seen.join(',') === want ? true : 'indices came out ' + seen.join(',');
+  });
+
+  check('a place label stays on the map it labels', () => {
+    // A label hangs off the top of its ring, so on a zoomed-in map a big place
+    // puts its name above the top edge — under the row of online players,
+    // describing something nobody can see. Two of three of them went there the
+    // first time this was drawn.
+    //
+    // Each view below is chosen to reach a different way out of the map: the
+    // ring taller than the viewport (no room above or below), the ring hanging
+    // off the top (room below only), and a name wider than the space left of
+    // its centre.
+    const was = sandbox.view;
+    const off = [];
+    for (const view of [{ cx: 110, cz: -90, span: 120 },
+                        { cx: 110, cz: 30, span: 400 },
+                        { cx: -600, cz: -40, span: 1200 },
+                        { cx: 700, cz: -40, span: 1200 }]) {
+      sandbox.view = { cx: view.cx, cz: view.cz, span: view.span, set: true };
+      for (const g of placeSvg().split('class="tplace"').slice(1)) {
+        const box = /<rect x="([-\d.]+)" y="([-\d.]+)" width="([-\d.]+)" height="([-\d.]+)"/
+          .exec(g);
+        // The map's own viewBox, which paintAll fixes at 1000 x 600.
+        if (!box) { off.push('a label with no pill'); continue; }
+        const x = +box[1], y = +box[2], w = +box[3], h = +box[4];
+        if (x < 0 || y < 0 || x + w > 1000 || y + h > 600) {
+          off.push('span ' + view.span + ' -> ' + x.toFixed(0) + ',' + y.toFixed(0));
+        }
+      }
+    }
+    sandbox.view = was;
+    sandbox.paintAll();
+    return off.length === 0 ? true : off.join(' ');
+  });
+
+  check('the places layer has a switch in the look settings', () => {
+    const layers = sandbox.mapOptionsHtml();
+    return layers.includes('<button id="o-places"') ? true : 'no places button';
   });
 
   // ---- filtering ----

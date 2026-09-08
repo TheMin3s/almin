@@ -2920,6 +2920,82 @@ public final class WebUi {
 
     private static volatile Quiet quietCache;
 
+    /** Rows behind the place pass — further back than the map draws. */
+    static int placeRows() {
+        return Math.max(20_000, mapRows());
+    }
+
+    private record Found(long at, int rows, long newest, String only, JsonArray places) {}
+
+    private static volatile Found placeCache;
+
+    /**
+     * The places, worked out at most once every half minute.
+     *
+     * <p>Places are a property of the whole record rather than of the newest
+     * few thousand rows, so this reads much further back than the map draws —
+     * which is exactly why it cannot run per request on a live map refreshing
+     * every ten seconds. Cached on the same terms as the quiet stretches: the
+     * row count and the newest row decide whether the answer is still the
+     * answer, so a cache never outlives the thing it describes.
+     *
+     * <p>Cached per reader, because an account narrowed to its own player is
+     * shown places built out of its own rows only. One entry is enough: the
+     * common case is one panel open, and a second reader with a different view
+     * simply misses and recomputes.
+     */
+    private static synchronized JsonArray placesJson(String only) {
+        ActivityLog.Span span = ActivityLog.span();
+        long now = System.currentTimeMillis();
+        Found had = placeCache;
+        if (had != null && had.rows() == span.rows() && had.newest() == span.to()
+            && java.util.Objects.equals(had.only(), only) && now - had.at() < 30_000L) {
+            return had.places();
+        }
+
+        List<ActivityEntry> rows = new ArrayList<>();
+        for (ActivityEntry e : ActivityLog.recent(placeRows())) {
+            // Filtered before the pass, not after: a place assembled out of
+            // somebody else's rows and then hidden would still have been
+            // counted, and the ones that survived would carry their weight.
+            if (visible(only, e.player())) rows.add(e);
+        }
+
+        JsonArray arr = new JsonArray();
+        for (Places.Place p : Places.of(rows)) {
+            JsonObject o = new JsonObject();
+            o.addProperty("kind", p.kind());
+            o.addProperty("headline", p.headline());
+            o.addProperty("dim", p.dim());
+            o.addProperty("x", p.x());
+            o.addProperty("y", p.y());
+            o.addProperty("z", p.z());
+            o.addProperty("radius", p.radius());
+            o.addProperty("from", p.from());
+            o.addProperty("to", p.to());
+            o.addProperty("events", p.events());
+            o.addProperty("visits", p.visits());
+            o.addProperty("days", p.days());
+            o.addProperty("weight", p.weight());
+            o.addProperty("player", p.player());
+            o.addProperty("mask", maskOf(p.uuid()));
+            o.addProperty("people", p.people());
+            arr.add(o);
+        }
+        placeCache = new Found(now, span.rows(), span.to(), only, arr);
+        return arr;
+    }
+
+    /**
+     * Forgets the places. For the tests.
+     *
+     * <p>A wipe needs no help: the key is the row count and the newest row, so
+     * an emptied log misses on its own.
+     */
+    static void forgetPlaces() {
+        placeCache = null;
+    }
+
     /**
      * Where nobody was playing, over the whole record.
      *
@@ -3058,6 +3134,10 @@ public final class WebUi {
         root.add("ids", ids);
         root.add("actions", actions);
         root.add("online", who);
+        // What is there, as opposed to what happened. Worked out over far more
+        // of the record than the map draws, and cached, because it answers a
+        // question about a fortnight rather than about this evening.
+        root.add("places", placesJson(only));
         root.addProperty("afkSeconds", AlminConfig.get().activityAfkSeconds);
         // The edges of the record, not the edges of what was just sent. The
         // paths and the newest rows used to decide this between them, so a

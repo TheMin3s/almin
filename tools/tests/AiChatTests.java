@@ -91,6 +91,7 @@ public class AiChatTests {
 
         catalogue();
         readers();
+        places();
         theLoop();
         roundCap();
         shapes();
@@ -130,6 +131,12 @@ public class AiChatTests {
             account(Map.of("activity", "read"), Set.of(Accounts.HIDE_COORDS)));
         ck("an account not shown coordinates is not given the path tool",
             !noCoords.contains("player_positions"), String.join(",", noCoords));
+        // A place is a coordinate somebody sleeps at, which is more than a
+        // path point gives away, not less.
+        ck("nor the one that says where everybody's base is",
+            !noCoords.contains("list_places"), String.join(",", noCoords));
+        ck("an account with only Activity does get it",
+            activityOnly.contains("list_places"), String.join(",", activityOnly));
 
         ck("an account with no menus at all gets nothing",
             toolNames(account(Map.of(), Set.of())).isEmpty());
@@ -146,6 +153,11 @@ public class AiChatTests {
             "player_positions", "{\"player\":\"Steve\"}");
         ck("and so is the path tool, for an account not shown coordinates",
             hidden.contains("\"error\"") && hidden.contains("coordinates"), hidden);
+
+        String places = run(account(Map.of("activity", "read"), Set.of(Accounts.HIDE_COORDS)),
+            "list_places", "{}");
+        ck("and so is the places tool",
+            places.contains("\"error\"") && places.contains("coordinates"), places);
     }
 
     // ---------- what the tools actually return ----------
@@ -473,14 +485,107 @@ public class AiChatTests {
             !asked.get(0).contains("\"role\":\"tool\""), asked.get(0));
     }
 
+    /**
+     * Somewhere somebody keeps going back to.
+     *
+     * <p>On its own log, because the shared one is 400 rows in one straight
+     * line over six minutes — nothing recurs in it, so it makes no places at
+     * all, and a check run against it would pass without testing anything.
+     * Several other checks assert on that row count, so it is put back after.
+     */
+    static void places() throws Exception {
+        System.out.println("\n-- what the model is told about where people live --");
+        // Five days is the default, and a place is a fortnight-shaped fact, so
+        // the log has to be allowed to reach back far enough to hold one.
+        int keep = cfg.activityRetentionMinutes;
+        set("activityRetentionMinutes", 43_200);
+        seedPlaces();
+        try {
+            String all = run(owner(), "list_places", "{}");
+            ck("the owner is told about the places in the log",
+                all.contains("\"kind\":\"base\"") && all.contains("Alex"), all);
+            ck("and what each one is, in words a model can use",
+                all.contains("\"what\"") && all.contains("\"visits\"")
+                    && all.contains("\"dimension\"") && all.contains("\"last_used\""), all);
+
+            // A place is assembled from rows. A reader who may not see the
+            // rows may not see what was built out of them either — otherwise
+            // the tool is a way to find out where somebody sleeps without ever
+            // being shown a single thing they did.
+            Accounts.Account onlyMine = account(Map.of("activity", "read"),
+                Set.of(Accounts.OWN_ACTIVITY));
+            String mine = run(onlyMine, "list_places", "{}");
+            ck("a reader restricted to its own rows is not told about Alex's base",
+                !mine.contains("Alex"), mine);
+            ck("and is told about its own",
+                mine.contains("Steve") && mine.contains("\"kind\":\"base\""), mine);
+
+            ck("the kind can be asked for by name",
+                !run(owner(), "list_places", "{\"kind\":\"mine\"}").contains("\"kind\":\"base\""),
+                run(owner(), "list_places", "{\"kind\":\"mine\"}"));
+        } finally {
+            set("activityRetentionMinutes", keep);
+            seedLog();
+        }
+    }
+
+    /** Two people, two bases, several evenings each. */
+    static void seedPlaces() throws Exception {
+        List<ActivityEntry> rows = new ArrayList<>();
+        long day = 86_400_000L;
+        long start = (System.currentTimeMillis() / day - 12) * day;
+        String[] who = { "Steve", "Alex" };
+        int[] xs = { 200, -800 };
+        for (int p = 0; p < who.length; p++) {
+            for (int d = 0; d < 7; d++) {
+                long at = start + d * day + 19 * 3600_000L;
+                for (int i = 0; i < 14; i++) {
+                    rows.add(new ActivityEntry(at + i * 1500L, who[p], "uuid-" + who[p],
+                        i % 4 == 0 ? "container" : "place",
+                        i % 4 == 0 ? "Chest" : "Oak Planks",
+                        "overworld", xs[p] + (i % 5), 64, 500 + (i % 3), 1));
+                }
+            }
+            rows.add(new ActivityEntry(start + 3 * day + 20 * 3600_000L, who[p],
+                "uuid-" + who[p], "sleep", "Red Bed", "overworld", xs[p], 64, 500, 1));
+        }
+        // Deep, repeatedly, and nothing built: a mine, so the kind filter has
+        // something to leave out.
+        for (int d = 0; d < 6; d++) {
+            long at = start + d * day + 9 * 3600_000L;
+            for (int i = 0; i < 40; i++) {
+                rows.add(new ActivityEntry(at + i * 1500L, "Alex", "uuid-Alex",
+                    "break", "Stone", "overworld", 3000 + (i % 5), 11, -700 + (i % 3), 1));
+            }
+        }
+        // Oldest first: expiry walks the log from the front and stops at the
+        // first row still inside the window, so rows out of order outlive it.
+        rows.sort(java.util.Comparator.comparingLong(ActivityEntry::at));
+        java.util.Deque<ActivityEntry> entries = logEntries();
+        entries.clear();
+        entries.addAll(rows);
+
+        // The panel caches places for half a minute; the tools read the log
+        // directly, but drop it anyway so nothing carries over.
+        Method forget = Class.forName("com.schecks.almin.WebUi")
+            .getDeclaredMethod("forgetPlaces");
+        forget.setAccessible(true);
+        forget.invoke(null);
+    }
+
     // ---------- the log the tools read ----------
 
-    static void seedLog() throws Exception {
+    static java.util.Deque<ActivityEntry> logEntries() throws Exception {
         Class<?> log = Class.forName("com.schecks.almin.ActivityLog");
         Field f = log.getDeclaredField("entries");
         f.setAccessible(true);
         @SuppressWarnings("unchecked")
         java.util.Deque<ActivityEntry> entries = (java.util.Deque<ActivityEntry>) f.get(null);
+        return entries;
+    }
+
+    static void seedLog() throws Exception {
+        java.util.Deque<ActivityEntry> entries = logEntries();
         entries.clear();
         long now = System.currentTimeMillis();
         for (int i = 0; i < 400; i++) {

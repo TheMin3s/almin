@@ -2889,7 +2889,7 @@ final class WebPage {
          */
         const MAP_DEFAULTS={dim:0.38, path:2.6, mark:2.2, head:1.0, colour:'action',
                             faces:true, actions:true, blocks:true, blockMinutes:30,
-                            paths:true, players:true,
+                            paths:true, players:true, places:true,
                             cluster:true, overlays:true,
                             sequences:true, refresh:10, v:3, sceneGround:true,
                             sceneGrid:true, sceneEvents:false, scenePaths:true, grid:true,
@@ -4213,6 +4213,23 @@ final class WebPage {
               mapOpts.dim.toFixed(2)+'"/>'
             : '';
 
+          // What is there, drawn before what happened: a ring under the
+          // ground somebody keeps coming back to. The names go on last, over
+          // everything, because a label under forty block-place dots is a
+          // label nobody can read — and a base is exactly where those dots are.
+          const placeRings=[], placeLabels=[], placeShown=[];
+          for(const p of (mapOpts.places?placesHere(cursor):[])){
+            const px=sx(p.x), py=sz(p.z);
+            const pr=Math.max(9,Math.abs(sx(p.x+p.radius)-px));
+            placeRings.push(placeRing(p,px,py,pr));
+            // Named only while the middle of it is on the map. A place whose
+            // centre is off the edge gets its ring and nothing else: a name
+            // clamped to the border would be pointing at the border.
+            if(px<0 || px>W || py<0 || py>H) continue;
+            placeLabels.push(placeLabel(p,px,py,pr,placeShown.length,W,H));
+            placeShown.push(p);
+          }
+
           const heads=[];
           const lines=shownNames.map(n=>{
             const c=playerColor(n);
@@ -4390,7 +4407,8 @@ final class WebPage {
             '<svg id="t-svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
             'role="img" aria-label="Where everyone was and what they did">'+
             backing+'<g clip-path="url(#mapclip)">'+
-            groundImage+grid.join('')+lines+dots+seqs.join('')+heads.join('')+'</g></svg>'+
+            groundImage+grid.join('')+placeRings.join('')+lines+dots+seqs.join('')+
+            placeLabels.join('')+heads.join('')+'</g></svg>'+
             '<div class="maptip" id="t-tip"></div>'+
             (mapOpts.overlays?'<div class="onlinebar" id="t-online"></div>':'')+
             (scenePlaces.length?'<button class="sceneexpand" id="t-scene-events">'+
@@ -4413,6 +4431,7 @@ final class WebPage {
           paintSide(acts.filter(a=>mine(a) && passes(a)));
           wireMapGestures();
           wireMapButtons();
+          wirePlaces(placeShown);
           const sceneEvents=$('t-scene-events');
           if(sceneEvents) sceneEvents.onclick=()=>{
             mapOpts.sceneEvents=!mapOpts.sceneEvents;
@@ -4457,6 +4476,7 @@ final class WebPage {
               (blue?layer('o-blocks','Block changes',mapOpts.blocks):'')+
               layer('o-paths','Player paths',mapOpts.paths)+
               layer('o-players','Players',mapOpts.players)+
+              layer('o-places','Places',mapOpts.places)+
               layer('o-seq','3D events',mapOpts.sequences)+
               layer('o-grid','Coordinate grid',mapOpts.grid)+
             '</div>'+(blue
@@ -4526,7 +4546,8 @@ final class WebPage {
           set('o-blockmins','oninput',el=>mapOpts.blockMinutes=+el.value);
           set('o-fademins','oninput',el=>mapOpts.fade.minutes=+el.value);
           for(const [id,key] of [['o-actions','actions'],['o-blocks','blocks'],['o-paths','paths'],
-                 ['o-players','players'],['o-seq','sequences'],['o-grid','grid']]){
+                 ['o-players','players'],['o-places','places'],['o-seq','sequences'],
+                 ['o-grid','grid']]){
             const button=$(id);
             if(button) button.onclick=()=>{ mapOpts[key]=!mapOpts[key]; saveMapOpts(); paintAll(); };
           }
@@ -5101,6 +5122,10 @@ final class WebPage {
           }
         }
 
+
+        """;
+
+    private static final String PARTMAPUI2 = """
         /**
          * The shapes on the map, named.
          *
@@ -5731,6 +5756,37 @@ final class WebPage {
           });
         }
 
+        /**
+         * Pointing at a place, and going to one.
+         *
+         * <p>Clicking it frames the ground it covers rather than jumping to a
+         * moment: a place is not something that happened at a time, so the
+         * cursor is left where it was and only the view moves. The zoom is
+         * taken from the place's own radius, so a base fills the map and a
+         * gathering place the size of spawn does not.
+         */
+        function wirePlaces(shown){
+          const svg=$('t-svg'), tip=$('t-tip'), box=$('t-map');
+          if(!svg) return;
+          svg.querySelectorAll('.tplace').forEach(el=>{
+            const p=shown[+el.getAttribute('data-i')];
+            if(!p) return;
+            el.onclick=()=>{
+              view.cx=p.x; view.cz=p.z;
+              view.span=Math.max(64,p.radius*3);
+              view.set=true;
+              if(usingBlueMap()) focusBlueMap(p.x,p.y||0,p.z,Math.max(90,p.radius*3));
+              schedulePaint();
+            };
+            if(!tip||!box) return;
+            el.addEventListener('mouseenter',()=>{
+              tip.textContent=placeTale(p);
+              placeTip(tip,el,svg,box);
+            });
+            el.addEventListener('mouseleave',()=>{ tip.style.opacity='0'; });
+          });
+        }
+
         /** "the_nether" is what the game calls it; "Nether" is what people do. */
         function prettyDim(d){
           if(!d) return '';
@@ -5759,6 +5815,121 @@ final class WebPage {
      * boundary between drawing the map and everything around it.
      */
     private static final String PARTINSIGHT = """
+        /**
+         * The places the Activity menu worked out, drawn on the map.
+         *
+         * <p>A mark here is not an event. The timeline already answers "what
+         * happened"; this answers "what is that" — the thing you actually want
+         * from a map, and the thing no single row in the log says. The server
+         * decides what counts as one (somewhere people keep coming back to,
+         * rather than somewhere a lot happened once); everything below is how
+         * it is drawn and what it is called.
+         *
+         * <p>Colours are the kind, not the player: two people's bases are both
+         * bases, and the paths crossing them are already carrying the player
+         * colours.
+         */
+        const PLACE_LOOK={
+          base:{colour:'#ffcf6b', word:'base'},
+          mine:{colour:'#b9a6ff', word:'mine'},
+          farm:{colour:'#8ce67a', word:'farm'},
+          portal:{colour:'#ff7ad9', word:'portal'},
+          workshop:{colour:'#79cfff', word:'workshop'},
+          hub:{colour:'#ffab33', word:'gathering place'},
+          spot:{colour:'#9aa3ae', word:'worked spot'}
+        };
+        function placeLook(p){ return PLACE_LOOK[p.kind]||PLACE_LOOK.spot; }
+
+        /** The label on the map: short, because it sits on top of the ground. */
+        function placeName(p){
+          const w=placeLook(p).word;
+          if(p.player) return (p.mask||p.player)+'\u2019s '+w;
+          return (p.people>1?'a shared ':'a ')+w;
+        }
+
+        /**
+         * The whole sentence, on hover.
+         *
+         * <p>With the real name beside the mask, the way every other thing the
+         * panel shows an owner for does it: a mask is a costume in chat, not a
+         * second identity to an admin reading a map.
+         */
+        function placeTale(p){
+          const who=p.player
+            ? (p.mask?p.mask+' ('+p.player+')':p.player)+'\u2019s '+placeLook(p).word
+            : (p.people>1?'a shared ':'a ')+placeLook(p).word;
+          return who+' \u2014 '+p.headline+atTail(p.x,p.y,p.z)+
+            ' \u00b7 last used '+fmtAgo(p.to)+' \u00b7 click to look at it';
+        }
+
+        /**
+         * Which places belong on the map as it is currently set.
+         *
+         * <p>Filtered by the cursor as well as the dimension: a place is a fact
+         * about a fortnight, but it is not a fact about a fortnight ago, and a
+         * base drawn before anyone had been there would make the timeline lie.
+         * A place nobody owns stays visible while one player is focused —
+         * only the dominant contributor is recorded, so hiding it would be
+         * claiming they had nothing to do with it.
+         */
+        function placesHere(cursor){
+          const all=(allData&&allData.places)||[];
+          return all.filter(p=>p.dim===allDim && p.from<=cursor &&
+            (!focusPlayer || !p.player || p.player===focusPlayer));
+        }
+
+        /** One place on the flat map: the ground it covers, and its name. */
+        function placeRing(p,px,py,pr){
+          const c=placeLook(p).colour;
+          return '<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="'+pr.toFixed(1)+
+            '" fill="'+c+'" fill-opacity=".045" stroke="'+c+'" stroke-opacity=".42" '+
+            'stroke-width="'+(1.6*unitAdjust).toFixed(1)+'" stroke-dasharray="'+
+            (6*unitAdjust).toFixed(1)+' '+(5*unitAdjust).toFixed(1)+'"/>';
+        }
+
+        /**
+         * The name, as a pill on the ring.
+         *
+         * <p>Drawn over the marks rather than under them: a label under forty
+         * block-place dots is a label nobody can read, and a base is precisely
+         * where those forty dots are.
+         *
+         * <p>Above the ring where there is room, below it where there is not,
+         * and on the middle of it when there is room for neither — a big place
+         * on a zoomed-in map has its top edge somewhere off the screen, and a
+         * label pinned to that edge ends up in the corner of the map next to
+         * the row of online players, describing something nobody can see.
+         */
+        function placeLabel(p,px,py,pr,index,W,H){
+          const c=placeLook(p).colour;
+          const label=placeName(p);
+          const fs=11.5*unitAdjust;
+          const w=label.length*fs*0.56+fs*1.1, h=fs*1.6;
+          const above=py-pr-h*0.5, below=py+pr+h*0.5;
+          let ly=above, tie=true;
+          if(above-h/2<4){ ly=below; }
+          if(ly+h/2>H-4){ ly=py; tie=false; }
+          if(ly-h/2<4){ ly=py; tie=false; }
+          const lx=Math.max(w/2+4,Math.min(W-w/2-4,px));
+          const link=tie
+            ? '<line x1="'+px.toFixed(1)+'" y1="'+py.toFixed(1)+'" x2="'+lx.toFixed(1)+
+              '" y2="'+(ly+(ly<py?h/2:-h/2)).toFixed(1)+'" stroke="'+c+
+              '" stroke-opacity=".5" stroke-width="'+(1.2*unitAdjust).toFixed(1)+'"/>'
+            : '';
+          return '<g class="tplace" data-i="'+index+'" style="cursor:pointer">'+
+            '<title>'+esc(placeTale(p))+'</title>'+
+            '<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="'+
+            (3.2*unitAdjust).toFixed(1)+'" fill="'+c+'" stroke="#0a0c10" stroke-width="'+
+            (1.4*unitAdjust).toFixed(1)+'"/>'+link+
+            '<rect x="'+(lx-w/2).toFixed(1)+'" y="'+(ly-h/2).toFixed(1)+'" width="'+
+            w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="'+(h/2).toFixed(1)+
+            '" fill="#0b0e14" fill-opacity=".92" stroke="'+c+'" stroke-opacity=".7" '+
+            'stroke-width="'+(1.1*unitAdjust).toFixed(1)+'"/>'+
+            '<text x="'+lx.toFixed(1)+'" y="'+(ly+fs*0.36).toFixed(1)+
+            '" text-anchor="middle" font-size="'+fs.toFixed(1)+'" font-weight="700" fill="'+
+            c+'">'+esc(label)+'</text></g>';
+        }
+
         // ---- what it all meant ----
         // Two layers, and the lower one is the one that always works. Episodes
         // are worked out on the server from the log itself — no model, no
@@ -7950,7 +8121,7 @@ final class WebPage {
           }
           const groups=[...bins.values()].sort((a,b)=>
             Math.max(...b.map(x=>x.at))-Math.max(...a.map(x=>x.at))).slice(0,1800);
-          const markers=[], lines=[], players=[], scenes=[], grid=[];
+          const markers=[], lines=[], players=[], scenes=[], grid=[], places=[];
           blueRefs=new Map();
           let n=0;
           for(const group of groups){
@@ -8041,6 +8212,31 @@ final class WebPage {
               const id=bluePlayer(nm,w,{state:w.afk?'afk':'here',at:since,
                 still:Math.max(0,d.cursor-since),dim:''},w.uuid||d.ids[nm]);
               blueRefs.set(id,{type:'player',data:{name:nm,point:w}});
+            }
+          }
+
+          // Places get a set of their own rather than joining the activity
+          // markers, so BlueMap's own layer list can turn "what is there" off
+          // without also turning off "what happened".
+          if(mapOpts.places){
+            for(const p of placesHere(d.cursor)){
+              const look=placeLook(p);
+              const id='q'+places.length;
+              places.push({id:id,kind:'place',shape:'place',
+                x:p.x+.5,y:p.y+2.6,z:p.z+.5,color:look.colour,size:1,
+                text:placeName(p),title:placeTale(p)});
+              blueRefs.set(id,{type:'place',data:p});
+              // The ground it covers, as a ring on the world rather than a
+              // circle on a screen: at an angle, a flat disc drawn in pixels
+              // stops meaning anything.
+              const ring=[];
+              for(let a=0;a<=28;a++){
+                const t=a/28*Math.PI*2;
+                ring.push({x:p.x+.5+Math.cos(t)*p.radius,y:p.y+1,
+                           z:p.z+.5+Math.sin(t)*p.radius});
+              }
+              places.push({id:id+'r',type:'ring',points:ring,label:placeName(p),
+                color:look.colour,width:1.7,opacity:.45});
             }
           }
 
@@ -8150,6 +8346,7 @@ final class WebPage {
           }
 
           return {dimension:allDim,markers:markers,lines:lines,players:players,scenes:scenes,
+            places:places,
             // BlueMap keeps its own heads on the map, at wherever everybody is
             // standing this second. Scrubbed back to last night that is a
             // second copy of every player in the wrong place, next to the one
@@ -8163,7 +8360,8 @@ final class WebPage {
             // BlueMap has its own position readout, which Almin does not draw
             // and cannot remove; the bridge hides what it can find of it.
             hideCoords:noCoords(),
-            counts:{markers:markers.length,scenes:scenes.length,actions:actions.length}};
+            counts:{markers:markers.length,scenes:scenes.length,actions:actions.length,
+                    places:places.filter(p=>p.type!=='ring').length}};
         }
 
         function thinBluePath(points){
@@ -8386,6 +8584,11 @@ final class WebPage {
             }
             if(ref.type==='player'){
               setFocus(ref.data.name); return;
+            }
+            if(ref.type==='place'){
+              const p=ref.data;
+              focusBlueMap(p.x,p.y||0,p.z,Math.max(90,p.radius*3));
+              return;
             }
             if(ref.type==='cluster'){
               // Recorded on both maps or on neither. A watched account that
@@ -11339,6 +11542,6 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
+        PARTMAPUI, PARTMAPUI2, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
         PARTUPDATE, PARTSETTINGS);
 }

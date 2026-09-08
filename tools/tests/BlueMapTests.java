@@ -260,6 +260,28 @@ public class BlueMapTests {
                     && page.contains("title:episodeTale(")
                     && page.contains("title:clusterTale("),
                 "the two renderers still write their own hover text");
+            // A place is the one mark on the map that is not a thing that
+            // happened — it is a claim about a fortnight of them — so on the
+            // 3D map it wants its own layer that a reader can switch off,
+            // rather than being mixed in with the events.
+            check("places are a layer of the 3D map somebody can turn off",
+                integration.contains("sets['almin-places']")
+                    && integration.contains("label:'Places'")
+                    && integration.contains("toggleable:true")
+                    && page.contains("places:places")
+                    && page.contains("mapOpts.places"),
+                "the 3D map either never draws places or will not stop");
+            check("...and a place is drawn as ground, not as a pin",
+                page.contains("type:'ring'")
+                    && integration.contains("m.type==='ring'")
+                    && integration.contains("lineData(m)")
+                    && integration.contains(".almin-mark.place"),
+                "a base with a radius still arrives as a single point");
+            check("...and clicking one looks at it rather than at nothing",
+                page.contains("ref.type==='place'")
+                    && page.contains("Math.max(90,p.radius*3)"),
+                "a place on the 3D map is inert or flies to the wrong distance");
+
             check("the 3D legend draws the same marks the map does",
                 page.contains("function actionKeyHtml")
                     && page.contains("actionKeyHtml(used)"),

@@ -1022,6 +1022,60 @@ classification falls back to geometry: a shaft is still a shaft, but "chopped
 down a tree" becomes "broke 40 blocks". Nothing here knows intent either — a
 hole is a hole whether it was a mine or a grief.
 
+#### Places
+
+A stretch of work is something that happened once. A **place** is somewhere
+people keep going back to, and that is a different kind of fact — it is not in
+any one row of the log, it is in how often the rows land on the same ground.
+
+The map draws them as dashed rings with a name on them: *Steve's base*,
+*Ghost's mine*, *a shared gathering place*. Hovering says what the evidence
+was; clicking zooms to it. The **Places** switch in the map's look settings
+turns the layer off, and it works the same on the flat map and in BlueMap,
+where places get their own toggleable marker set.
+
+Nothing is configured and nothing is marked by hand. Somewhere becomes a place
+when the log shows people **coming back**: at least three separate visits —
+gaps of 25 minutes or more apart — and at least a couple of dozen events on
+roughly one patch of ground. One long afternoon of building, however much of it
+there was, is an *episode* and belongs in the timeline above; it never becomes a
+place. Talking and commands are ignored entirely, or every conversation anybody
+ever had would put a mark under it.
+
+What kind of place it is comes from what was done there, in this order:
+
+| Looks like | Comes out as |
+|---|---|
+| people keep crossing at one spot | *a portal* |
+| somebody slept, or chests and building together | *a base* |
+| planting and cutting the same crop | *a wheat farm*, *a nether wart farm* |
+| a lot of breaking, deep, with nothing built | *a mine*, with the depth |
+| crafting, enchanting and chests, alongside building | *a workshop* |
+| four or more people, a lot of activity | *a gathering place* |
+| none of the above, but people come back | *a worked spot* |
+
+A *worked spot* is the one that has to earn its mark. Every other kind is
+recognised by what was done there and is drawn whatever its score; a spot has
+nothing to say for itself, so it is only kept if it scores at least 46 out of
+100 — which in practice means people go there a great deal.
+
+Each place is attributed to whoever did most of it, showing the mask beside the
+real name the way the rest of the panel does, unless no one player owns 60% of
+it — in which case it belongs to nobody and says how many people use it.
+Places are sorted by how much they are worth looking at (how often, how long,
+how many people, what kind), and at most 40 are drawn.
+
+Two rules about what you get shown. A place is assembled **after** the rows you
+are allowed to read are filtered, not before: an account restricted to its own
+activity gets places built out of its own rows only, and never learns where
+anybody else sleeps. And a place is not drawn before it existed — scrub the
+timeline back past its first visit and the ring goes away, because a base
+marked on ground nobody had touched yet would be the map telling a lie about
+the past.
+
+The AI menu gets the same thing as a tool, `list_places`, under the same two
+gates: the Activity menu, and being shown coordinates at all.
+
 #### Handing that to a model
 
 **Off by default.** Settings → *Reading the log with a model* has the whole

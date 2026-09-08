@@ -82,7 +82,10 @@ final class AiTools {
             out.add(searchActivitySpec());
             out.add(countActivitySpec());
             out.add(overviewSpec());
-            if (!coordsHidden(me)) out.add(positionsSpec());
+            if (!coordsHidden(me)) {
+                out.add(positionsSpec());
+                out.add(placesSpec());
+            }
         }
         if (may(me, "players")) {
             out.add(listPlayersSpec());
@@ -148,6 +151,23 @@ final class AiTools {
             + "question depends on whether the log even covers the period being asked about, "
             + "so the answer can say 'the log only goes back to X' instead of guessing.",
             schema(props()));
+    }
+
+    private static Tool placesSpec() {
+        JsonObject p = props();
+        string(p, "kind", "Only places of this kind: base, mine, farm, portal, workshop, "
+            + "hub or spot.");
+        string(p, "player", "Only places this player did most of. Exact name, "
+            + "case-insensitive.");
+        integer(p, "limit", "How many to return, 1-40. Default 20.");
+        return new Tool("list_places",
+            "The places on the server: somewhere people keep coming back to, with what kind "
+            + "it looks like, who does most of it, where it is and how many separate visits "
+            + "it has had. This is the tool for anything shaped like 'where does X live', "
+            + "'where are the bases' or 'what is at these coordinates' \u2014 it is worked out "
+            + "from the whole log at once, so it answers in a few lines where searching the "
+            + "rows would take many pages and still not add up to a place.",
+            schema(p));
     }
 
     private static Tool positionsSpec() {
@@ -229,7 +249,8 @@ final class AiTools {
             if (needs != null && !may(me, needs)) {
                 return refuse("This account cannot read the " + menuName(needs) + " menu.");
             }
-            if (name.equals("player_positions") && coordsHidden(me)) {
+            if ((name.equals("player_positions") || name.equals("list_places"))
+                && coordsHidden(me)) {
                 return refuse("This account is not shown coordinates.");
             }
             return switch (name) {
@@ -237,6 +258,7 @@ final class AiTools {
                 case "count_activity"    -> countActivity(me, a);
                 case "activity_overview" -> activityOverview(me);
                 case "player_positions"  -> playerPositions(me, a);
+                case "list_places"       -> listPlaces(me, a);
                 case "list_players"      -> listPlayers(a);
                 case "player_summary"    -> playerSummary(me, a);
                 case "server_status"     -> serverStatus();
@@ -255,7 +277,7 @@ final class AiTools {
     private static String menuFor(String tool) {
         return switch (tool) {
             case "search_activity", "count_activity", "activity_overview",
-                 "player_positions" -> "activity";
+                 "player_positions", "list_places" -> "activity";
             case "list_players", "player_summary" -> "players";
             case "server_status" -> "dash";
             case "list_mods" -> "mods";
@@ -397,6 +419,58 @@ final class AiTools {
         out.add("actions", topOf(actions, 40));
         return done(out, seen[0] + " row" + (seen[0] == 1 ? "" : "s") + " kept, "
             + players.size() + " player" + (players.size() == 1 ? "" : "s"));
+    }
+
+    /**
+     * The places, as the map draws them.
+     *
+     * <p>Through the same reader the panel uses, so a question about where
+     * somebody lives cannot see further than the map can. Places are built out
+     * of rows this account is allowed to read and no others, which is settled
+     * before the pass rather than by filtering the answer afterwards.
+     */
+    private static Result listPlaces(Accounts.Account me, JsonObject a) {
+        String only = WebUi.onlyPlayer(me);
+        String wantKind = text(a, "kind").toLowerCase(java.util.Locale.ROOT);
+        String wantWho = text(a, "player");
+        int limit = clamp(num(a, "limit", 20), 1, 40);
+
+        List<ActivityEntry> rows = new ArrayList<>();
+        for (ActivityEntry e : ActivityLog.recent(WebUi.placeRows())) {
+            if (WebUi.visible(only, e.player())) rows.add(e);
+        }
+
+        JsonArray arr = new JsonArray();
+        int found = 0;
+        for (Places.Place p : Places.of(rows)) {
+            if (!wantKind.isEmpty() && !p.kind().equals(wantKind)) continue;
+            if (!wantWho.isEmpty() && !p.player().equalsIgnoreCase(wantWho)) continue;
+            found++;
+            if (arr.size() >= limit) continue;
+            JsonObject o = new JsonObject();
+            o.addProperty("kind", p.kind());
+            o.addProperty("what", p.headline());
+            o.addProperty("mostly", p.player().isEmpty() ? "shared" : p.player());
+            o.addProperty("people", p.people());
+            o.addProperty("dimension", p.dim());
+            o.addProperty("where", p.x() + "," + p.y() + "," + p.z());
+            o.addProperty("radius", p.radius());
+            o.addProperty("visits", p.visits());
+            o.addProperty("days", p.days());
+            o.addProperty("last_used", stamp(p.to()));
+            o.addProperty("last_used_ago", ago(p.to()));
+            arr.add(o);
+        }
+
+        JsonObject out = new JsonObject();
+        out.add("places", arr);
+        out.addProperty("matched", found);
+        if (found == 0) {
+            out.addProperty("note", "Nothing in the log recurs enough to be a place yet. A "
+                + "place needs somebody to come back to it on several separate occasions, so a "
+                + "young server, or one whose log does not reach back far, has none.");
+        }
+        return done(out, found + " place" + (found == 1 ? "" : "s"));
     }
 
     private static Result playerPositions(Accounts.Account me, JsonObject a) {

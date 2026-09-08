@@ -676,7 +676,7 @@ final class BlueMapIntegration {
             await chooseMap(state.dimension);
             if(!root||!root.parent) { ensureRoot(); }
             if(!root) return;
-            const sets={}, actions={}, tracks={}, scenes={}, grid={};
+            const sets={}, actions={}, tracks={}, scenes={}, grid={}, places={};
             for(const m of state.markers||[]) actions[m.id]=htmlData(m,markerHtml(m));
             // Centred on the point rather than hanging off it by its own
             // top-left corner, which a small badge got away with and a face
@@ -689,6 +689,12 @@ final class BlueMapIntegration {
             }
             for(const m of state.grid||[]) grid[m.id]=m.type==='label'
               ? htmlData(m,markerHtml({...m,kind:'grid',shape:'gridlabel'})) : lineData(m);
+            // A place is a name and the ground it covers. The ring is a line on
+            // the world rather than a circle on the screen, because at an angle
+            // a flat disc drawn in pixels stops meaning anything.
+            for(const m of state.places||[]) places[m.id]=m.type==='ring'
+              ? lineData(m) : htmlData(m,markerHtml(m));
+            sets['almin-places']={label:'Places',toggleable:true,sorting:-51,markers:places};
             sets['almin-actions']={label:'Activity',toggleable:true,sorting:-50,markers:actions};
             sets['almin-tracks']={label:'Player paths',toggleable:true,sorting:-49,markers:tracks};
             sets['almin-scenes']={label:'3D events',toggleable:true,sorting:-48,markers:scenes};
@@ -843,7 +849,13 @@ final class BlueMapIntegration {
               'cursor:pointer;font:700 11px system-ui;transform:scale(var(--almin-size));transform-origin:center}'+
               '.almin-mark{min-width:15px;height:15px;border-radius:50%;padding:0 3px}.almin-mark.cluster{'+
               'min-width:25px;height:21px;border-radius:7px}.almin-mark.scene{width:auto;height:23px;border-radius:5px;'+
-              'padding:0 6px;background:#ffab33;color:#14100a}.almin-mark.gridlabel{width:auto;height:auto;'+
+              'padding:0 6px;background:#ffab33;color:#14100a}'+
+              // A place is named rather than iconned: a glyph for "base" is a
+              // guess the reader has to decode, and the name is right there.
+              '.almin-mark.place{width:auto;height:23px;border-radius:11px;padding:0 9px;'+
+              'background:#0b0e14e8;border-color:var(--almin-color);color:var(--almin-color);'+
+              'font-size:11.5px}'+
+              '.almin-mark.gridlabel{width:auto;height:auto;'+
               'border:0;background:#10141bc9;color:#d9e0e8;border-radius:3px;padding:1px 3px;font-size:9px}'+
               '.almin-head{position:relative;display:block;padding:2px;border-radius:7px;'+
               'width:'+HEAD_PX+'px;height:'+HEAD_PX+'px;overflow:visible}'+
