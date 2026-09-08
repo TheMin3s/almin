@@ -509,6 +509,7 @@ const responses = {
                    days: [{ at: Date.now() - 86400000, events: 9 },
                           { at: Date.now() - 86400000 * 2, events: 3 }],
                    looks: [], hideCoords: false },
+  '/api/server': { ok: true, relaunch: true, message: 'restarting…' },
   '/api/player/inventory': { live: true, at: Date.now(), any: true, recorded: true,
                              items: [{ slot: 0, where: 'hotbar', id: 'minecraft:diamond',
                                        name: 'Diamond', count: 12 },
@@ -536,7 +537,11 @@ function bodyFor(url, init) {
 
 const sandbox = {
   document,
-  fetch: async (url, init) => ({ status: 200, json: async () => bodyFor(url, init) }),
+  // `ok` as well as `status`: the reload check after a restart reads it,
+  // and a shim that never sets it makes "it did not reload" true for the
+  // wrong reason.
+  fetch: async (url, init) => ({ ok: true, status: 200,
+                                 json: async () => bodyFor(url, init) }),
   setTimeout: (fn, ms) => {
     // Zero-delay callbacks are the page wiring itself up after a render, and
     // the harness needs those to have happened by the time it looks. A real
@@ -6488,6 +6493,79 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
   } catch (e) {
     console.log('  FAIL  one player  -> ' + e.message);
     failures.push('one player: ' + e.message);
+  }
+
+  // ---- the wait, on every kind of wait ----
+  try {
+    // A restart takes the server away and brings it back, which is the same
+    // wait an update is and used to be answered with a banner and no clock.
+    sandbox.awaitingReturn = false;
+    sandbox.reloads = 0;
+    await byId.get('srvrestart').onclick();
+    await new Promise((r) => setTimeout(r, 20));
+
+    check('restarting the server counts, the way installing one does', () => {
+      const text = deepText(document.body);
+      return sandbox.cdOpen === true && /id="cd-num"/.test(text)
+        ? true : 'no countdown was opened';
+    });
+
+    check('...and it says which of the two waits this is', () =>
+      /stopping and starting again/.test(deepText(document.body))
+        ? true : 'the caption still talks about an install');
+
+    check('...and it offers to get out of the way rather than to reload', () =>
+      /Hide/.test(deepText(document.body)) && !/Reload now/.test(deepText(document.body))
+        ? true : 'a restart offered a page reload');
+
+    // The panel never went away, so reloading it at zero would throw away a
+    // page that was working the whole time.
+    await sandbox.finishCountdown(sandbox.countGen);
+    check('...and running out does not reload a page that never left', () =>
+      sandbox.reloads === 0 ? true : 'the page reloaded itself mid-restart');
+
+    check('...it says it is still waiting instead', () =>
+      /closes itself the moment the server is back/.test(deepText(document.body))
+        ? true : 'it did not say what it is waiting for');
+
+    check('...and hiding it leaves the count on the page behind it', () => {
+      sandbox.reloadLeft = 7;
+      sandbox.paintCountdown();
+      const before = byId.get('wait-num').textContent;
+      sandbox.reloadLeft = 0;
+      sandbox.paintCountdown();
+      // A frozen "0s" would be a clock that stopped rather than a wait that
+      // is still going.
+      return before === '7s' && byId.get('wait-num').textContent === ''
+        ? true : 'the banner reads ' + JSON.stringify(before) + ' then ' +
+                 JSON.stringify(byId.get('wait-num').textContent);
+    });
+
+    // The way out is the server coming back, which the poll notices.
+    sandbox.awaitingReturn = true;
+    sandbox.serverRunning = true;
+    sandbox.wasReachable = true;
+    await sandbox.poll();
+    check('the countdown ends when the server is back', () =>
+      sandbox.cdOpen === false && !sandbox.openScrim
+        ? true : 'the dialog outlived what it was counting to');
+
+    // The update's countdown is a different promise and keeps it.
+    sandbox.reloads = 0;
+    sandbox.countdown('Installed.', true, false);
+    check('an update still counts down to a page reload', () =>
+      /Reload now/.test(deepText(document.body))
+        && /reloads itself when the count runs out/.test(deepText(document.body))
+        ? true : 'the update wait lost its reload');
+    await sandbox.finishCountdown(sandbox.countGen);
+    check('...and takes it when the count runs out', () =>
+      sandbox.reloads === 1 ? true : 'reloaded ' + sandbox.reloads + ' time(s), expected 1');
+    sandbox.closeModal();
+    sandbox.awaitingReturn = false;
+    sandbox.reloads = 0;
+  } catch (e) {
+    console.log('  FAIL  the wait  -> ' + e.message);
+    failures.push('the wait: ' + e.message);
   }
 
   const missing = failures.filter((f) => f.startsWith('getElementById'));

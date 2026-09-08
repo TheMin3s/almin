@@ -48,12 +48,25 @@ public class RelaunchTests {
             AlminConfig.keyByName("auto-update-when-empty") != null, "missing config key");
         cfg.configVersion = 2;
         cfg.webRestartRelaunch = true; // the old persisted default
+        cfg.webSessionMinutes = 120;   // ditto: two hours, thrown away on restart
         Method migrate = AlminConfig.class.getDeclaredMethod("migrate", AlminConfig.class);
         migrate.setAccessible(true);
         migrate.invoke(null, cfg);
         ck("changed restart and website defaults are migrated once",
-            cfg.webRestartRelaunch && cfg.webSupervisor && cfg.configVersion == 5,
+            cfg.webRestartRelaunch && cfg.webSupervisor && cfg.configVersion == 6,
             cfg.webRestartRelaunch + " / " + cfg.webSupervisor + " / v" + cfg.configVersion);
+        // A login that only lasted while the browser window did was a
+        // consequence of where sessions were kept, not a decision about how
+        // long somebody should stay signed in.
+        ck("...and so is a login window chosen when logins did not survive a restart",
+            cfg.webSessionMinutes == 43200, String.valueOf(cfg.webSessionMinutes));
+
+        AlminConfig chosen = new AlminConfig();
+        chosen.configVersion = 2;
+        chosen.webSessionMinutes = 30;   // somebody meant this
+        migrate.invoke(null, chosen);
+        ck("...but a window somebody actually chose is left alone",
+            chosen.webSessionMinutes == 30, String.valueOf(chosen.webSessionMinutes));
 
         dir = Files.createTempDirectory("alminrelaunch");
         Files.createDirectories(dir.resolve("config").resolve("almin"));

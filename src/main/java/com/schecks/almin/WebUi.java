@@ -284,6 +284,9 @@ public final class WebUi {
         HttpServer http = HttpServer.create(new InetSocketAddress(bind, port), 32);
         ExecutorService pool = Executors.newFixedThreadPool(4, threadFactory(cfg.webSupervisor));
         WebUi ui = new WebUi(http, pool, server, bind, port);
+        // Before any route is wired, so the first request in already has
+        // yesterday's logins to check itself against.
+        ui.sessions.init(dirOf(server));
         http.createContext("/", ui.guard("/", ui::handleRoot));
         http.createContext("/api/session", ui.guard("/api/session", ui::handleSession));
         http.createContext("/api/public", ui.guard("/api/public", ui::handlePublic));
@@ -6006,21 +6009,51 @@ public final class WebUi {
         return (v == null || v.isEmpty()) ? null : v.get(0);
     }
 
+    /**
+     * One cookie out of the request, however the client chose to write it.
+     *
+     * <p>Browsers send {@code name=value; other=value} and nothing else. Some
+     * HTTP clients — Java's own among them — switch to the older versioned
+     * form the moment a cookie carries a {@code Max-Age}, and send
+     * {@code $Version="1", name="value";$Path="/"}: comma-separated, quoted,
+     * with attributes mixed in beside the cookies. Both are read here, because
+     * the alternative was a session that worked in a browser and not in
+     * anything else, which is exactly the kind of difference nobody finds
+     * until something has already failed.
+     */
     private static String cookie(HttpExchange ex, String name) {
         Map<String, List<String>> headers = ex.getRequestHeaders();
         List<String> cookies = headers.get("Cookie");
         if (cookies == null) return null;
         for (String header : cookies) {
-            for (String part : header.split(";")) {
+            for (String part : header.split("[;,]")) {
                 String c = part.trim();
-                if (c.startsWith(name + "=")) return c.substring(name.length() + 1);
+                // $Version, $Path, $Domain: attributes of the cookie before
+                // them, not cookies of their own.
+                if (c.startsWith("$") || !c.startsWith(name + "=")) continue;
+                String v = c.substring(name.length() + 1).trim();
+                if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
+                    v = v.substring(1, v.length() - 1);
+                }
+                return v;
             }
         }
         return null;
     }
 
+    /**
+     * Hands the browser a session.
+     *
+     * <p>With a {@code Max-Age}, which it did not used to have: without one
+     * this is a cookie the browser throws away when it closes, so signing in
+     * lasted exactly as long as the window did. The age matches what the
+     * server will honour, so the two agree about when the login ends rather
+     * than the browser forgetting a session the server still holds.
+     */
     private void setSessionCookie(HttpExchange ex, String id, boolean secureFlag) {
+        long seconds = Math.max(300L, AlminConfig.get().webSessionMinutes * 60L);
         String c = SESSION_COOKIE + "=" + id + "; Path=/; HttpOnly; SameSite=Strict"
+            + "; Max-Age=" + seconds
             + (secureFlag ? "; Secure" : "");
         ex.getResponseHeaders().add("Set-Cookie", c);
     }

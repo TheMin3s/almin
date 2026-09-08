@@ -84,8 +84,15 @@ public final class AlminConfig {
      * is a deliberate act, said out loud and recorded as its own line.
      */
     public boolean activity3dWarning = false;
-    /** How long a web login stays valid. */
-    public int webSessionMinutes = 120;
+    /**
+     * How long a login is remembered when it is not being used.
+     *
+     * <p>An idle window, not a stopwatch: using the panel pushes it out, so a
+     * login only ends when it has genuinely been left alone this long — or
+     * when the password behind it changes, which ends it whatever the clock
+     * says.
+     */
+    public int webSessionMinutes = 43200;
     /**
      * Only allow admin login over a connection Almin can tell is protected —
      * loopback, or a proxy reporting HTTPS. Off by default, because switching
@@ -470,7 +477,9 @@ public final class AlminConfig {
             c -> c.activity3dWarning, (c, v) -> c.activity3dWarning = (Boolean) v),
         textKey("web-admin-username", "Username for the owner account (its password is web-admin-password-hash)",
             c -> c.webAdminUsername, (c, v) -> c.webAdminUsername = (String) v),
-        intKey("web-session-minutes", "How long a web login stays valid, in minutes", 5, 10080,
+        intKey("web-session-minutes",
+            "How long a login is remembered while unused, in minutes (using the panel keeps it alive)",
+            5, 525600,
             c -> c.webSessionMinutes, (c, v) -> c.webSessionMinutes = (Integer) v),
         boolKey("web-supervisor", "Keep the entire website up while the server is stopped, so it can be started from the browser",
             c -> c.webSupervisor, (c, v) -> c.webSupervisor = (Boolean) v),
@@ -560,7 +569,7 @@ public final class AlminConfig {
      * time the file is read, and so a value someone chose on purpose is only
      * ever overwritten if it is still sitting on the old default.
      */
-    private static final int CONFIG_VERSION = 5;
+    private static final int CONFIG_VERSION = 6;
     /** Version of the defaults this file was last written against. */
     public int configVersion = 0;
 
@@ -668,6 +677,14 @@ public final class AlminConfig {
         // external process supervisor can explicitly opt out afterwards.
         if (cfg.configVersion < 5 && !cfg.webSupervisor) {
             cfg.webSupervisor = true;
+        }
+        // v6: a login used to be two hours and was thrown away on every
+        // restart, so it behaved like a session rather than like being signed
+        // in. Sessions now survive a restart and the window slides while the
+        // panel is in use, which makes two hours an oddly short leash on a
+        // login that ends when the password changes anyway.
+        if (cfg.configVersion < 6 && cfg.webSessionMinutes == 120) {
+            cfg.webSessionMinutes = 43200;
         }
         cfg.configVersion = CONFIG_VERSION;
     }

@@ -82,6 +82,37 @@ to `config/almin/config.json` as `web-ui-port`. To see it:
 
 That's the whole setup. There is no step involving Caddy.
 
+### Staying logged in
+
+Signing in lasts. Logins are kept in `config/almin/sessions.json`, so restarting
+the server — or updating it, which restarts it — does not sign anybody out, and
+the cookie has a lifetime, so closing the browser does not lose it either. Both
+of those used to happen, and both were consequences of where sessions were kept
+rather than decisions about who should be signed in.
+
+`web-session-minutes` is how long a login is remembered **while it is not being
+used**. Using the panel pushes it out, so it is an idle window rather than a
+stopwatch: 30 days by default, and a login you use every week never runs out.
+Servers that had the old two-hour default are moved to the new one once; if you
+had deliberately set something else, that is left alone.
+
+Three things end a login before the window does:
+
+- **Logging out.**
+- **Changing the password behind it.** Each session carries a stamp taken from
+  the account's stored hash, checked on every request — so changing a password
+  ends that account's logins whether it was changed from the panel, from
+  `/almin op web password`, or by editing the file, and whether the server was
+  running at the time or not. Changing your own account's password signs out
+  your other tabs and nobody else's; changing the owner password signs out
+  everyone.
+- **Deleting the account.**
+
+The file holds a SHA-256 of each session id rather than the id, the way a
+password file holds a hash: somebody who can read it cannot paste its contents
+into a cookie and be signed in. It is written `rw-------` where the filesystem
+supports it.
+
 ### If it isn't running
 
 The panel is on by default, and it says so on the server console at startup —
@@ -484,6 +515,15 @@ arguments, same environment, same working directory. The panel's Settings tab
 shows the exact command it would run. Self-relaunch is on by default so a
 directly launched server actually comes back; hosted or container installs
 whose own supervisor handles restarts should switch it off.
+
+**The wait has a clock on it.** Pressing Restart or Start opens the same
+countdown an update opens: a number, a bar, and a line saying what is being
+waited for. It closes itself the moment the server is back, and closing it
+early costs nothing — the count carries on in the banner behind it and the page
+reconnects on its own either way. The two waits differ in one thing, which is
+what running out means: an update replaces the panel as well as the server, so
+the page reloads onto the new one; a restart leaves the panel exactly where it
+was, so nothing is reloaded and the dialog simply says it is still waiting.
 
 This is what **Restart** and **Start** in the panel do, what `/almin op restart`
 does, and how an auto-update applies itself. The order matters and is deliberate:

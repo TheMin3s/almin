@@ -1422,7 +1422,7 @@ final class WebPage {
           const b=document.createElement('div'); b.className='banner'; b.id='waiting';
           b.innerHTML='<span class="state warn">Restarting</span><span class="muted">'+
             'The server is starting again. This page reconnects on its own — '+
-            'no need to reload it.</span>';
+            'no need to reload it.</span><span class="num" id="wait-num"></span>';
           m.appendChild(b);
         }
 
@@ -11770,6 +11770,11 @@ final class WebPage {
         // countdown bumps it, and anything still in flight against the old
         // number stops rather than reloading the page under someone.
         let reloadTimer=null, reloadLeft=0, countGen=0;
+        // Whether this run is a page that is going to be replaced, or a wait
+        // for a server that is coming back to a panel which never left. An
+        // update is the first; a restart is the second, and reloading at the
+        // end of it would throw away a page that was working the whole time.
+        let cdOpen=false, cdReload=true;
 
         async function applyUpdate(){
           const msg=$('up-msg'), go=$('up-go'), no=$('up-no');
@@ -11800,28 +11805,70 @@ final class WebPage {
           }
           awaitingReturn=true; waitingSince=Date.now();
           showWaiting();
-          countdown();
+          countdown('Installed. The server is starting again.',true,true);
         }
 
-        /** Swaps the dialog into a countdown and starts it. */
-        function countdown(){
-          const body=$('modal-body');
-          if(!body){ startCountdown(); return; }
-          const title=$('modal-title');
-          if(title) title.textContent='Restarting';
-          body.innerHTML=
-            '<p class="muted">Installed. The server is starting again.</p>'+
-            '<div class="countdown"><div class="cdnum num" id="cd-num">'+RELOAD_AFTER+'</div>'+
-            '<div class="cdbar"><i id="cd-bar" style="width:100%"></i></div></div>'+
-            '<p class="muted" id="cd-note">This page reloads itself when the count runs out, '+
-            'or as soon as the server answers again — whichever comes first.</p>'+
-            '<div class="row2"><button class="btn" id="cd-now">Reload now</button></div>';
-          $('cd-now').onclick=()=>location.reload();
-          // Closing the dialog is a way out, not a trap: it stops the timer.
-          // The page still comes back on its own once the server answers, the
-          // way it did before any of this existed.
-          onScrimClose=stopCountdown;
+        /**
+         * The countdown, opened over whatever is there.
+         *
+         * <p>It was written for updates and only ever shown for one: install,
+         * count, reload. A restart is the same wait — the server is away and
+         * coming back — and was answered with a banner and no sense of how
+         * long, which is the thing a countdown exists to fix. So the caption
+         * and what running out means are the caller's to say, and the dialog
+         * is opened here rather than assumed to be open already.
+         *
+         * @param lead     what is happening, in one line
+         * @param reload   whether the end of the count is a page reload. True
+         *                 for an update, which replaces this panel; false for
+         *                 a restart, where the panel stays and only waits.
+         * @param takeOver whether to become the dialog that is already open.
+         *                 True only for the update, whose own dialog asked the
+         *                 question; a restart pressed while something else is
+         *                 open must not write itself into that.
+         */
+        function countdown(lead,reload,takeOver){
+          cdReload=reload!==false;
+          // Closing the dialog is a way out, not a trap. For an update it also
+          // retires the run, because running out means reloading the page and
+          // that must not happen to somebody who shut the dialog. For a
+          // restart running out means nothing, so the count carries on in the
+          // banner behind it, where it is still worth reading.
+          const hidden=()=>{ cdOpen=false; if(cdReload) stopCountdown(); };
+          const fill=body=>{
+            body.innerHTML=
+              '<p class="muted">'+esc(lead||'The server is starting again.')+'</p>'+
+              '<div class="countdown"><div class="cdnum num" id="cd-num">'+RELOAD_AFTER+'</div>'+
+              '<div class="cdbar"><i id="cd-bar" style="width:100%"></i></div></div>'+
+              '<p class="muted" id="cd-note">'+
+              (cdReload
+                ? 'This page reloads itself when the count runs out, or as soon as the '+
+                  'server answers again — whichever comes first.'
+                : 'This closes itself the moment the server is back. Nothing is lost if '+
+                  'you close it now — the page reconnects either way.')+'</p>'+
+              '<div class="row2"><button class="btn" id="cd-now">'+
+              (cdReload?'Reload now':'Hide')+'</button></div>';
+            $('cd-now').onclick=()=>{ if(cdReload) location.reload(); else closeModal(); };
+          };
+          const open=takeOver?$('modal-body'):null;
+          if(open){
+            const title=$('modal-title');
+            if(title) title.textContent='Restarting';
+            fill(open);
+            onScrimClose=hidden;
+          } else {
+            modal('Restarting',fill,{onClose:hidden});
+          }
+          cdOpen=true;
           startCountdown();
+        }
+
+        /** Shuts the countdown, for when the thing it was counting to arrives. */
+        function endCountdown(){
+          if(!cdOpen) return;
+          cdOpen=false;
+          stopCountdown();
+          closeModal();
         }
 
         function startCountdown(){
@@ -11845,8 +11892,14 @@ final class WebPage {
         }
         function paintCountdown(){
           const n=$('cd-num'), bar=$('cd-bar');
-          if(n) n.textContent=Math.max(0,reloadLeft);
+          const left=Math.max(0,reloadLeft);
+          if(n) n.textContent=left;
           if(bar) bar.style.width=Math.max(0,(reloadLeft/RELOAD_AFTER)*100)+'%';
+          // The same number on the page behind the dialog, so hiding the
+          // dialog does not hide the one piece of information in it. Blank
+          // once it has run out: a frozen "0s" would be a clock that stopped.
+          const w=$('wait-num');
+          if(w) w.textContent=(reloadTimer&&left>0)?(left+'s'):'';
         }
 
         /**
@@ -11861,12 +11914,18 @@ final class WebPage {
           try {
             const r=await fetch('/api/session',
               {credentials:'same-origin',cache:'no-store'});
-            if(r.ok){ location.reload(); return; }
+            // A restart's panel never went away, so "it answers" is not news
+            // and reloading on it would throw away a working page. That run
+            // ends when the server is back, which the poll notices.
+            if(r.ok && cdReload){ location.reload(); return; }
           } catch(e){ /* still down */ }
           const n=$('cd-num'); if(n) n.textContent='…';
           const bar=$('cd-bar'); if(bar) bar.style.width='100%';
-          note.textContent='Still starting — a big world takes a while. '+
-            'This page reloads the moment the server answers.';
+          note.textContent=cdReload
+            ? 'Still starting — a big world takes a while. This page reloads the '+
+              'moment the server answers.'
+            : 'Still starting — a big world takes a while. This closes itself the '+
+              'moment the server is back.';
           setTimeout(()=>finishCountdown(gen),3000);
         }
         async function clearLog(){
@@ -11969,7 +12028,9 @@ final class WebPage {
           const r=await jpost('/api/server',{action:'restart'});
           if(r.status!==200){ alert(r.body.error||'Restart failed'); $('srvrestart').disabled=false; }
           else if(r.body.relaunch){ awaitingReturn=true; waitingSince=Date.now();
-                 $('age').textContent=r.body.message||'restarting…'; showWaiting(); }
+                 $('age').textContent=r.body.message||'restarting…'; showWaiting();
+                 // The same wait an update gets. It is the same wait.
+                 countdown('The server is stopping and starting again.',false); }
           // Nothing here is going to start it again — a wrapper might, or
           // nothing will. Do not sit on a screen promising it comes back.
           else $('age').textContent=r.body.message||'stopping…';
@@ -11982,7 +12043,8 @@ final class WebPage {
           const r=await jpost('/api/server',{action:'start'});
           if(r.status!==200){ alert(r.body.error||'Start failed'); $('srvstart').disabled=false; }
           else { awaitingReturn=true; waitingSince=Date.now();
-                 $('age').textContent='starting server…'; showWaiting(); }
+                 $('age').textContent='starting server…'; showWaiting();
+                 countdown('Starting the server.',false); }
         };
 
         // ---- advertised mods ----
@@ -12895,7 +12957,7 @@ final class WebPage {
             // restart failed and said so, the server is back, or it has been
             // long enough that sitting on a hopeful screen is a lie.
             if(relaunchError || serverRunning || Date.now()-waitingSince>WAIT_LIMIT){
-              awaitingReturn=false; render(); return;
+              awaitingReturn=false; endCountdown(); render(); return;
             }
             setChrome(); showWaiting(); return;
           }

@@ -168,7 +168,7 @@ public class WebFeatureTests {
 
         w = post("/api/config", "{\"name\":\"web-session-minutes\",\"value\":\"1\"}");
         ck("out-of-range int -> 400", w.statusCode() == 400, w.body());
-        ck("...and the value survives", (Integer) get("webSessionMinutes") == 120,
+        ck("...and the value survives", (Integer) get("webSessionMinutes") == 43200,
             String.valueOf(get("webSessionMinutes")));
 
         w = post("/api/config", "{\"name\":\"web-session-minutes\",\"value\":\"90\"}");
