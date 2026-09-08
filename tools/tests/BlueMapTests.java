@@ -210,6 +210,28 @@ public class BlueMapTests {
                 page.contains("livePlayers:live&&!mapOpts.players")
                     && integration.contains("almin-no-live-players"),
                 "the 3D map can still show two heads for one player");
+            // Where to put Almin's row of online chips had been two numbers
+            // somebody measured once against one version of an app Almin does
+            // not ship. On a wider window the chips came down on BlueMap's own
+            // buttons, and a chip over a button is a button nobody can press.
+            check("the 3D map is asked where its own interface is",
+                integration.contains("type:'chrome'")
+                    && integration.contains("function chrome()")
+                    && integration.contains("watchChrome")
+                    && integration.contains("addEventListener('resize'"),
+                "the bridge never reports BlueMap's own chrome");
+            check("...and a bar the width of the window does not claim the corner",
+                integration.contains("rightHeld&&!leftHeld&&r.width<W*0.75")
+                    && integration.contains("r.width*r.height>W*H*0.25"),
+                "a full-width toolbar would be read as the right-hand cluster");
+            check("...and what it finds only ever moves the chips further away",
+                page.contains("function noteBlueChrome")
+                    && page.contains("Math.max(54,Math.min(140,")
+                    && page.contains("Math.max(112,Math.min(680,")
+                    && page.contains("--bm-top,54px")
+                    && page.contains("--bm-right,112px")
+                    && page.contains("max-width:52%"),
+                "a measurement that finds nothing would move the chips somewhere worse");
             check("both maps decide gone, away and through-a-portal the same way",
                 page.contains("function headState")
                     && page.contains("state:'moved'")

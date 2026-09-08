@@ -76,7 +76,7 @@ function stub(tag) {
     tagName: tag, id: '', className: '', textContent: '', title: '', value: '',
     _attr: {},
     type: '', min: '', max: '', disabled: false, checked: false, files: [],
-    style: {}, children: [], _html: '',
+    style: {}, children: [], _html: '', scrollTop: 0,
     alt: '', src: '', loading: '', referrerPolicy: '', parentNode: null,
     append(...k) { for (const x of k) { if (x && typeof x === 'object') x.parentNode = this; }
                    this.children.push(...k); },
@@ -1920,6 +1920,45 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
     sandbox.mapOpts.head = 1.35;
     sandbox.paintAll();
     return big > small * 1.6 ? true : small + ' became ' + big;
+  });
+
+  // ---- the options panel, while the map refreshes under it ----
+  // The panel is drawn with the map and the map redraws itself on a timer, so
+  // rebuilt markup started at the top roughly as often as you could reach the
+  // bottom of it. Where it was scrolled to is read off the old panel just
+  // before it goes, rather than out of a scroll event: a scroll event is
+  // delivered at the browser's next rendering opportunity, which is after the
+  // rebuild already on its way, and never at all in a tab nobody is looking at.
+  check('the options panel keeps its place when the map refreshes', () => {
+    sandbox.optsOpen = true;
+    sandbox.paintAll();
+    const panel = byId.get('t-opts');
+    if (!panel) return 'the options panel was not drawn';
+    panel.scrollTop = 300;
+    sandbox.paintAll();
+    const after = byId.get('t-opts');
+    if (!after) return 'the options panel went missing on the redraw';
+    return after.scrollTop === 300
+      ? true : 'it came back at ' + after.scrollTop + ' instead of 300';
+  });
+
+  check('...and forgets it when the panel is closed', () => {
+    const panel = byId.get('t-opts');
+    if (panel) panel.scrollTop = 300;
+    const close = byId.get('o-close');
+    if (!close || !close.onclick) return 'the panel has no close button to press';
+    close.onclick();
+    // Against the remembered position rather than the element: this harness
+    // never unregisters an id, so a closed panel is still findable here in a
+    // way it is not in a browser. The remembered number is what a reopen
+    // reads, and closing has to have cleared it — including through the
+    // repaint that closing itself sets off, which is the part that used to
+    // put it straight back.
+    const remembered = sandbox.optsScroll;
+    sandbox.optsOpen = false;
+    sandbox.paintAll();
+    return remembered === 0
+      ? true : 'closing left it remembering ' + remembered;
   });
 
   check('a face goes grey once nobody is moving it', () => {

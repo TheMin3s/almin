@@ -190,8 +190,13 @@ final class WebPage {
           .onlinebar .who{pointer-events:auto}
           /* Below BlueMap's own top bar rather than across it: the app has a
              menu at one end and a row of buttons at the other, and a chip
-             sitting on either of them is a button nobody can press. */
-          .bluemapwrap .onlinebar{top:54px;right:112px}
+             sitting on either of them is a button nobody can press. The two
+             numbers are what the bridge measured of the app's own interface,
+             falling back to a pair that were measured once by hand — and the
+             row is held to the left half either way, so a server with a dozen
+             people on it cannot wrap its way across the buttons. */
+          .bluemapwrap .onlinebar{top:var(--bm-top,54px);right:var(--bm-right,112px);
+                                  max-width:52%}
           .sceneexpand{position:absolute;left:12px;bottom:12px;background:rgba(11,13,17,.9);
                        border:1px solid var(--brand);color:var(--ink);border-radius:8px;
                        padding:6px 10px;font:600 12px/1.2 inherit;cursor:pointer}
@@ -4021,6 +4026,10 @@ final class WebPage {
           // ballooned the moment the map went fullscreen. Taken before the
           // rebuild, because after it there is nothing to measure.
           measureUnit(box);
+          // The same reason, for the options panel: it is rebuilt with the map
+          // and the map rebuilds itself on a timer, so where somebody had
+          // scrolled to has to be taken off the old one before it goes.
+          noteOptsScroll();
           const tracks=allData.tracks||{}, acts=allData.actions||[];
           const ids=allData.ids||{}, online=allData.online||[];
           const names=Object.keys(tracks);
@@ -4563,9 +4572,29 @@ final class WebPage {
          * you can use and one you cannot.
          */
         let optsScroll=0;
+        /**
+         * Where it is scrolled to now, read off the panel that is still there.
+         *
+         * <p>Taken here rather than in a scroll handler. A scroll event is
+         * delivered at the browser's next rendering opportunity, which is
+         * after the rebuild that is already on its way and never at all in a
+         * tab that is not being drawn — so the handler on its own would
+         * hand back a position from two refreshes ago, or zero. Reading it
+         * immediately before the markup is replaced cannot be late.
+         */
+        function noteOptsScroll(){
+          // Not while it is being shut. Closing deliberately forgets where you
+          // were, and the panel it would be read off is still on the page at
+          // that moment — so without this the reset was immediately undone and
+          // the panel reopened halfway down.
+          if(!optsOpen) return;
+          const el=$('t-opts'); if(el) optsScroll=el.scrollTop||0;
+        }
         function keepOptsScroll(){
           const el=$('t-opts'); if(!el) return;
           if(optsScroll) el.scrollTop=optsScroll;
+          // Kept as well, for the paths that replace the panel without going
+          // through a repaint.
           el.onscroll=()=>{ optsScroll=el.scrollTop; };
         }
 
@@ -7849,6 +7878,7 @@ final class WebPage {
             frame=$('t-blue-frame');
             frame.onload=()=>{ blueFrameReady=false; sendBlueMapState(bluePendingState); };
           } else frame=$('t-blue-frame');
+          applyBlueChrome();
           const online=$('t-online'); if(online) online.style.display=mapOpts.overlays?'':'none';
           paintOnline(d.online,d.ids);
           const picked=$('t-blue-picked');
@@ -8172,6 +8202,29 @@ final class WebPage {
           frame.contentWindow.postMessage({source:BLUE_SOURCE,type:'state',state:state},location.origin);
         }
 
+        let blueChrome=null;
+        /**
+         * Where BlueMap's own interface is, so Almin's row can go elsewhere.
+         *
+         * <p>Only ever moves the row further out of the app's way: the numbers
+         * that were measured by hand stay as the floor, so a measurement that
+         * finds nothing — a version whose menu is somewhere else, a page that
+         * has not finished arriving — leaves the row exactly where it has
+         * always been rather than dropping it on top of something.
+         */
+        function noteBlueChrome(d){
+          blueChrome={top:Math.max(54,Math.min(140,(+d.top||0)+8)),
+                      right:Math.max(112,Math.min(680,(+d.right||0)+12))};
+          applyBlueChrome();
+        }
+        /** Re-applied after a rebuild, which takes the wrap's own styles with it. */
+        function applyBlueChrome(){
+          const wrap=document.querySelector('.bluemapwrap');
+          if(!wrap||!blueChrome) return;
+          wrap.style.setProperty('--bm-top',blueChrome.top+'px');
+          wrap.style.setProperty('--bm-right',blueChrome.right+'px');
+        }
+
         function paintBlueLegend(names,acts,payload){
           const host=$('t-legend'); if(!host) return;
           const used=[...new Set(acts.map(a=>a.action))];
@@ -8322,6 +8375,7 @@ final class WebPage {
               return;
             }
             if(e.data.type==='worldclick'){ inspectBlueWorld(e.data); return; }
+            if(e.data.type==='chrome'){ noteBlueChrome(e.data); return; }
             if(e.data.type!=='select') return;
             const ref=blueRefs.get(e.data.id);
             if(!ref) return;

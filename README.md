@@ -258,6 +258,21 @@ an operator is not in the activity log or in any path, so their face comes
 straight from the live player list. Turning **Players** off in the map's own
 options hands the job back to BlueMap.
 
+Almin's own overlays are kept out of BlueMap's way rather than placed by guess.
+The bridge measures where the app's interface actually is in the window — what
+is held against the top corners, which is its menu at one end and its row of
+map buttons at the other — and the row of who-is-online chips is put below and
+inside that. It only ever moves the chips further out of the way: on a version
+whose interface is somewhere unexpected, or before the page has finished
+arriving, they sit where they always did. Previously the two numbers had been
+measured once by hand, so on a wider window the chips came down on the buttons,
+and a chip over a button is a button nobody can press.
+
+The map's own options panel keeps its place while the map refreshes under it.
+The panel is drawn with the map and the map redraws itself every few seconds,
+so a rebuilt list used to start at the top roughly as often as you could reach
+the bottom of it.
+
 ### What each client is running
 
 Every row in the **Players** list carries a badge saying whether that client

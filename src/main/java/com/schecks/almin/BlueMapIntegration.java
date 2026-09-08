@@ -730,6 +730,68 @@ final class BlueMapIntegration {
             parent.postMessage({source:SOURCE,type:'select',kind:target.dataset.alminKind,
               id:target.dataset.alminId},location.origin);
           },true);
+          /**
+           * How much of the top of this window belongs to BlueMap.
+           *
+           * <p>Almin draws a row of who-is-online chips over this page, and
+           * where to put them had been two numbers measured once by hand: far
+           * enough down to clear the menu, far enough in from the right to
+           * clear the buttons. Both are properties of a version of an app
+           * Almin does not ship, seen on a window it cannot size \u2014 so on a
+           * wider screen the chips came down on the controls, and a chip over
+           * a button is a button nobody can press.
+           *
+           * <p>Measured here instead, where the app actually is. Only things
+           * held against the top corners count: the lowest edge of them says
+           * where Almin's row may start, and the left edge of what is held
+           * against the right corner says where it has to stop. Almin's own
+           * marks are skipped, and so is anything the size of the map, which
+           * is a background rather than a control. Finding nothing is a
+           * perfectly good answer \u2014 the panel keeps what it had.
+           */
+          function chrome(){
+            const W=window.innerWidth||0, H=window.innerHeight||0;
+            if(!W||!H) return;
+            let below=0, from=0, seen=0;
+            for(const el of document.body.querySelectorAll('*')){
+              if(++seen>4000) break;
+              if(el.id==='almin-tip'||(el.closest&&el.closest('.almin-html'))) continue;
+              const r=el.getBoundingClientRect();
+              if(r.width<8||r.height<8||r.height>140) continue;
+              if(r.top>140||r.bottom<=0) continue;
+              // A backdrop is not a control. A bar the width of the window is,
+              // though \u2014 that is the ordinary shape of one \u2014 so width alone
+              // does not disqualify anything from saying how far down the app's
+              // own interface reaches.
+              if(r.width*r.height>W*H*0.25) continue;
+              const st=getComputedStyle(el);
+              if(st.display==='none'||st.visibility==='hidden'||+st.opacity===0) continue;
+              const leftHeld=r.left<=24, rightHeld=r.right>=W-24;
+              if(!leftHeld&&!rightHeld) continue;
+              below=Math.max(below,r.bottom);
+              // Only something held against the right corner and not the left
+              // says where the row has to stop: a bar spanning the whole window
+              // is held against both, and reading it as the right-hand cluster
+              // would leave nowhere for the row to be at all.
+              if(rightHeld&&!leftHeld&&r.width<W*0.75) from=Math.max(from,W-r.left);
+            }
+            parent.postMessage({source:SOURCE,type:'chrome',
+              top:Math.round(Math.min(140,below)),
+              right:Math.round(Math.min(W*0.6,from))},location.origin);
+          }
+          let chromeTimer=0, resizeTimer=0;
+          // BlueMap's own interface mounts after this script runs and settles
+          // over the next second or two, so the first measurement is not the
+          // last word. Re-measured on resize, and a handful of times while it
+          // is still arriving.
+          const watchChrome=()=>{
+            let left=8;
+            clearInterval(chromeTimer);
+            chrome();
+            chromeTimer=setInterval(()=>{ chrome(); if(--left<=0) clearInterval(chromeTimer); },700);
+          };
+          window.addEventListener('resize',()=>{ clearTimeout(resizeTimer);
+            resizeTimer=setTimeout(chrome,180); });
           let cameraTimer=0;
           const camera=()=>{
             if(changing||!window.bluemap||!window.bluemap.mapViewer.map) return;
@@ -754,7 +816,7 @@ final class BlueMapIntegration {
             });
             injectStyle();
             parent.postMessage({source:SOURCE,type:'ready'},location.origin);
-            camera(); render().catch(console.error);
+            camera(); watchChrome(); render().catch(console.error);
           };
           function injectStyle(){
             if(document.getElementById('almin-bridge-style')) return;
