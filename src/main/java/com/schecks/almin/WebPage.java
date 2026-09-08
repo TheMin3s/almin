@@ -561,10 +561,38 @@ final class WebPage {
              A transcript that scrolls and an input that does not. The asking
              box is pinned to the bottom so a long conversation never pushes
              the thing you type into off the screen. */
+          /* The one screen in the panel somebody sits and watches while it
+             is being written. That is what the animation here is for: a
+             transcript that arrives without any is a page that looks broken
+             for the two minutes a model can take. All of it is off under
+             prefers-reduced-motion. */
+          .aihead{display:flex;gap:13px;align-items:center;margin:0 0 14px}
+          .aispark{width:40px;height:40px;border-radius:12px;flex:none;display:flex;
+                   align-items:center;justify-content:center;font-size:19px;
+                   color:var(--brand);border:1px solid rgba(255,171,51,.32);
+                   background:radial-gradient(120% 120% at 30% 20%,
+                     rgba(255,171,51,.20),rgba(255,171,51,.04) 70%)}
+          .aihead h2{margin:0;font-size:15px}
+          .aihead .muted{margin:2px 0 0;font-size:12.5px;line-height:1.5}
           .askwrap{display:flex;flex-direction:column;gap:12px}
           .asktalk{border:1px solid var(--line);border-radius:10px;background:var(--card);
                    padding:6px 0;max-height:min(58vh,620px);overflow:auto}
-          .askmsg{padding:9px 14px;display:flex;flex-direction:column;gap:5px}
+          .askmsg{padding:9px 14px;display:flex;flex-direction:column;gap:5px;
+                  animation:askin .32s ease-out both}
+          @keyframes askin{from{opacity:0;transform:translateY(6px)}
+                           to{opacity:1;transform:none}}
+          /* The answer gets a face and a rail; the question gets a bubble.
+             Two voices that look like two voices, rather than a column of
+             paragraphs somebody has to read to tell apart. */
+          .askmsg.theirs{padding-left:52px;position:relative}
+          .askmsg.theirs::before{content:'\u2726';position:absolute;left:14px;top:8px;
+                  width:26px;height:26px;border-radius:9px;display:flex;
+                  align-items:center;justify-content:center;font-size:13px;
+                  color:var(--brand);border:1px solid rgba(255,171,51,.28);
+                  background:rgba(255,171,51,.07)}
+          .askmsg.theirs::after{content:'';position:absolute;left:26px;top:38px;
+                  bottom:4px;width:1px;background:linear-gradient(
+                    var(--line),rgba(43,48,57,0))}
           .askmsg .body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
           .askmsg.mine .body{background:var(--card2);border:1px solid var(--line);
                              border-radius:10px;padding:8px 12px;align-self:flex-end;
@@ -578,6 +606,17 @@ final class WebPage {
                    border:1px solid var(--line);border-radius:999px;padding:2px 9px;
                    white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
           .askstep b{color:var(--ink);font-weight:600}
+          /* What it is doing, while it is doing it. */
+          .askwait{display:flex;gap:9px;align-items:center;padding:4px 14px 12px 52px;
+                   color:var(--dim);font-size:12.5px}
+          .askwait i{width:6px;height:6px;border-radius:50%;background:var(--brand);
+                     display:inline-block;animation:askdot 1.4s ease-in-out infinite}
+          .askwait i:nth-child(2){animation-delay:.18s}
+          .askwait i:nth-child(3){animation-delay:.36s}
+          @keyframes askdot{0%,60%,100%{opacity:.25;transform:translateY(0)}
+                            30%{opacity:1;transform:translateY(-3px)}}
+          .askwait .what{margin-left:3px}
+          .askwait b{color:var(--ink);font-weight:600}
           .askbar{display:flex;gap:9px;align-items:flex-end}
           .askbar textarea{flex:1;min-height:44px;max-height:190px;resize:vertical;
                            background:var(--card2);color:var(--ink);border:1px solid var(--line);
@@ -586,7 +625,13 @@ final class WebPage {
           .asktip{display:flex;flex-wrap:wrap;gap:7px}
           .asktip button{background:var(--card2);border:1px solid var(--line);color:var(--dim);
                          border-radius:999px;padding:4px 11px;font-size:12px}
-          .asktip button:hover{color:var(--ink);border-color:var(--brand)}
+          .asktip button:hover{color:var(--ink);border-color:var(--brand);
+                               background:rgba(255,171,51,.07)}
+          .askbar .btn.go{align-self:stretch;padding-left:18px;padding-right:18px}
+          @media(prefers-reduced-motion:reduce){
+            .askmsg{animation:none}
+            .askwait i{animation:none;opacity:.7}
+          }
           .arow .ago{color:var(--mute);font-variant-numeric:tabular-nums}
           .arow .who{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
           .arow .what{font-weight:600}
@@ -8698,7 +8743,7 @@ final class WebPage {
         // hour costs one small lookup instead of a transcript of everything.
         // The panel shows every lookup it made, because an answer about your
         // own server should be checkable rather than taken on faith.
-        let chat={messages:[],problem:'',tools:[],working:false,ready:false};
+        let chat={messages:[],problem:'',tools:[],working:false,doing:'',ready:false};
         let chatBusy=false, chatDrawn=0;
 
         /** How long to keep asking for an answer before saying so. */
@@ -8729,9 +8774,12 @@ final class WebPage {
           const inner=document.createElement('div');
           wrap.appendChild(inner);
           inner.innerHTML=
-            '<p class="muted">Ask about anything the panel records \u2014 who did what, '+
-            'when, and where. Questions reach the whole activity log, which is kept on '+
-            'disk, so this is not limited to the session running now.</p>'+
+            '<div class="aihead"><div class="aispark">\u2726</div><div>'+
+              '<h2>Ask about the server</h2>'+
+              '<p class="muted">Anything the panel records \u2014 who did what, when, and '+
+              'where. Questions reach the whole activity log, which is kept on disk, so '+
+              'this is not limited to the session running now.</p>'+
+            '</div></div>'+
             '<div class="askwrap">'+
             '<div id="ask-state"></div>'+
             '<div class="asktalk" id="ask-talk"></div>'+
@@ -8794,14 +8842,14 @@ final class WebPage {
           // half-finished conversation that never moves.
           if(r.body.working && !chatBusy){
             chatBusy=true; setChatBusy(true);
-            askSay('Looking it up\u2026',false);
             followChat();
           }
         }
 
         function takeChat(body){
           chat={messages:body.messages||[], problem:body.problem||'',
-                tools:body.tools||[], working:!!body.working, ready:true};
+                tools:body.tools||[], working:!!body.working,
+                doing:body.doing||'', ready:true};
           chatDrawn=0;
           paintChat(); paintTips(); paintChatState();
         }
@@ -8821,7 +8869,7 @@ final class WebPage {
           // vanishes from the box without appearing above it reads as lost.
           chat.messages=chat.messages.concat([{at:Date.now(),mine:true,text:q}]);
           paintChat(); paintTips();
-          askSay('Looking it up\u2026',false);
+          askSay('',false);
 
           const r=await jpost('/api/ai/chat',{question:q});
           if(r.status!==200 && r.status!==202){
@@ -8896,6 +8944,7 @@ final class WebPage {
           if(b){ b.disabled=busy; b.textContent=busy?'Thinking\u2026':'Ask'; }
           if(box) box.disabled=busy;
           if(clear) clear.disabled=busy;
+          paintChatWait();
         }
 
         function paintChatState(){
@@ -8908,8 +8957,43 @@ final class WebPage {
           box.appendChild(d);
         }
 
+        /** The element saying it is still working, or null. */
+        let chatWait=null;
+
+        /**
+         * The dots, and what they are waiting for.
+         *
+         * <p>A question can be several round trips to a model — minutes, at
+         * the far end of it — and a page that shows nothing for minutes looks
+         * broken rather than busy. The server says which lookup it is on, so
+         * this says it in the same words the finished answer will use above
+         * it: "reading the log", not a spinner.
+         */
+        function paintChatWait(){
+          const box=$('ask-talk'); if(!box) return;
+          if(chatWait){ chatWait.remove(); chatWait=null; }
+          if(!chatBusy) return;
+          const d=document.createElement('div');
+          d.className='askwait';
+          // What it has done, then what it is doing. The tool names are past
+          // tense — they were written for the chips over a finished answer —
+          // so the sentence is built to suit them rather than the words bent
+          // to suit the sentence.
+          d.innerHTML='<i></i><i></i><i></i>'+
+            (chat.doing
+              ? '<span class="what"><b>'+esc(toolLabel(chat.doing))+
+                '</b> \u00b7 thinking\u2026</span>'
+              : '<span class="what">Thinking\u2026</span>');
+          box.appendChild(d);
+          chatWait=d;
+          box.scrollTop=box.scrollHeight;
+        }
+
         function paintChat(){
           const box=$('ask-talk'); if(!box) return;
+          // Taken off the end before anything is appended, so an answer
+          // arriving lands above it rather than under it.
+          if(chatWait){ chatWait.remove(); chatWait=null; }
           if(!chat.messages.length){
             chatDrawn=0;
             box.innerHTML='<div class="note" style="padding:14px">'+
@@ -8918,6 +9002,7 @@ final class WebPage {
                 : 'Nothing asked yet. Whatever you ask is looked up here on this '+
                   'server \u2014 only the question and what the lookups return are '+
                   'sent to the model.')+'</div>';
+            paintChatWait();
             return;
           }
           // Appended rather than rebuilt, the same way the Activity list works:
@@ -8930,11 +9015,12 @@ final class WebPage {
           }
           chatDrawn=chat.messages.length;
           if(stick) box.scrollTop=box.scrollHeight;
+          paintChatWait();
         }
 
         function chatRow(m){
           const d=document.createElement('div');
-          d.className='askmsg'+(m.mine?' mine':'');
+          d.className='askmsg'+(m.mine?' mine':' theirs');
           if(!m.mine && m.steps && m.steps.length) d.appendChild(chatSteps(m.steps));
           const body=document.createElement('div');
           body.className='body';
@@ -10268,10 +10354,13 @@ final class WebPage {
         function storyPanel(){
           const wrap=document.createElement('div');
           wrap.innerHTML=
-            '<p class="muted">One sentence for each day the server has been played, '+
-            'written from what the log already worked out. A day that is over never '+
-            'changes, so each line is written once and kept \\u2014 only today\\u2019s is '+
-            'ever rewritten.</p>'+
+            '<div class="aihead"><div class="aispark">◴</div><div>'+
+              '<h2>The server’s own history</h2>'+
+              '<p class="muted">One sentence for each day the server has been played, '+
+              'written from what the log already worked out. A day that is over never '+
+              'changes, so each line is written once and kept \\u2014 only today\\u2019s '+
+              'is ever rewritten.</p>'+
+            '</div></div>'+
             '<div id="t-story"></div>';
           setTimeout(()=>{ paintStory(); loadStory(); },0);
           return wrap;

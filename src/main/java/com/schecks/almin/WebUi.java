@@ -3440,6 +3440,7 @@ public final class WebUi {
         root.add("messages", arr);
         root.addProperty("problem", AiChat.problem(me));
         root.addProperty("working", AiChat.working(me));
+        root.addProperty("doing", AiChat.doing(me));
         root.addProperty("enabled", AlminConfig.get().aiChat);
         root.addProperty("maxQuestion", AiChat.MAX_QUESTION);
         root.addProperty("barred", me != null && me.modelBarred());

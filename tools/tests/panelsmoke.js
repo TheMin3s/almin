@@ -107,7 +107,17 @@ function stub(tag) {
     },
     getBoundingClientRect() { return { left: 0, top: 0, right: 200, bottom: 32,
                                        width: 200, height: 32 }; },
-    focus() {}, remove() {}, select() {}, click() {},
+    // A real removal, because "it goes away again" is a promise worth being
+    // able to check. Parents are tracked on append, so this is just a splice.
+    remove() {
+      const p = this.parentNode;
+      if (p) {
+        const i = p.children.indexOf(this);
+        if (i >= 0) p.children.splice(i, 1);
+      }
+      this.parentNode = null;
+    },
+    focus() {}, select() {}, click() {},
     clientWidth: 1200, clientHeight: 600,
     classList: { add() {}, remove() {}, toggle() {} },
     setPointerCapture() {},
@@ -1950,7 +1960,7 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     const story = deepText(byId.get('main'));
     sandbox.aiView = 'ask';
     sandbox.render();
-    if (!/Ask about anything/.test(ask)) return 'the Ask side went missing';
+    if (!/who did what, when, and where/.test(ask)) return 'the Ask side went missing';
     return /one sentence for each day/i.test(story) ? true : story.slice(0, 120);
   });
 
@@ -5923,7 +5933,8 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
       'the AI menu draws one row per message');
     if (!drew) failures.push('ai: drew ' + rows.length + ' rows');
 
-    const mine = rows.length && hasClass(rows[0], 'mine') && !hasClass(rows[1], 'mine');
+    const mine = rows.length && hasClass(rows[0], 'mine') && !hasClass(rows[1], 'mine')
+      && hasClass(rows[1], 'theirs');
     console.log((mine ? '  PASS  ' : '  FAIL  ') +
       'and puts the question and the answer on different sides');
     if (!mine) failures.push('ai: message sides');
@@ -5982,6 +5993,53 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     console.log((unlatched ? '  PASS  ' : '  FAIL  ') +
       'and a dropped connection does not leave the menu stuck');
     if (!unlatched) failures.push('ai: latched after a dropped connection');
+
+    // ---- what it is doing, while it is doing it ----
+    // A model can take two minutes over one question. A page that shows
+    // nothing for two minutes looks broken rather than busy, and the server
+    // knows which lookup it is on, so the transcript can say.
+    sandbox.fetch = async () => ({ status: 200, json: async () => ({
+      ...talk, working: true, doing: 'count_activity' }) });
+    sandbox.chatBusy = false;
+    sandbox.tab = 'ai';
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 40));
+
+    const waits = deepAll(byId.get('ask-talk'), (e) => hasClass(e, 'askwait'));
+    const saidWhat = waits.length === 1 && /counted the log/.test(deepText(waits[0]))
+      && /thinking/i.test(deepText(waits[0]));
+    console.log((saidWhat ? '  PASS  ' : '  FAIL  ') +
+      'a question still being worked on says what it has looked up so far');
+    if (!saidWhat) failures.push('ai: no working line (' + waits.length + ')');
+
+    // The dots belong under the transcript, not in it. An answer arriving
+    // while it is still working has to land above them: under them it reads
+    // as a paragraph that is still being written. Driven straight at the
+    // painter, because the wiring around it redraws the line often enough to
+    // hide the order it was drawn in.
+    sandbox.chat.messages = sandbox.chat.messages.concat(
+      [{ at: Date.now(), mine: false, text: 'One more thing.', steps: [] }]);
+    sandbox.paintChat();
+    const kids = byId.get('ask-talk').children;
+    const last = kids[kids.length - 1];
+    const under = last && hasClass(last, 'askwait')
+      && hasClass(kids[kids.length - 2], 'askmsg');
+    console.log((under ? '  PASS  ' : '  FAIL  ') +
+      'and an answer arriving lands above the dots, not under them');
+    if (!under) failures.push('ai: working line misplaced ('
+      + kids.map((k) => k.className).join('|') + ')');
+
+    // Cleared by hand rather than by waiting: the polling loop sleeps between
+    // tries, and this harness only runs the callbacks that were not asked to
+    // wait. What is being checked is that the latch coming off takes the line
+    // with it.
+    sandbox.chatBusy = false;
+    sandbox.paintChatWait();
+    const gone = deepAll(byId.get('ask-talk'), (e) => hasClass(e, 'askwait')).length === 0;
+    console.log((gone ? '  PASS  ' : '  FAIL  ') +
+      'and it goes away when the answer arrives');
+    if (!gone) failures.push('ai: working line outlived the question');
+    sandbox.fetch = async () => ({ status: 200, json: async () => talk });
 
     // Off in the settings means gone from the navigation, not disabled in it.
     sandbox.aiChatOn = false;

@@ -1281,6 +1281,14 @@ The panel shows every lookup above the answer it was written from — *counted
 4,102 rows by player* next to *Steve, by a distance*. An answer about your own
 server should be checkable rather than taken on faith.
 
+**While it works, it says what it has done.** A question can be several round
+trips to a model — minutes, at the far end of it — and a page that shows
+nothing for minutes looks broken rather than busy. The transcript keeps a line
+at the bottom naming the last lookup it made, in the same words the finished
+answer will show above it: *counted the log · thinking…*. It survives a
+reload, because the work is running on the server rather than in the tab: come
+back to the menu and the line is still there.
+
 **Every tool runs as the person who asked.** A tool is a second road to data
 the panel already guards, so it is guarded the same way: an account is only
 handed the tools for menus it can open, every call is re-checked, and the

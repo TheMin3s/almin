@@ -82,6 +82,17 @@ final class AiChat {
     private static volatile String workingFor = "";
 
     /**
+     * The last thing the answer in progress went and looked up.
+     *
+     * <p>An answer can be several round trips to a model, and the menu spends
+     * that time showing a spinner. It costs one field to make the spinner say
+     * something true instead: the panel already has words for every tool, so
+     * "read the log" is a name it can print. Empty means it has looked nothing
+     * up yet, which is to say it is still thinking about the question itself.
+     */
+    private static volatile String doing = "";
+
+    /**
      * Where a question is actually answered.
      *
      * <p>Not on the request's thread. The panel has four of those and polls
@@ -118,6 +129,11 @@ final class AiChat {
         return !workingFor.isEmpty() && workingFor.equals(keyFor(me));
     }
 
+    /** The name of the tool this account's question is on, or "". */
+    static String doing(Accounts.Account me) {
+        return working(me) ? doing : "";
+    }
+
     /**
      * Puts a question in the transcript and answers it in the background.
      *
@@ -137,6 +153,7 @@ final class AiChat {
             return "Already working on a question \u2014 try again in a moment.";
         }
         workingFor = keyFor(me);
+        doing = "";
         // Added here rather than on the worker so that the very next poll sees
         // it, whichever of the two runs first.
         Thread thread = thread(me);
@@ -153,6 +170,7 @@ final class AiChat {
                         "Something went wrong answering that: " + e, List.of()));
                 } finally {
                     workingFor = "";
+                    doing = "";
                     running.set(false);
                 }
             });
@@ -232,6 +250,10 @@ final class AiChat {
                 List<AiTransport.Outcome> results = new ArrayList<>();
                 for (AiTransport.Call c : answer.calls()) {
                     AiTools.Result r = AiTools.run(me, c.name(), c.args());
+                    // After the lookup, not before it, so what the menu shows
+                    // is a thing that has happened rather than one that is
+                    // about to.
+                    doing = c.name();
                     steps.add(new Step(c.name(), r.note()));
                     results.add(new AiTransport.Outcome(c.id(), c.name(), r.json()));
                     AlminLog.info("[almin] ai looked up {}: {}", c.name(), r.note());
@@ -330,6 +352,7 @@ final class AiChat {
     static void forget() {
         threads.clear();
         workingFor = "";
+        doing = "";
         running.set(false);
     }
 
