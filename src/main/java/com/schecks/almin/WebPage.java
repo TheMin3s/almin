@@ -813,6 +813,8 @@ final class WebPage {
           .chip.jar{color:#8fd4b0;border-color:#315c49}
           .chip.link{color:#8ab6e8;border-color:#31485f}
           .chip.req{color:#f0c46a;border-color:#5e4b26}
+          .chip.on{color:#57c957;border-color:#2c5c33}
+          .chip.bad{color:#e97070;border-color:#5c3131}
           .icon{width:15px;height:15px;flex:none;vertical-align:-3px}
           .bartitle{display:flex;align-items:center;gap:10px;margin:0 0 12px;flex-wrap:wrap}
           .bartitle h2{margin:0}
@@ -850,6 +852,17 @@ final class WebPage {
           @media(max-width:600px){.frow{grid-template-columns:34px minmax(0,1fr)}
                                   .frow .sz{display:none}}
 
+        """;
+
+    /**
+     * The rest of the stylesheet.
+     *
+     * <p>Split off from {@link #PART1} for no reason but Java's 64 KB limit
+     * on one string constant, and joined back on with nothing between: the
+     * page has one {@code <style>} block, and where a rule is written is
+     * decided by what it is about rather than by which constant had room.
+     */
+    private static final String PART1A = """
           /* ---- mods ---- */
           .modrow{display:flex;gap:14px;align-items:center;padding:13px 16px;
                   border-bottom:1px solid rgba(255,255,255,.05)}
@@ -890,6 +903,100 @@ final class WebPage {
           .mcfg .wh{color:var(--mute);font-size:11.5px;flex:1;min-width:0;
                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
           .mcfg .sz{color:var(--mute);font-size:11.5px;flex:none}
+          /* ---- one player ---- */
+          /* A name anywhere in the panel is a way in to the player behind it,
+             and it has to look like one: a dotted underline that firms up
+             under the pointer, so it reads as a link without being blue. */
+          .pn{cursor:pointer;border-bottom:1px dotted rgba(255,255,255,.3)}
+          .pn:hover{color:var(--brand);border-bottom-color:var(--brand)}
+          .psheet{display:flex;flex-direction:column;gap:15px}
+          .phead{display:flex;gap:13px;align-items:center;flex-wrap:wrap}
+          .phead .nm{font-size:19px;font-weight:700;line-height:1.15}
+          .phead .sub{color:var(--mute);font-size:12.5px;margin-top:3px}
+          .phead .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+          .psec>h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;
+                   letter-spacing:.5px;color:var(--mute);font-weight:650}
+          .ptiles{display:grid;gap:8px;
+                  grid-template-columns:repeat(auto-fill,minmax(136px,1fr))}
+          .ptile{background:#0e1116;border:1px solid var(--line);border-radius:10px;
+                 padding:9px 11px;min-width:0}
+          .ptile .cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;
+                      color:var(--mute)}
+          .ptile .big{font-size:16px;font-weight:650;margin-top:3px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          /* One bar a day. The shape is the point — a fortnight of evenings
+             and then nothing looks different from one very long night, and no
+             list of numbers says that as quickly. */
+          .pdays{display:flex;gap:3px;align-items:flex-end;height:46px;
+                 background:#0e1116;border:1px solid var(--line);border-radius:10px;
+                 padding:7px 9px;overflow:hidden}
+          .pday{flex:1 1 0;min-width:3px;max-width:26px;background:var(--brand);
+                opacity:.62;border-radius:2px 2px 0 0;min-height:2px}
+          .pday:hover{opacity:1}
+          .prow{display:grid;gap:9px;align-items:baseline;padding:6px 2px;
+                grid-template-columns:74px 108px minmax(0,1fr) auto;
+                border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px}
+          .prow:last-child{border-bottom:0}
+          .prow .ago,.prow .at{color:var(--mute);font-size:11.5px}
+          .prow .det{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          @media(max-width:620px){.prow{grid-template-columns:66px minmax(0,1fr)}
+                                  .prow .at{display:none}
+                                  .prow .det{grid-column:2}}
+          .pcounts{display:grid;gap:5px;
+                   grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+          .pcount{display:flex;gap:8px;align-items:baseline;font-size:12.5px;
+                  background:#0e1116;border:1px solid var(--line);border-radius:8px;
+                  padding:5px 9px;min-width:0}
+          .pcount .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+                      white-space:nowrap}
+          .pcount .v{font-weight:650;flex:none}
+          /* The inventory is behind a door rather than under a fold: the box
+             says what pressing the button does before it is pressed, and it
+             stays on screen afterwards so nobody can say they were not told. */
+          .pgate{background:#0e1116;border:1px solid var(--warn);border-radius:11px;
+                 padding:12px 13px}
+          .pgate p{margin:0 0 10px;font-size:12.5px;color:var(--mute);max-width:66ch}
+          /* The inventory screen, drawn the way the game draws it: the same
+             grey panel, the same sunken squares, the same stack number in the
+             corner. A list of item names in a dark table was a different
+             object from the thing the admin is being asked about. */
+          .mcinv{--mcs:32px;background:#c6c6c6;padding:8px;display:inline-block;
+                 border:2px solid;border-color:#fff #555 #555 #fff;max-width:100%;
+                 image-rendering:pixelated;color:#3f3f3f}
+          .mcinv h5{margin:0 0 6px;font-size:11.5px;font-weight:700;color:#3f3f3f;
+                    letter-spacing:.2px}
+          .mctop{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px}
+          .mccol{display:grid;grid-template-columns:var(--mcs);gap:2px}
+          /* Level with the boots, the way the game puts it. */
+          .mccol.off{align-self:flex-end}
+          .mcdoll{flex:1;min-width:0;background:#8b8b8b;align-self:stretch;
+                  border:2px solid;border-color:#373737 #fff #fff #373737;
+                  display:flex;flex-direction:column;align-items:center;
+                  justify-content:center;gap:6px;padding:6px 8px;color:#e8eaed;
+                  font-size:12px;font-weight:650;text-align:center;overflow:hidden}
+          .mcdoll .face{width:44px;height:44px;font-size:19px}
+          .mcgrid{display:grid;grid-template-columns:repeat(9,var(--mcs));gap:2px}
+          .mchot{margin-top:8px}
+          .mcslot{width:var(--mcs);height:var(--mcs);background:#8b8b8b;position:relative;
+                  border:2px solid;border-color:#373737 #fff #fff #373737;
+                  box-sizing:content-box}
+          .mcslot img,.mcslot .tx{width:100%;height:100%;display:block;
+                                  image-rendering:pixelated}
+          .mcslot .tx{display:flex;align-items:center;justify-content:center;
+                      font-size:12px;font-weight:700;color:#2b2b2b}
+          /* The game writes the count over the bottom-right of the icon with a
+             hard shadow and no box. Anything softer stops looking like it. */
+          .mcslot .ct{position:absolute;right:1px;bottom:0;line-height:1;
+                      font-size:calc(var(--mcs) * .44);font-weight:700;color:#fff;
+                      text-shadow:1.5px 1.5px 0 #3f3f3f;pointer-events:none}
+          .mcslot.on{outline:2px solid var(--brand);outline-offset:-2px}
+          .mcwrap{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}
+          .mcnote{color:var(--mute);font-size:11.5px;margin:9px 0 0}
+          @media(max-width:620px){.mcinv{--mcs:26px;padding:5px}}
+          @media(max-width:420px){.mcinv{--mcs:22px}}
+          .plooks{font-size:12.5px;color:var(--mute)}
+          .plooks div{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+          .plooks div:last-child{border-bottom:0}
         </style>
         <header>
           <span class="brand">ALMIN</span>
@@ -2172,7 +2279,7 @@ final class WebPage {
           const left=document.createElement('span'); left.className='k'; left.style.whiteSpace='normal';
           // Real name first and always: an admin screen that showed only the
           // mask would be the one place the mask was not supposed to work.
-          left.innerHTML='<b style="color:var(--ink)">'+esc(p.name)+'</b>'+
+          left.innerHTML='<b style="color:var(--ink)">'+pname(p.name,p.uuid)+'</b>'+
             '<br><span class="muted" style="font-size:12px">'+esc(sub)+'</span>';
           const set=document.createElement('button'); set.className='btn';
           set.textContent=p.mask?'Change mask':'Set mask'; set.style.marginLeft='auto';
@@ -2964,6 +3071,538 @@ final class WebPage {
             $('a-who').onchange=()=>loadTrack($('a-who').value);
           },0);
           return wrap;
+        }
+
+        """;
+
+    /**
+     * One player, in one dialog.
+     *
+     * <p>Everything the panel knows about a person used to be spread across
+     * three menus and a filter: who they are in Players, what they did in
+     * Activity, how long they have played nowhere at all. This is that
+     * question asked once — a name, anywhere in the panel, opens it.
+     *
+     * <p>The inventory is the exception and is meant to be. It is behind a
+     * button that says what pressing it does, and pressing it is written down
+     * for everybody including the owner. A panel that shows what somebody is
+     * carrying without saying who looked is a worse thing than one that does
+     * not show it at all.
+     */
+    private static final String PARTPLAYER = """
+        // ---- one player ----
+        // What the open sheet is about, so a reveal can post the right uuid
+        // and a redraw does not have to be handed it again.
+        let sheetFor=null, sheetGear=null, sheetBusy=false;
+
+        /**
+         * A player's name, as something you can press.
+         *
+         * <p>Returns markup rather than an element because most of the places
+         * a name appears are built as strings. The click is picked up by one
+         * listener on the document, so a name drawn into innerHTML after the
+         * fact works without anybody remembering to wire it.
+         */
+        function pname(name,uuid,label){
+          if(!name) return '';
+          const shown=label===undefined||label===null||label===''?name:label;
+          if(!mayRead('players')) return esc(shown);
+          return '<span class="pn" data-pn="'+esc(name)+
+            '" data-pnid="'+esc(uuid||'')+'" title="'+esc(name)+
+            ' \\u2014 open this player">'+esc(shown)+'</span>';
+        }
+
+        /**
+         * The uuid the page happens to know for a name, or nothing.
+         *
+         * <p>The sheet works from the name alone; an id only spares the server
+         * a case-insensitive scan and pins down the right account when two
+         * players have worn the same name.
+         */
+        function knownId(name){
+          return (allData&&allData.ids&&allData.ids[name])||'';
+        }
+
+        // One listener for every name on the page. Capturing, so a name inside
+        // something that has its own click \\u2014 a map chip whose job is to
+        // filter \\u2014 opens the player rather than doing that other thing.
+        document.addEventListener('click',ev=>{
+          const el=ev.target&&ev.target.closest?ev.target.closest('[data-pn]'):null;
+          if(!el) return;
+          ev.preventDefault(); ev.stopPropagation();
+          openPlayer(el.getAttribute('data-pn'),el.getAttribute('data-pnid'));
+        },true);
+
+        /**
+         * Every name the page has seen, longest first.
+         *
+         * <p>Longest first so that "Steve" inside "Steven" does not win the
+         * match, and filtered to what a Minecraft name can actually be: the
+         * list is turned into a pattern, and a name with a bracket in it would
+         * be a pattern somebody else wrote.
+         */
+        function knownNames(){
+          const set=new Set();
+          for(const n of Object.keys((allData&&allData.ids)||{})) set.add(n);
+          for(const n of Object.keys((peopleData&&peopleData.tracks)||{})) set.add(n);
+          return [...set].filter(n=>/^[A-Za-z0-9_]{3,16}$/.test(n))
+                         .sort((a,b)=>b.length-a.length);
+        }
+
+        /**
+         * Writes text into an element, with any player name in it made
+         * openable.
+         *
+         * <p>Nothing here parses the text as HTML. The pieces between names go
+         * in as text nodes and the names go in as elements whose textContent
+         * is set, so a sentence containing &lt;script&gt; is a sentence
+         * containing those characters and nothing else. That is the whole
+         * reason this is not one innerHTML with a replace() in front of it.
+         */
+        function linkNames(into,text){
+          into.textContent='';
+          const names=mayRead('players')?knownNames():[];
+          if(!names.length){ into.textContent=text; return; }
+          const re=new RegExp('\\\\b(?:'+names.join('|')+')\\\\b','g');
+          let last=0, m;
+          while((m=re.exec(text))!==null){
+            if(m.index>last) into.appendChild(document.createTextNode(text.slice(last,m.index)));
+            const el=document.createElement('span');
+            el.className='pn';
+            el.setAttribute('data-pn',m[0]);
+            el.setAttribute('data-pnid',knownId(m[0]));
+            el.title=m[0]+' \u2014 open this player';
+            el.textContent=m[0];
+            into.appendChild(el);
+            last=m.index+m[0].length;
+          }
+          if(last<text.length) into.appendChild(document.createTextNode(text.slice(last)));
+        }
+
+        /** Opens the sheet and fills it in. */
+        function openPlayer(name,uuid){
+          if(!name || !mayRead('players')) return;
+          // The dialog first, and only then what it is about. Opening one
+          // dialog closes the one before it, and closing this one clears the
+          // name it was showing \\u2014 so a name pressed while a sheet was
+          // already open used to wipe its own state on the way in.
+          modal(name,body=>{
+            body.innerHTML='<div class="psheet" id="ps"><p class="muted">Reading\\u2026</p></div>';
+          },{wide:true, onClose:()=>{ sheetFor=null; sheetGear=null; }});
+          sheetFor={name:name, uuid:uuid||''};
+          sheetGear=null;
+          loadPlayerSheet();
+        }
+
+        async function loadPlayerSheet(){
+          const want=sheetFor; if(!want) return;
+          const r=await jget('/api/player?name='+encodeURIComponent(want.name)+
+            '&uuid='+encodeURIComponent(want.uuid||''));
+          // The dialog may have been closed, or a second name opened, while
+          // that was in the air. Painting either would be answering a question
+          // nobody is asking any more.
+          if(sheetFor!==want) return;
+          const host=$('ps'); if(!host) return;
+          if(r.status!==200){
+            host.innerHTML='<p class="msg bad">'+esc(why(r,'Could not read that player.'))+'</p>';
+            return;
+          }
+          // The server knows the real name and the real id; what was clicked
+          // may have been a mask or a name with the wrong case.
+          sheetFor={name:r.body.name||want.name, uuid:r.body.uuid||want.uuid||''};
+          const h=$('modal-title'); if(h) h.textContent=sheetFor.name;
+          paintPlayerSheet(r.body);
+        }
+
+        function paintPlayerSheet(p){
+          const host=$('ps'); if(!host) return;
+          host.innerHTML='';
+          host.appendChild(playerHead(p));
+          host.appendChild(playerFacts(p));
+          if((p.days||[]).length) host.appendChild(playerDays(p.days));
+          host.appendChild(playerRecent(p));
+          host.appendChild(playerStats(p.stats||{}));
+          host.appendChild(playerGate(p));
+          host.appendChild(playerLooks(p.looks||[]));
+        }
+
+        function psec(title){
+          const d=document.createElement('div'); d.className='psec';
+          if(title) d.innerHTML='<h4>'+esc(title)+'</h4>';
+          return d;
+        }
+
+        function playerHead(p){
+          const d=document.createElement('div'); d.className='phead';
+          d.appendChild(avatar(p.name,p.uuid,'lg'));
+          const who=document.createElement('div'); who.style.minWidth='0';
+          const chips=[];
+          chips.push(p.online?'<span class="chip on">online</span>'
+                             :'<span class="chip">offline</span>');
+          if(p.banned) chips.push('<span class="chip bad">banned</span>');
+          if(p.protectedPlayer) chips.push('<span class="chip req">protected</span>');
+          if(p.reported) chips.push('<span class="chip jar">almin client</span>');
+          if(!p.known) chips.push('<span class="chip">never seen here</span>');
+          who.innerHTML='<div class="nm">'+esc(p.name)+'</div>'+
+            '<div class="sub">'+(p.mask?'appears to players as <b style="color:var(--brand)">'+
+              esc(p.mask)+'</b> \\u00b7 ':'')+
+            (p.uuid?esc(p.uuid):'no account on record')+'</div>'+
+            '<div class="chips">'+chips.join('')+'</div>';
+          d.appendChild(who);
+          const acts=document.createElement('div');
+          acts.style.marginLeft='auto'; acts.style.display='flex';
+          acts.style.gap='7px'; acts.style.flexWrap='wrap';
+          if(mayRead('activity')){
+            const map=document.createElement('button'); map.className='btn';
+            map.textContent='On the map';
+            map.title='Close this and show only '+p.name+' on the activity map';
+            map.onclick=()=>{ closeModal(); openInActivity(p.name); };
+            acts.appendChild(map);
+          }
+          d.appendChild(acts);
+          return d;
+        }
+
+        function ptile(cap,big,title){
+          return '<div class="ptile"'+(title?' title="'+esc(title)+'"':'')+
+            '><div class="cap">'+esc(cap)+'</div><div class="big">'+big+'</div></div>';
+        }
+
+        function playerFacts(p){
+          const d=psec('The account');
+          const t=[];
+          t.push(ptile('Played','\\u2014',''));
+          t[0]=ptile('Played',esc(fmtDur(p.playtimeMillis)),
+            'How long Almin has watched them play, which starts when Almin did');
+          t.push(ptile('Joins',(+p.joins||0).toLocaleString()));
+          t.push(ptile('First seen',esc(p.firstSeen?fmtWhen(p.firstSeen):'\\u2014'),
+            p.firstSeen?fmtAgo(p.firstSeen):''));
+          t.push(ptile('Last seen',esc(p.online?'now':(p.lastSeen?fmtAgo(p.lastSeen):'\\u2014')),
+            p.lastSeen?fmtWhen(p.lastSeen):''));
+          if(p.online){
+            t.push(ptile('This session',esc(fmtDur(p.sessionMillis))));
+            t.push(ptile('Where',esc(prettyDim(p.dim)),
+              p.hideCoords?'Coordinates are hidden from this account'
+                          :coords(p.x,p.y,p.z)));
+            t.push(ptile('Health',(+p.health||0)+' \\u2665 \\u00b7 '+(+p.food||0)+' \\ud83c\\udf57'));
+            t.push(ptile('Level',(+p.level||0)+' \\u00b7 '+esc(p.gamemode||'')));
+            if(!p.hideCoords && p.x!==undefined)
+              t.push(ptile('Standing at',esc(coordsTight(p.x,p.y,p.z))));
+          }
+          const grid=document.createElement('div'); grid.className='ptiles';
+          grid.innerHTML=t.join('');
+          d.appendChild(grid);
+          return d;
+        }
+
+        /**
+         * A bar for each day they were here.
+         *
+         * <p>Oldest on the left, because that is the direction time is read
+         * in; the server sends them newest first because that is the direction
+         * a cap should bite in.
+         */
+        function playerDays(days){
+          const d=psec('Days');
+          const list=days.slice().reverse();
+          const most=Math.max.apply(null,list.map(x=>+x.events||0).concat([1]));
+          const strip=document.createElement('div'); strip.className='pdays';
+          strip.innerHTML=list.map(x=>{
+            const n=+x.events||0;
+            return '<i class="pday" style="height:'+Math.max(4,Math.round(n/most*100))+
+              '%" title="'+esc(new Date(x.at).toLocaleDateString())+' \\u2014 '+n+
+              ' action'+(n===1?'':'s')+'"></i>';
+          }).join('');
+          d.appendChild(strip);
+          const note=document.createElement('p'); note.className='muted';
+          note.style.fontSize='11.5px'; note.style.margin='6px 0 0';
+          note.textContent=list.length+' day'+(list.length===1?'':'s')+' with something on them, '+
+            'oldest first \\u2014 out of what the activity log still keeps.';
+          d.appendChild(note);
+          return d;
+        }
+
+        function playerRecent(p){
+          const rows=p.recent||[];
+          const d=psec('What Almin saw');
+          if(!rows.length){
+            d.insertAdjacentHTML('beforeend','<p class="muted" style="font-size:12.5px">'+
+              'Nothing of theirs is left in the activity log.</p>');
+            return d;
+          }
+          const box=document.createElement('div');
+          box.innerHTML=rows.map(e=>{
+            const col=ACTION_COLOR[e.action]||'#9aa3ae';
+            const at=e.dim?prettyDim(e.dim)+(noCoords()?'':' '+coordsTight(e.x,e.y,e.z)):'';
+            return '<div class="prow"><span class="ago">'+
+              esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
+              '<span style="color:'+col+'">'+esc(e.action)+
+                (e.count>1?' &times;'+e.count:'')+'</span>'+
+              '<span class="det" title="'+esc(e.detail)+'">'+esc(e.detail)+'</span>'+
+              '<span class="at">'+esc(at)+'</span></div>';
+          }).join('');
+          d.appendChild(box);
+          return d;
+        }
+
+        /** Ticks, centimetres and half-hearts, in the units people think in. */
+        function statValue(id,v){
+          v=+v||0;
+          if(id==='minecraft:play_time') return fmtDur(v/20*1000);
+          if(id==='minecraft:walk_one_cm')
+            return v>=100000?(v/100000).toFixed(1)+' km':Math.round(v/100)+' m';
+          if(id==='minecraft:damage_dealt'||id==='minecraft:damage_taken')
+            return (v/10).toFixed(0)+' \\u2665';
+          return v.toLocaleString();
+        }
+
+        function playerStats(s){
+          const d=psec('The game\\u2019s own numbers');
+          if(!s.found){
+            d.insertAdjacentHTML('beforeend','<p class="muted" style="font-size:12.5px">'+
+              'This world has no statistics file for them yet. The game writes one '+
+              'the first time somebody plays.</p>');
+            return d;
+          }
+          const grid=document.createElement('div'); grid.className='ptiles';
+          grid.innerHTML=(s.headline||[]).map(c=>
+            ptile(c.name,esc(statValue(c.id,c.value)))).join('');
+          d.appendChild(grid);
+          for(const [key,label] of [['mined','Broken'],['used','Used'],
+                                    ['crafted','Made'],['killed','Killed']]){
+            const list=s[key]||[]; if(!list.length) continue;
+            const sub=document.createElement('div');
+            sub.className='psec'; sub.style.marginTop='11px';
+            sub.innerHTML='<h4>'+esc(label)+' most</h4><div class="pcounts">'+
+              list.map(c=>'<span class="pcount"><span class="nm" title="'+esc(c.id)+'">'+
+                esc(c.name)+'</span><span class="v">'+
+                (+c.value||0).toLocaleString()+'</span></span>').join('')+'</div>';
+            d.appendChild(sub);
+          }
+          const note=document.createElement('p'); note.className='muted';
+          note.style.fontSize='11.5px'; note.style.margin='9px 0 0';
+          note.textContent='Counted by the world, not by Almin \\u2014 so it reaches back '+
+            'past the day the mod was installed. Read '+fmtAgo(s.at)+'.';
+          d.appendChild(note);
+          return d;
+        }
+
+        /**
+         * The inventory, behind the sentence that says what looking costs.
+         *
+         * <p>No poll reaches this and no redraw opens it. The only way to the
+         * item list is the button, and the button writes down who pressed it
+         * before it asks \\u2014 which is why the warning is in the present
+         * tense rather than the conditional.
+         */
+        function playerGate(p){
+          const d=psec('What they are carrying');
+          if(!p.uuid){
+            d.insertAdjacentHTML('beforeend','<p class="muted" style="font-size:12.5px">'+
+              'No account on record, so there is no save file to read.</p>');
+            return d;
+          }
+          const box=document.createElement('div'); box.className='pgate'; box.id='pgate';
+          d.appendChild(box);
+          paintGate(box,p);
+          return d;
+        }
+
+        function paintGate(box,p){
+          box.innerHTML='';
+          const say=document.createElement('p');
+          if(sheetGear){
+            say.innerHTML='You looked in '+esc(p.name)+'\\u2019s inventory. It has been '+
+              'written down under your account name, and everyone who opens this '+
+              'player sees it.';
+          } else {
+            say.innerHTML='This is hidden on purpose. Opening it records that '+
+              '<b>you</b> looked in '+esc(p.name)+'\\u2019s inventory, with the time, '+
+              'for everybody to read \\u2014 there is no setting that turns that off, '+
+              'not even for the owner.';
+          }
+          box.appendChild(say);
+          if(!sheetGear){
+            const b=document.createElement('button');
+            b.className='btn danger'; b.id='pgateb';
+            b.textContent=sheetBusy?'Looking\\u2026':'Look anyway \\u2014 and be recorded';
+            b.disabled=sheetBusy||!mayWrite('players');
+            if(!mayWrite('players'))
+              b.title='This account may read the Players menu but not act in it';
+            b.onclick=()=>revealInventory(p);
+            box.appendChild(b);
+            return;
+          }
+          if(!sheetGear.any()){
+            box.insertAdjacentHTML('beforeend','<p class="muted" style="margin:0">'+
+              'They are carrying nothing at all.</p>');
+            return;
+          }
+          box.appendChild(inventoryScreen(p,sheetGear.items));
+          const note=document.createElement('p');
+          note.className='mcnote';
+          note.textContent=sheetGear.live
+            ? 'What they have on them right now.'
+            : 'From their save file, written '+fmtAgo(sheetGear.at)+'. A player who '+
+              'is offline has whatever the server last wrote down.';
+          box.appendChild(note);
+        }
+
+        // ---- the inventory, drawn as an inventory ----
+
+        /**
+         * One square.
+         *
+         * <p>Empty squares are drawn as well as full ones. A grid of only the
+         * things somebody has is a list with a border; the shape of what is
+         * <em>missing</em> — an empty hotbar, one occupied row — is
+         * half of what an inventory says.
+         */
+        function mcSlot(item){
+          const cell=document.createElement('div');
+          cell.className='mcslot';
+          if(!item) return cell;
+          const label=(item.name||item.id||'')+
+            (item.count>1?' ×'+item.count:'')+'\\n'+(item.id||'');
+          cell.title=label;
+          const initial=()=>{
+            const t=document.createElement('span'); t.className='tx';
+            t.textContent=((item.name||item.id||'?').replace(/^.*:/,'')
+              .charAt(0)||'?').toUpperCase();
+            return t;
+          };
+          if(item.id){
+            const img=document.createElement('img');
+            img.alt=''; img.loading='lazy';
+            img.src='/api/player/icon?id='+encodeURIComponent(item.id);
+            // No texture for it on this server — a modded item, or no
+            // resource pack at all. A letter in the square keeps the shape.
+            img.onerror=()=>{ if(img.parentNode) img.parentNode.replaceChild(initial(),img); };
+            cell.appendChild(img);
+          } else {
+            cell.appendChild(initial());
+          }
+          if(item.count>1){
+            const n=document.createElement('span');
+            n.className='ct'; n.textContent=item.count;
+            cell.appendChild(n);
+          }
+          return cell;
+        }
+
+        function mcGrid(by,from,to,extra){
+          const g=document.createElement('div');
+          g.className='mcgrid'+(extra?' '+extra:'');
+          for(let i=from;i<=to;i++) g.appendChild(mcSlot(by.get(i)));
+          return g;
+        }
+
+        function mcColumn(by,names,extra){
+          const c=document.createElement('div'); c.className='mccol'+(extra?' '+extra:'');
+          for(const n of names) c.appendChild(mcSlot(by.get(n)));
+          return c;
+        }
+
+        /**
+         * What somebody is carrying, laid out the way the game lays it out.
+         *
+         * <p>Armour up the left, the off hand beside it, then the pack and the
+         * hotbar under the gap that separates them on the real screen. The
+         * ender chest is a second panel because it is a second container, and
+         * anything the numbering did not place lands in a third — nothing
+         * is dropped for not fitting the picture.
+         */
+        function inventoryScreen(p,items){
+          const bySlot=new Map(), byWhere=new Map(), ender=new Map(), spare=[];
+          for(const it of items||[]){
+            if(it.where==='ender chest'){ ender.set(+it.slot,it); continue; }
+            if(it.where==='hotbar'||it.where==='pack'){ bySlot.set(+it.slot,it); continue; }
+            if(!byWhere.has(it.where)) { byWhere.set(it.where,it); continue; }
+            spare.push(it);
+          }
+          const wrap=document.createElement('div'); wrap.className='mcwrap';
+
+          const inv=document.createElement('div'); inv.className='mcinv';
+          const top=document.createElement('div'); top.className='mctop';
+          top.appendChild(mcColumn(byWhere,['head','chest','legs','feet']));
+          const doll=document.createElement('div'); doll.className='mcdoll';
+          doll.appendChild(avatar(p.name,p.uuid,'lg'));
+          const who=document.createElement('span');
+          who.textContent=p.name;
+          doll.appendChild(who);
+          top.appendChild(doll);
+          top.appendChild(mcColumn(byWhere,['offhand'],'off'));
+          inv.appendChild(top);
+          inv.appendChild(mcGrid(bySlot,9,35));
+          inv.appendChild(mcGrid(bySlot,0,8,'mchot'));
+          wrap.appendChild(inv);
+
+          if(ender.size){
+            const box=document.createElement('div'); box.className='mcinv';
+            box.innerHTML='<h5>Ender chest</h5>';
+            box.appendChild(mcGrid(ender,0,26));
+            wrap.appendChild(box);
+          }
+          if(spare.length){
+            const box=document.createElement('div'); box.className='mcinv';
+            box.innerHTML='<h5>Elsewhere on them</h5>';
+            const g=document.createElement('div'); g.className='mcgrid';
+            for(const it of spare.slice(0,27)) g.appendChild(mcSlot(it));
+            box.appendChild(g);
+            wrap.appendChild(box);
+          }
+          return wrap;
+        }
+
+        async function revealInventory(p){
+          if(sheetBusy) return;
+          sheetBusy=true;
+          const box=$('pgate'); if(box) paintGate(box,p);
+          const r=await jpost('/api/player/inventory',{uuid:p.uuid, name:p.name});
+          sheetBusy=false;
+          if(sheetFor===null) return;
+          const b=$('pgate'); if(!b) return;
+          if(r.status!==200){
+            paintGate(b,p);
+            b.insertAdjacentHTML('beforeend','<p class="msg bad" style="margin:9px 0 0">'+
+              esc(why(r,'Could not read that inventory.'))+'</p>');
+            return;
+          }
+          // A plain object off the wire, given the one method the painter asks
+          // of it, so an empty inventory and a refused one read differently.
+          sheetGear={live:!!r.body.live, at:+r.body.at||0,
+                     items:r.body.items||[], any(){ return this.items.length>0; }};
+          paintGate(b,p);
+          // The record has just grown by one, and the person who made it grow
+          // is the person looking at it.
+          loadPlayerLooks();
+        }
+
+        function playerLooks(looks){
+          const d=psec('Who has looked in their inventory');
+          const box=document.createElement('div'); box.className='plooks'; box.id='plooks';
+          d.appendChild(box);
+          paintLooks(box,looks);
+          return d;
+        }
+
+        function paintLooks(box,looks){
+          if(!looks||!looks.length){
+            box.innerHTML='<div>Nobody has. This is kept for everyone, including '+
+              'the owner of the panel.</div>';
+            return;
+          }
+          box.innerHTML=looks.map(l=>'<div><b style="color:var(--ink)">'+esc(l.who)+
+            '</b> \\u00b7 '+esc(fmtWhen(l.at))+' \\u00b7 '+esc(fmtAgo(l.at))+
+            '</div>').join('');
+        }
+
+        async function loadPlayerLooks(){
+          const want=sheetFor; if(!want) return;
+          const r=await jget('/api/player?name='+encodeURIComponent(want.name)+
+            '&uuid='+encodeURIComponent(want.uuid||''));
+          if(sheetFor!==want || r.status!==200) return;
+          const box=$('plooks'); if(box) paintLooks(box,r.body.looks||[]);
         }
 
         """;
@@ -4892,7 +5531,8 @@ final class WebPage {
             const a=row.a;
             const line=document.createElement('div');
             line.className='cl';
-            line.innerHTML='<span class="nm">'+esc(a.mask||a.player)+'</span>'+
+            line.innerHTML='<span class="nm">'+
+              pname(a.player,knownId(a.player),a.mask||a.player)+'</span>'+
               '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+esc(a.action)+
               '</span>'+(row.n>1?'<span class="xn">×'+row.n+'</span>':'')+
               (a.detail?'<span class="dt">'+esc(a.detail)+'</span>':'')+
@@ -5239,7 +5879,10 @@ final class WebPage {
                      '\\n(click to show only this player)';
             el.appendChild(avatar(w.name,w.uuid,'sm'));
             const t=document.createElement('span');
-            t.textContent=(w.mask?w.mask:w.name)+(w.afk?' · afk':'');
+            // The name is a way in to the player; the rest of the chip is
+            // still the filter it has always been.
+            t.innerHTML=pname(w.name,w.uuid,w.mask||w.name)+
+              (w.afk?'<span class="muted"> · afk</span>':'');
             el.appendChild(t);
             el.onclick=()=>setFocus(w.name);
             bar.appendChild(el);
@@ -5269,7 +5912,7 @@ final class WebPage {
           $('t-legend').innerHTML=
             shownNames.map(n=>'<span class="pill-who" data-who="'+esc(n)+'" '+
               'style="cursor:pointer"><i style="background:'+playerColor(n)+'"></i>'+
-              esc(n)+'</span>').join('')+key+
+              pname(n,knownId(n))+'</span>').join('')+key+
             '<span class="muted">'+shownNames.length+' player(s) · '+shownActs.length+
             ' action(s) by then · '+Math.round(span)+' blocks across'+
             (focusPlayer?' · showing only '+esc(focusPlayer):'')+
@@ -5338,7 +5981,8 @@ final class WebPage {
           row.className='sideact'+(a.action==='chat'?' say':'');
           row.appendChild(avatar(a.player,(allData.ids||{})[a.player],'sm'));
           const body=document.createElement('div');
-          body.innerHTML='<div class="l1"><span class="nm">'+esc(a.mask||a.player)+'</span>'+
+          body.innerHTML='<div class="l1"><span class="nm">'+
+            pname(a.player,(allData.ids||{})[a.player],a.mask||a.player)+'</span>'+
             '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+esc(a.action)+
             (a.count>1?' ×'+a.count:'')+'</span>'+
             '<span class="tm">'+esc(fmtAgo(a.at).replace(' ago',''))+'</span></div>'+
@@ -5788,6 +6432,19 @@ final class WebPage {
           if(svg) svg.querySelectorAll('.thead').forEach(el=>{
             el.onclick=()=>{ const n=el.getAttribute('data-who');
               setFocus(n); };
+            // A head is a place on the map before it is a name, so clicking it
+            // keeps doing the map's job. The player behind it is one press to
+            // the right, where every other list in the panel keeps its extras.
+            el.oncontextmenu=ev=>{
+              const n=el.getAttribute('data-who')||'';
+              menuAt(ev,[{header:n},
+                {label:'Open '+n, hint:'Everything about this player',
+                 disabled:!mayRead('players'),
+                 why:'This account may not open the Players menu',
+                 run:()=>openPlayer(n,knownId(n))},
+                {label:focusPlayer===n?'Show everyone again':'Show only this player',
+                 run:()=>setFocus(n)}]);
+            };
             if(!tip||!box) return;
             el.addEventListener('mouseenter',()=>{
               tip.textContent=headStory(el);
@@ -6663,7 +7320,8 @@ final class WebPage {
           loadSceneContext(e,built);
           modal('What was built here', body=>{
             body.innerHTML='<p class="muted" style="margin:0 0 10px">'+
-              esc(e.player)+' · '+esc(e.headline)+' · '+esc(e.dim)+
+              pname(e.player,knownId(e.player))+' · '+esc(e.headline)+
+              ' · '+esc(e.dim)+
               (noCoords()?'':' '+coordsTight(built.cx,built.contextMinY,built.cz))+
               '</p>'+
               '<div class="scene" id="sc-box"></div>'+
@@ -6925,7 +7583,7 @@ final class WebPage {
           const walkers=mapOpts.scenePaths?sceneWalkers():[];
           if(!walkers.length){ box.innerHTML=''; return; }
           box.innerHTML=walkers.map(w=>'<span><i style="background:'+playerColor(w)+
-            '"></i>'+esc(w)+'</span>').join('')+
+            '"></i>'+pname(w,knownId(w))+'</span>').join('')+
             '<span class="muted">Each person walks their own colour, the same one the '+
             'map gives them. The faint line is where they went next.</span>';
         }
@@ -7338,8 +7996,23 @@ final class WebPage {
                 y:el.getAttribute('data-sc-y'),z:el.getAttribute('data-sc-z')};
               scene.picked=info;
               const picked=$('sc-picked');
-              if(picked) picked.innerHTML='<strong>'+esc(info.what)+'</strong> \u00b7 '+
+              // A figure in the picture is a person; a block is a block. The
+              // line under the scene says which, so the name in it opens the
+              // player the same way a name in any list does.
+              const who=el.classList.contains('sc-player');
+              if(picked) picked.innerHTML='<strong>'+
+                (who?pname(info.what,knownId(info.what)):esc(info.what))+'</strong> \u00b7 '+
                 esc(info.state)+atTail(esc(info.x),esc(info.y),esc(info.z));
+            };
+            // The same second press the flat map's heads answer to.
+            if(!el.classList.contains('sc-player')) return;
+            el.oncontextmenu=ev=>{
+              const n=el.getAttribute('data-sc-what')||'';
+              menuAt(ev,[{header:n},
+                {label:'Open '+n, hint:'Everything about this player',
+                 disabled:!mayRead('players'),
+                 why:'This account may not open the Players menu',
+                 run:()=>openPlayer(n,knownId(n))}]);
             };
           });
         }
@@ -7692,7 +8365,7 @@ final class WebPage {
           const col=ACTION_COLOR[e.action]||'#9aa3ae';
           d.appendChild(avatar(e.player,e.uuid,'sm'));
           d.insertAdjacentHTML('beforeend','<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
-            '<span class="who">'+esc(e.player)+
+            '<span class="who">'+pname(e.player,e.uuid)+
               (e.mask?' <span class="muted" style="font-weight:400">as '+
                 esc(e.mask)+'</span>':'')+'</span>'+
             '<span class="what" style="color:'+col+'">'+esc(e.action)+
@@ -8124,7 +8797,8 @@ final class WebPage {
           blueSceneUpto=Math.max(1,built.look==='fight'?built.marks.length:built.cubes.length);
           live=false; stopPlay(); cursorAt=e.to; cursorSet=true;
           allDim=e.dim; focusBlueMap(e.x,e.y,e.z,Math.max(55,built.radius*3.5));
-          bluePicked='<strong>'+esc(e.player)+'</strong> · '+esc(e.headline)+
+          bluePicked='<strong>'+pname(e.player,knownId(e.player))+'</strong> · '+
+            esc(e.headline)+
             (noCoords()?'':' · shown in the world at '+coords(e.x,e.y,e.z));
           paintAll();
           const map=$('t-map'); if(map&&map.scrollIntoView)
@@ -8551,8 +9225,8 @@ final class WebPage {
           const host=$('t-legend'); if(!host) return;
           const used=[...new Set(acts.map(a=>a.action))];
           host.innerHTML=names.map(n=>'<span class="pill-who" data-who="'+esc(n)+
-            '" style="cursor:pointer"><i style="background:'+playerColor(n)+'"></i>'+esc(n)+
-            '</span>').join('')+actionKeyHtml(used)+
+            '" style="cursor:pointer"><i style="background:'+playerColor(n)+'"></i>'+
+            pname(n,knownId(n))+'</span>').join('')+actionKeyHtml(used)+
             '<span class="muted">'+names.length+' player(s) · '+acts.length+
             ' action(s) by then · '+payload.counts.markers+' visible 3D mark(s) · terrain by BlueMap'+
             (focusPlayer?' · showing only '+esc(focusPlayer):'')+'</span>';
@@ -8673,7 +9347,8 @@ final class WebPage {
               return '<div class="bcl" data-at="'+row.at+'" data-dim="'+esc(a.dim)+
                 '" data-x="'+a.x+'" data-y="'+a.y+'" data-z="'+a.z+
                 '" tabindex="0" role="button" title="Go to this moment">'+
-                '<span class="bn">'+esc(a.mask||a.player)+'</span>'+
+                '<span class="bn">'+
+                pname(a.player,knownId(a.player),a.mask||a.player)+'</span>'+
                 '<span style="color:'+(ACTION_COLOR[a.action]||'#9aa3ae')+'">'+
                 esc(a.action)+'</span>'+(row.n>1?'<span class="bx">×'+row.n+'</span>':
                 '<span></span>')+'<span class="bd">'+esc(a.detail||'')+'</span>'+
@@ -8707,7 +9382,17 @@ final class WebPage {
               return;
             }
             if(ref.type==='player'){
-              setFocus(ref.data.name); return;
+              // A face in the world does what a head on the flat map does, and
+              // the name it puts in the card is the same way in to the player
+              // that a name anywhere else in the panel is. There is no right
+              // button to press inside somebody else's iframe, so the card is
+              // where that lives on this map.
+              const who=ref.data.name;
+              bluePicked='<strong>'+pname(who,knownId(who))+'</strong> \u00b7 '+
+                esc(prettyDim(ref.data.dim||allDim))+
+                (noCoords()?'':' \u00b7 '+coords(ref.data.x,ref.data.y,ref.data.z));
+              paintBluePicked();
+              setFocus(who); return;
             }
             if(ref.type==='place'){
               const p=ref.data;
@@ -8726,7 +9411,8 @@ final class WebPage {
               bluePicked=blueClusterHtml(g); paintBluePicked(); return;
             }
             const a=ref.data;
-            bluePicked='<strong>'+esc(a.detail||a.action)+'</strong> · '+esc(a.player)+' · '+
+            bluePicked='<strong>'+esc(a.detail||a.action)+'</strong> · '+
+              pname(a.player,knownId(a.player))+' · '+
               esc(a.action)+atTail(a.x,a.y,a.z)+' · '+esc(fmtAgo(a.at));
             paintBluePicked();
           });
@@ -9035,7 +9721,11 @@ final class WebPage {
             said.textContent=m.error;
             body.append(tag,said);
           } else {
-            body.textContent=m.text||'';
+            // Never innerHTML. The model's answer is written partly from
+            // things players typed in chat, so it is turned into nodes rather
+            // than into markup: the names become buttons and everything else
+            // stays a text node, which no amount of angle brackets can change.
+            linkNames(body,m.text||'');
           }
           d.appendChild(body);
           const stamp=document.createElement('div');
@@ -12251,7 +12941,7 @@ final class WebPage {
      * constant. The split points follow the page's own sections so that a
      * piece is a readable unit and not an arbitrary cut.
      */
-    static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
+    static final String HTML = String.join("", PART1, PART1A, PART1B, PARTFILES, PART2, PARTPLAYER, PARTMAP, PARTSEQ,
         PARTMAPUI, PARTMAPUI2, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
         PARTLOAD, PARTSTORY, PARTUPDATE, PARTSETTINGS);
 }

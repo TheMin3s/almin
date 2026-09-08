@@ -363,6 +363,95 @@ would be worse than no map at all.
 **Activity** on any row — and the button on the corner of the little map — opens
 that player on the big map with everyone else filtered out.
 
+### One player, in one dialog
+
+Everything above answers "what has everyone been doing". The other question an
+admin asks is about one person, and it used to be spread across three menus and
+a filter: who they are in Players, what they did in Activity, how long they
+have played nowhere at all.
+
+**A player's name is now a way in to them, wherever it appears.** The Players
+list, every row of the activity log, the list beside the map, the legends under
+both maps, the bar of who is online, the card a cluster of marks opens, the
+colour key on a picture of a build, and any name the AI menu writes into an
+answer. A name is drawn with a dotted underline and pressing it opens a sheet
+about that player. Where a name already had a job — the chips that filter the
+map to one person — the chip still filters and the name inside it opens; on
+the flat map's heads and the figures in a build, which are places before they
+are names, the player is on the second mouse button.
+
+The sheet holds:
+
+- **The account.** How long Almin has watched them play, how many times they
+  joined, when they were first and last seen. If they are connected: this
+  session, where they are, health and food, level and game mode, and their
+  coordinates unless this account is not allowed to see coordinates.
+- **Days.** One bar per day they did anything, oldest on the left. The shape is
+  the point — a fortnight of evenings looks nothing like one very long night.
+- **What Almin saw.** Their last rows out of the activity log, through the same
+  filters as everything else: an account restricted to its own player can open
+  itself and nobody else, and one that cannot see coordinates does not get them
+  here either.
+- **The game's own numbers.** Minecraft keeps a statistics file per player, and
+  it reaches back past the day Almin was installed. Time played, deaths, kills,
+  distance walked, damage; then what they have broken, used, made and killed
+  most of. Ticks, centimetres and half-hearts are turned into hours, kilometres
+  and hearts.
+- **What they are carrying** — see below.
+- **Who has looked in their inventory.**
+
+Nothing on the sheet is written anywhere. It reads Almin's log, the world's
+`stats/<uuid>.json`, and — only when asked — `playerdata/<uuid>.dat`.
+
+### Looking in somebody's inventory
+
+This is the most intrusive thing the panel can do, so it is built to be
+difficult to do quietly.
+
+It is **hidden until you ask.** The sheet shows a button and a sentence, not an
+item list; no poll and no redraw fetches it. The item list is a POST of its
+own, behind the Players menu and a session good enough to change something —
+an account with read-only access to Players can see the button and cannot press
+it.
+
+Pressing it is **written down, before the read happens**, in
+`config/almin/inventory-looks.json`: when, which panel account, and whose
+inventory. Never what was in it — a copy of somebody's things, kept forever in
+a second file, would be a worse problem than the one this is here to solve.
+
+**There is no account this is off for and no setting that turns it off**,
+including for the owner of the panel. It is deliberately not the panel audit
+log, which records watched accounts and never records the owner, and it is not
+the activity log, which is about the world and is thrown away on the activity
+retention clock. It is its own file, it holds the last 600 looks, and the
+record is shown at the top of the same sheet the looking happens in — so the
+next person to open that player sees who has been there. A record nobody reads
+protects nobody.
+
+The console says it too: `[almin] <account> looked in <player>'s inventory`.
+
+A world reset clears the record, because the record is about that world.
+
+What comes back is **drawn as the inventory screen**, not as a table of item
+names: the same grey panel, the same sunken squares, armour up the left with
+the off hand beside the boots, the pack, a gap, and the hotbar. Empty squares
+are drawn too — the shape of what is *missing* is half of what an inventory
+says. The ender chest is a second panel because it is a second container, and
+anything whose slot number the game does not place lands in a third, so nothing
+is dropped for not fitting the picture.
+
+Item pictures come from whatever resource pack the server has (drop one into
+`resourcepacks/` or `config/almin/textures.zip`); a square with no texture for
+it shows the item's initial instead, and hovering any square names the thing
+and its id. A block held in a hand has no icon of its own in the game — that
+picture is built from the block model — so one face of the block is used, which
+is not the same picture but is recognisably the same material.
+
+When the player is connected the panel shows what they have on them right now,
+including armour, off hand and ender chest. When they are not, it comes from
+their save file and says how old that is — the server writes it out on its own
+schedule, so what an offline player is "carrying" is whatever was last saved.
+
 The header carries **Stop**, **Restart** and **Start** for the Minecraft server
 itself. Stop means stop. **Restart** genuinely restarts: Almin stops the server
 and then starts it again from this machine, without needing a wrapper script to

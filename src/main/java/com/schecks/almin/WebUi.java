@@ -314,6 +314,11 @@ public final class WebUi {
         http.createContext("/api/clearlog", ui.guard("/api/clearlog", ui::handleClearLog));
         http.createContext("/api/reset", ui.guard("/api/reset", ui::handleReset));
         http.createContext("/api/players", ui.guard("/api/players", ui::handlePlayers));
+        http.createContext("/api/player", ui.guard("/api/player", ui::handlePlayerSheet));
+        http.createContext("/api/player/inventory",
+            ui.guard("/api/player/inventory", ui::handlePlayerInventory));
+        http.createContext("/api/player/icon",
+            ui.guard("/api/player/icon", ui::handlePlayerIcon));
         http.createContext("/api/players/action",
             ui.guard("/api/players/action", ui::handlePlayerAction));
         http.createContext("/api/mask", ui.guard("/api/mask", ui::handleMask));
@@ -505,6 +510,9 @@ public final class WebUi {
         java.util.Map.entry("/api/servermods/mod", "mods"),
         java.util.Map.entry("/api/servermods/config", "mods"),
         java.util.Map.entry("/api/players", "players"),
+        java.util.Map.entry("/api/player", "players"),
+        java.util.Map.entry("/api/player/inventory", "players"),
+        java.util.Map.entry("/api/player/icon", "players"),
         java.util.Map.entry("/api/players/action", "players"),
         java.util.Map.entry("/api/mask", "players"),
         java.util.Map.entry("/api/client", "players"),
@@ -4656,6 +4664,303 @@ public final class WebUi {
     }
 
     // ---------- routes: players and masks ----------
+
+    /**
+     * Everything about one player, in one answer.
+     *
+     * <p>The panel used to make somebody assemble this themselves: who they
+     * are from the Players menu, what they have been doing from the Activity
+     * menu with a filter set, and how long they have played from nowhere at
+     * all. It is one question — "who is this?" — so it is one request, and a
+     * name anywhere in the panel opens it.
+     *
+     * <p>What is <em>not</em> here is what they are carrying. That has a route
+     * of its own, because asking for it is a different act with a different
+     * cost, and folding it in here would mean every glance at a name was also
+     * a look in somebody's pockets.
+     */
+    private void handlePlayerSheet(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            Accounts.Account me = who(ex);
+            String want = queryParam(ex, "name");
+            String wantId = queryParam(ex, "uuid");
+            boolean noCoords = hidden(ex);
+            String only = onlyPlayer(me);
+
+            // An account narrowed to its own activity may look itself up and
+            // nobody else. Refused by name rather than answered emptily: an
+            // empty sheet reads as "this player did nothing", which is a
+            // different and untrue statement.
+            if (only != null && !visible(only, want)) {
+                json(ex, 403, err("This account can only look up its own player."));
+                return;
+            }
+
+            PlayerHistory.Entry seen = null;
+            java.util.UUID id = null;
+            if (server != null) {
+                for (java.util.Map.Entry<java.util.UUID, PlayerHistory.Entry> e
+                        : onServer(() -> PlayerHistory.get(server).snapshot(),
+                            java.util.Map.<java.util.UUID, PlayerHistory.Entry>of()).entrySet()) {
+                    boolean match = !wantId.isEmpty()
+                        ? e.getKey().toString().equalsIgnoreCase(wantId)
+                        : e.getValue().name().equalsIgnoreCase(want);
+                    if (!match) continue;
+                    id = e.getKey();
+                    seen = e.getValue();
+                    break;
+                }
+            }
+            String name = seen != null ? seen.name() : want;
+            if (name.isEmpty()) {
+                json(ex, 404, err("No such player."));
+                return;
+            }
+
+            JsonObject o = new JsonObject();
+            o.addProperty("name", name);
+            o.addProperty("uuid", id == null ? "" : id.toString());
+            o.addProperty("mask", id == null ? "" : maskOf(id.toString()));
+            o.addProperty("known", seen != null);
+            o.addProperty("firstSeen", seen == null ? 0 : seen.firstSeen());
+            o.addProperty("lastSeen", seen == null ? 0 : seen.lastSeen());
+            o.addProperty("joins", seen == null ? 0 : seen.joins());
+            o.addProperty("playtimeMillis", seen == null ? 0 : seen.playtimeMillis());
+
+            final java.util.UUID uuid = id;
+            ServerPlayerSnapshot live = uuid == null ? null
+                : onServer(() -> snapshotOf(uuid), null);
+            o.addProperty("online", live != null);
+            if (live != null) {
+                o.addProperty("dim", live.dim());
+                o.addProperty("sessionMillis", live.session());
+                o.addProperty("health", live.health());
+                o.addProperty("food", live.food());
+                o.addProperty("level", live.level());
+                o.addProperty("gamemode", live.gamemode());
+                if (!noCoords) {
+                    o.addProperty("x", live.x());
+                    o.addProperty("y", live.y());
+                    o.addProperty("z", live.z());
+                }
+            }
+            if (uuid != null) {
+                o.addProperty("banned", banned(uuid, name));
+                o.addProperty("protectedPlayer", TrustedOps.isTrusted(uuid));
+                o.addProperty("reported", ClientProfiles.of(uuid) != null);
+            }
+
+            // The game's own counting, which is nothing to do with Almin's
+            // and answers questions Almin's cannot: a player who joined last
+            // week has a fortnight of statistics from the server before it.
+            PlayerFile.Stats stats = uuid == null ? PlayerFile.Stats.none()
+                : onServer(() -> PlayerFile.stats(server, uuid), PlayerFile.Stats.none());
+            o.add("stats", statsJson(stats));
+
+            // What Almin saw them do, which is the half the game does not keep.
+            o.add("recent", recentFor(me, name, 60));
+            o.add("days", daysFor(name));
+            o.add("looks", looksJson(uuid));
+            o.addProperty("hideCoords", noCoords);
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * The picture for one thing in an inventory.
+     *
+     * <p>Its own route rather than {@code /api/item} because that one belongs
+     * to the Activity menu, and an account allowed to open a player is not
+     * thereby allowed to open the map. Same pictures, different door.
+     *
+     * <p>404 means "this server has no texture for that", which the panel
+     * draws its own tile for. It is not an error and is not logged.
+     */
+    private void handlePlayerIcon(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            byte[] png = BlockTextures.icon(queryParam(ex, "id"));
+            if (png == null) { json(ex, 404, err("No texture for that.")); return; }
+            ex.getResponseHeaders().set("Cache-Control", "private, max-age=3600");
+            image(ex, "image/png", png);
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** What a live player is doing, read on the server thread and let go of. */
+    private record ServerPlayerSnapshot(String dim, long session, int health, int food,
+                                        int level, String gamemode, int x, int y, int z) {}
+
+    private ServerPlayerSnapshot snapshotOf(java.util.UUID id) {
+        net.minecraft.server.level.ServerPlayer p = server.getPlayerList().getPlayer(id);
+        if (p == null) return null;
+        return new ServerPlayerSnapshot(
+            p.level().dimension().identifier().getPath(),
+            PlayerHistory.sessionLength(id),
+            (int) Math.ceil(p.getHealth()), p.getFoodData().getFoodLevel(),
+            p.experienceLevel, p.gameMode.getGameModeForPlayer().getName(),
+            (int) Math.floor(p.getX()), (int) Math.floor(p.getY()), (int) Math.floor(p.getZ()));
+    }
+
+    private JsonObject statsJson(PlayerFile.Stats s) {
+        JsonObject o = new JsonObject();
+        o.addProperty("found", s.found());
+        o.addProperty("at", s.at());
+        o.add("headline", counts(s.headline()));
+        o.add("mined", counts(s.mined()));
+        o.add("used", counts(s.used()));
+        o.add("crafted", counts(s.crafted()));
+        o.add("killed", counts(s.killed()));
+        return o;
+    }
+
+    private JsonArray counts(List<PlayerFile.Count> list) {
+        JsonArray arr = new JsonArray();
+        for (PlayerFile.Count c : list) {
+            JsonObject o = new JsonObject();
+            o.addProperty("id", c.id());
+            o.addProperty("name", c.name());
+            o.addProperty("value", c.value());
+            arr.add(o);
+        }
+        return arr;
+    }
+
+    /** This player's last few rows, through the same filters as everything else. */
+    private JsonArray recentFor(Accounts.Account me, String name, int want) {
+        JsonArray arr = new JsonArray();
+        String only = onlyPlayer(me);
+        List<ActivityEntry> rows = ActivityLog.recent(rowsShown());
+        for (int i = rows.size() - 1; i >= 0 && arr.size() < want; i--) {
+            ActivityEntry e = rows.get(i);
+            if (!name.equalsIgnoreCase(e.player())) continue;
+            if (!visible(only, e.player())) continue;
+            arr.add(actionJson(me, e));
+        }
+        return arr;
+    }
+
+    /**
+     * How busy each of this player's days was.
+     *
+     * <p>A count per day rather than a list per day: the sheet draws it as a
+     * strip, and the point of the strip is the shape — a fortnight of evenings
+     * and then nothing, or nothing and then one very long night.
+     */
+    private JsonArray daysFor(String name) {
+        java.util.TreeMap<Long, int[]> byDay = new java.util.TreeMap<>();
+        for (ActivityEntry e : ActivityLog.recent(rowsShown())) {
+            if (!name.equalsIgnoreCase(e.player())) continue;
+            byDay.computeIfAbsent(AiStory.dayOf(e.at()), k -> new int[1])[0]++;
+        }
+        JsonArray arr = new JsonArray();
+        for (java.util.Map.Entry<Long, int[]> e : byDay.descendingMap().entrySet()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("at", e.getKey());
+            o.addProperty("events", e.getValue()[0]);
+            arr.add(o);
+            if (arr.size() >= 30) break;
+        }
+        return arr;
+    }
+
+    private JsonArray looksJson(java.util.UUID id) {
+        JsonArray arr = new JsonArray();
+        if (id == null) return arr;
+        for (InventoryLooks.Look l : InventoryLooks.forPlayer(id.toString())) {
+            JsonObject o = new JsonObject();
+            o.addProperty("at", l.at());
+            o.addProperty("who", l.who());
+            arr.add(o);
+            if (arr.size() >= 20) break;
+        }
+        return arr;
+    }
+
+    /**
+     * What one player is carrying.
+     *
+     * <p>A POST with nothing to post, which is the point: this is an act, not
+     * a view. Nothing here is reachable by opening a menu or by a poll — the
+     * sheet shows a button and a sentence saying what pressing it does, and
+     * pressing it is the only way in.
+     *
+     * <p>{@link InventoryLooks#record} is called <em>before</em> the read, for
+     * every account including the owner. There is no setting that turns it
+     * off. An admin who can see everything without leaving a trace is the
+     * thing this feature would otherwise be.
+     */
+    private void handlePlayerInventory(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuthSecure(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            if (!requireServer(ex)) return;
+            Accounts.Account me = who(ex);
+            JsonObject body = readBody(ex);
+            String wantId = body.has("uuid") ? body.get("uuid").getAsString() : "";
+            String wantName = body.has("name") ? body.get("name").getAsString() : "";
+
+            // An account that may only see its own activity may only look in
+            // its own pockets, which is not much of a feature but is the
+            // consistent answer.
+            String only = onlyPlayer(me);
+            if (only != null && !visible(only, wantName)) {
+                json(ex, 403, err("This account can only look up its own player."));
+                return;
+            }
+
+            java.util.UUID id;
+            try { id = java.util.UUID.fromString(wantId); }
+            catch (RuntimeException e) {
+                json(ex, 400, err("That is not a player this server knows."));
+                return;
+            }
+
+            InventoryLooks.record(me == null ? "?" : me.username(), id.toString(), wantName);
+            PanelAudit.note(me, "looked in an inventory", wantName);
+
+            PlayerFile.Gear gear = onServer(() -> PlayerFile.inventory(server, id),
+                PlayerFile.Gear.none());
+            JsonObject o = new JsonObject();
+            o.addProperty("live", gear.live());
+            o.addProperty("at", gear.at());
+            o.addProperty("any", gear.any());
+            JsonArray items = new JsonArray();
+            for (PlayerFile.Item i : gear.items()) {
+                JsonObject j = new JsonObject();
+                j.addProperty("slot", i.slot());
+                j.addProperty("where", i.where());
+                j.addProperty("id", i.id());
+                j.addProperty("name", i.name());
+                j.addProperty("count", i.count());
+                items.add(j);
+            }
+            o.add("items", items);
+            o.addProperty("recorded", true);
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
 
     private void handlePlayers(HttpExchange ex) throws IOException {
         try {

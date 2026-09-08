@@ -135,7 +135,7 @@ public final class WorldReset {
         }
         // A summary of a log that has gone is a summary of nothing, and a
         // history of it is a history of a server that no longer exists.
-        if (actions) { AiInsights.forget(); AiStory.forget(); }
+        if (actions) { AiInsights.forget(); AiStory.forget(); InventoryLooks.forget(); }
         if (said.length() == 0) said.append("nothing to clear");
         return new Cleared(didActions, didPaths, didPictures, said.toString());
     }

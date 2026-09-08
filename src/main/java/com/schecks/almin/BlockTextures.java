@@ -362,6 +362,49 @@ public final class BlockTextures {
 
     private static final Map<String, byte[]> ITEMS = new ConcurrentHashMap<>();
 
+    /**
+     * The picture for one thing in an inventory, by its registry id.
+     *
+     * <p>Two folders, in the order the game looks in them: an item has its own
+     * texture in {@code textures/item}, and a block held in a hand has none —
+     * the game builds that picture out of the block model, which is a whole
+     * renderer this is not. A single face of the block is not the same
+     * picture, but it is recognisably the same material, which is what a slot
+     * in a list needs to say.
+     *
+     * <p>Namespace-aware, unlike {@link #item(String)}: an inventory is full
+     * of modded things, and a mod's textures are under its own name.
+     */
+    public static byte[] icon(String id) {
+        if (!any || id == null || id.length() > 160) return null;
+        int colon = id.indexOf(':');
+        String ns = colon < 0 ? "minecraft" : id.substring(0, colon);
+        String path = id.substring(colon + 1);
+        if (!ns.matches("[a-z0-9_.-]{1,48}") || !path.matches("[a-z0-9_/.-]{1,96}")
+            || path.contains("..")) return null;
+        byte[] cached = ICONS.get(id);
+        if (cached != null) return cached.length == 0 ? null : cached;
+        byte[] png = null;
+        for (String rel : new String[]{
+                "assets/" + ns + "/textures/item/" + path + ".png",
+                "assets/" + ns + "/textures/block/" + path + ".png"}) {
+            for (Object source : sources) {
+                try {
+                    png = readFrom(source, rel);
+                    if (png != null) break;
+                } catch (IOException ignored) {
+                    // A bad pack is not worth a log line per slot.
+                }
+            }
+            if (png != null) break;
+        }
+        if (ICONS.size() > 512) ICONS.clear();
+        ICONS.put(id, png == null ? new byte[0] : png);
+        return png;
+    }
+
+    private static final Map<String, byte[]> ICONS = new ConcurrentHashMap<>();
+
     // ---------- the one thing the server thread calls ----------
 
     /**

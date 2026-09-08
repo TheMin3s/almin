@@ -119,7 +119,11 @@ function stub(tag) {
     },
     focus() {}, select() {}, click() {},
     clientWidth: 1200, clientHeight: 600,
-    classList: { add() {}, remove() {}, toggle() {} },
+    // Setting classes is still a no-op — nothing here draws — but asking
+    // what an element is has to answer truthfully: the scene tells a person
+    // from a block that way.
+    classList: { add() {}, remove() {}, toggle() {},
+                 contains(n) { return hasClass(el, n); } },
     setPointerCapture() {},
     getBBox() { return { x: 10, y: 10, width: 6, height: 6 }; },
     scrollTop: 0, scrollHeight: 0, clientHeight: 0,
@@ -157,6 +161,10 @@ const document = {
     });
     return e;
   },
+  // Real, because the one place the panel builds nodes instead of markup is
+  // the one place it matters: an AI answer is turned into text nodes and name
+  // buttons, and a shim that threw here could not tell those two apart.
+  createTextNode: (t) => { const e = stub('#text'); e.textContent = String(t); return e; },
   createDocumentFragment: () => stub('#fragment'),
   querySelector: () => stub('div'),
   querySelectorAll: () => [],
@@ -477,6 +485,40 @@ const responses = {
                     history: [{ uuid: 'u', name: 'TheMines', firstSeen: 1, lastSeen: Date.now(),
                                 joins: 4, playtimeMillis: 7200000, mask: 'Ghost' }],
                     maxPlayers: 20 },
+  '/api/player': { name: 'Griefer', uuid: 'g', mask: '', known: true,
+                   firstSeen: Date.now() - 86400000 * 9, lastSeen: Date.now() - 600000,
+                   joins: 12, playtimeMillis: 5400000,
+                   online: true, dim: 'the_nether', sessionMillis: 900000,
+                   health: 14, food: 17, level: 30, gamemode: 'survival',
+                   x: 100, y: 64, z: -40,
+                   banned: false, protectedPlayer: false, reported: false,
+                   stats: { found: true, at: Date.now() - 5000,
+                            headline: [{ id: 'minecraft:play_time', name: 'Time played',
+                                         value: 20 * 60 * 60 * 3 },
+                                       { id: 'minecraft:deaths', name: 'Deaths', value: 4 },
+                                       { id: 'minecraft:walk_one_cm', name: 'Distance walked',
+                                         value: 250000 },
+                                       { id: 'minecraft:damage_taken', name: 'Damage taken',
+                                         value: 830 }],
+                            mined: [{ id: 'minecraft:stone', name: 'Stone', value: 4102 }],
+                            used: [{ id: 'minecraft:torch', name: 'Torch', value: 210 }],
+                            crafted: [], killed: [] },
+                   recent: [{ at: Date.now() - 60000, player: 'Griefer', mask: '',
+                              action: 'broke', detail: 'chest', dim: 'overworld',
+                              x: 1, y: 2, z: 3, count: 1 }],
+                   days: [{ at: Date.now() - 86400000, events: 9 },
+                          { at: Date.now() - 86400000 * 2, events: 3 }],
+                   looks: [], hideCoords: false },
+  '/api/player/inventory': { live: true, at: Date.now(), any: true, recorded: true,
+                             items: [{ slot: 0, where: 'hotbar', id: 'minecraft:diamond',
+                                       name: 'Diamond', count: 12 },
+                                     { slot: 14, where: 'pack', id: 'minecraft:oak_log',
+                                       name: 'Oak Log', count: 64 },
+                                     { slot: -1, where: 'head', id: 'minecraft:iron_helmet',
+                                       name: 'Iron Helmet', count: 1 },
+                                     { slot: 3, where: 'ender chest',
+                                       id: 'minecraft:netherite_ingot',
+                                       name: 'Netherite Ingot', count: 2 }] },
 };
 
 // Path alone answered every question until one route did two different things
@@ -547,6 +589,14 @@ try {
   console.log('  FAIL  the script throws on load  -> ' + e.message);
   process.exit(1);
 }
+
+// What the page binds to the document just by loading — the one listener that
+// makes a player name openable wherever it is drawn. It is permanent by
+// design, so the menu checks below measure what a menu adds on top of it
+// rather than counting every click listener on the page.
+const loadClicks = docListeners.filter((f) => f.type === 'click').length;
+const menuClicks = () =>
+  docListeners.filter((f) => f.type === 'click').length - loadClicks;
 
 // Every tab must render without throwing, and ask for its own data.
 const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'ai',
@@ -3981,7 +4031,7 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     sandbox.menu(10, 10, [{ label: 'One', run() {} }]);
     sandbox.closeMenu();                       // closed some other way
     sandbox.menu(10, 10, [{ label: 'Two', run() {} }]);
-    const armed = docListeners.filter((f) => f.type === 'click').length;
+    const armed = menuClicks();
     const open = !!sandbox.openMenu;
     sandbox.closeMenu();
     if (!open) return 'the second menu was gone before anyone could use it';
@@ -3991,7 +4041,7 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
   check('closing a menu takes its dismiss listener with it', () => {
     sandbox.menu(10, 10, [{ label: 'One', run() {} }]);
     sandbox.closeMenu();
-    return docListeners.filter((f) => f.type === 'click').length === 0
+    return menuClicks() === 0
       ? true : 'a listener outlived the menu it belonged to';
   });
 
@@ -6214,6 +6264,231 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     failures.push('timeline: ' + e.message);
   }
 
+
+  // ---- one player, opened from their name ----
+  try {
+    const owner = { username: 'admin', owner: true, access: {}, linkedPlayer: '',
+                    audited: false, noCoords: false };
+    sandbox.me = owner;
+
+    check('one listener makes every name on the page openable', () =>
+      loadClicks === 1 ? true
+        : loadClicks + ' click listeners were bound at load, expected 1');
+
+    check('a player name is drawn as something you can press', () => {
+      const h = sandbox.pname('Griefer', 'g');
+      return /class="pn"/.test(h) && /data-pn="Griefer"/.test(h) && /data-pnid="g"/.test(h)
+        ? true : 'the name is not marked as a way in: ' + h;
+    });
+
+    check('a mask is what is shown, the account is what opens', () => {
+      const h = sandbox.pname('Griefer', 'g', 'Ghost');
+      return /data-pn="Griefer"/.test(h) && />Ghost</.test(h) && !/>Griefer</.test(h)
+        ? true : 'the mask and the account came out the wrong way round: ' + h;
+    });
+
+    check('an account without the Players menu gets a name and no way in', () => {
+      sandbox.me = { username: 'mod', owner: false, access: { activity: 'read' },
+                     linkedPlayer: '', audited: false };
+      const h = sandbox.pname('Griefer', 'g');
+      sandbox.me = owner;
+      return h === 'Griefer' ? true : 'a name it may not follow was still a link: ' + h;
+    });
+
+    check('the activity log opens the player it is naming', () => {
+      const row = sandbox.activityRow({ at: Date.now(), player: 'Griefer', uuid: 'g',
+        mask: '', action: 'broke', detail: 'chest', where: 'overworld 1,2,3', count: 1 });
+      return /data-pn="Griefer"/.test(deepText(row))
+        ? true : 'a log row still prints the name as plain text';
+    });
+
+    // The sheet itself.
+    sandbox.openPlayer('Griefer', 'g');
+    await new Promise((r) => setTimeout(r, 20));
+    const sheet = () => deepText(byId.get('ps'));
+
+    check('opening a name asks the server about that player', () =>
+      calls.some((c) => c === 'GET /api/player')
+        ? true : 'the sheet never asked: ' + calls.slice(-4).join(', '));
+
+    check('the sheet says who they are and how long they have played', () => {
+      const t = sheet();
+      return /Griefer/.test(t) && /1h 30m/.test(t) && /Joins/.test(t)
+        ? true : 'the summary is missing: ' + t.slice(0, 200);
+    });
+
+    check('...and the days they were here are drawn oldest first', () => {
+      const strip = deepAll(byId.get('ps'), (el) => hasClass(el, 'pdays'))[0];
+      if (!strip) return 'no strip was drawn';
+      const bars = (strip._html.match(/class="pday"/g) || []).length;
+      const first = strip._html.indexOf('3 actions');
+      const last = strip._html.indexOf('9 actions');
+      return bars === 2 && first >= 0 && last > first
+        ? true : 'the strip runs the wrong way (' + bars + ' bars)';
+    });
+
+    check('...and what Almin saw them do is under it', () =>
+      /broke/.test(sheet()) && /chest/.test(sheet())
+        ? true : 'the recent rows are missing');
+
+    check("...and the game's own counting, in units people think in", () => {
+      const t = sheet();
+      return /3h 0m/.test(t) && /2\.5 km/.test(t) && /83 ♥/.test(t)
+        ? true : 'ticks, centimetres and half-hearts were printed raw: ' + t.slice(0, 300);
+    });
+
+    check('the inventory is not read just because the sheet was opened', () =>
+      !calls.some((c) => c.indexOf('/api/player/inventory') >= 0)
+        ? true : 'opening a name looked in their pockets');
+
+    check('...it is behind a button that says the look is written down', () => {
+      const t = deepText(byId.get('pgate'));
+      return /records that/.test(t) && /no setting that turns that off/.test(t)
+             && /Look anyway/.test(t)
+        ? true : 'the warning does not say what pressing it does: ' + t.slice(0, 200);
+    });
+
+    check('...and an account that may only read the menu cannot press it', () => {
+      sandbox.me = { username: 'mod', owner: false, access: { players: 'read' },
+                     linkedPlayer: '', audited: false };
+      sandbox.sheetGear = null;
+      sandbox.paintGate(byId.get('pgate'), { name: 'Griefer', uuid: 'g' });
+      const b = deepAll(byId.get('pgate'), (el) => el.id === 'pgateb')[0];
+      sandbox.me = owner;
+      sandbox.paintGate(byId.get('pgate'), { name: 'Griefer', uuid: 'g' });
+      return b && b.disabled === true
+        ? true : 'a read-only account was offered the reveal';
+    });
+
+    await sandbox.revealInventory({ name: 'Griefer', uuid: 'g' });
+
+    check('pressing it asks for the inventory, and only then', () =>
+      calls.some((c) => c === 'POST /api/player/inventory')
+        ? true : 'the reveal never posted: ' + calls.slice(-4).join(', '));
+
+    check('...and what they are carrying is drawn as an inventory', () => {
+      const slots = deepAll(byId.get('pgate'), (el) => hasClass(el, 'mcslot'));
+      // Four armour, one off hand, twenty-seven in the pack, nine on the bar,
+      // and a second panel of twenty-seven for the ender chest. Empty squares
+      // are drawn too: the shape of what is missing is half of what an
+      // inventory says.
+      return slots.length === 68 ? true : 'drew ' + slots.length + ' squares, expected 68';
+    });
+
+    check('...with each thing in the square the game would put it in', () => {
+      const slots = deepAll(byId.get('pgate'), (el) => hasClass(el, 'mcslot'));
+      const filled = slots.filter((c) => (c.children || []).length);
+      const src = (c) => (c.children.find((k) => k.tagName === 'img') || {}).src || '';
+      const armour = slots[0];                 // head, top of the left column
+      const hotbar = slots[5 + 27];            // first square of the bar
+      const pack = slots[5 + 5];               // slot 14 is the sixth of the pack
+      const ender = slots[5 + 27 + 9 + 3];     // slot 3 of the second panel
+      return filled.length === 4
+        && /iron_helmet/.test(src(armour)) && /diamond/.test(src(hotbar))
+        && /oak_log/.test(src(pack)) && /netherite_ingot/.test(src(ender))
+        ? true : 'things landed in the wrong squares (' + filled.length + ' filled)';
+    });
+
+    check('...and a stack says how many, the way the game writes it', () => {
+      const counts = deepAll(byId.get('pgate'), (el) => hasClass(el, 'ct'))
+        .map((c) => c.textContent);
+      // A single item has no number on it in the game either.
+      return counts.length === 3 && counts.indexOf(12) >= 0 && counts.indexOf(64) >= 0
+        ? true : 'the stack sizes read ' + JSON.stringify(counts);
+    });
+
+    check('...and the warning becomes a statement of what was done', () => {
+      const t = deepText(byId.get('pgate'));
+      return /You looked in/.test(t) && !/Look anyway/.test(t)
+        ? true : 'it still reads as a warning about something that has happened';
+    });
+
+    check('the record of who has looked is on the sheet, for everyone to read', () =>
+      /Nobody has/.test(deepText(byId.get('plooks')))
+        && /including the owner/.test(deepText(byId.get('plooks')))
+        ? true : 'the record is not shown');
+
+    sandbox.closeModal();
+
+    // The one place model output meets the page.
+    check("an answer's player names become buttons", () => {
+      sandbox.allData = { ids: { Griefer: 'g' } };
+      const el = document.createElement('div');
+      sandbox.linkNames(el, 'Griefer took it');
+      const marks = deepAll(el, (kid) => hasClass(kid, 'pn'));
+      return marks.length === 1 && marks[0].getAttribute('data-pn') === 'Griefer'
+        ? true : 'the name in the answer was not made openable';
+    });
+
+    check('...and a whole answer arrives as text, never as markup', () => {
+      const row = sandbox.chatRow({ mine: false, at: Date.now(),
+        text: 'Griefer said <img src=x onerror=alert(1)>' });
+      const body = deepAll(row, (kid) => hasClass(kid, 'body'))[0];
+      if (!body) return 'the answer was not drawn';
+      const text = (body.children || []).map((k) => k.textContent || '').join('');
+      return body._html === '' && /<img src=x onerror=alert\(1\)>/.test(text)
+             && deepAll(body, (kid) => hasClass(kid, 'pn')).length === 1
+        ? true : 'the answer reached the page as HTML: ' + body._html;
+    });
+
+    check('...without the answer itself ever becoming markup', () => {
+      const el = document.createElement('div');
+      sandbox.linkNames(el, 'Griefer said <img src=x onerror=alert(1)>');
+      const text = (el.children || []).map((k) => k.textContent || '').join('');
+      return el._html === '' && /<img src=x onerror=alert\(1\)>/.test(text)
+        ? true : 'the answer went in as HTML: ' + el._html;
+    });
+
+    check('...and a word that is nobody is left alone', () => {
+      const el = document.createElement('div');
+      sandbox.linkNames(el, 'Nobody took it');
+      return deepAll(el, (kid) => hasClass(kid, 'pn')).length === 0
+        ? true : 'an ordinary word was turned into a player';
+    });
+
+    // ---- and the same name, on all three maps ----
+    // Two maps and a picture of a build. A name that opens the player on one
+    // of them and not the others is the shape of bug this panel keeps growing.
+    const acts = [{ at: Date.now(), player: 'Griefer', mask: '', action: 'broke',
+                    detail: 'chest', dim: 'overworld', x: 1, y: 2, z: 3, count: 1 }];
+
+    check('the flat map names people in a way you can follow', () => {
+      sandbox.allData = { ids: { Griefer: 'g' }, rowsShown: 100 };
+      sandbox.clusterAt = { x: 1, z: 3, items: acts };
+      sandbox.paintLegend(['Griefer'], acts, 100, null);
+      const legend = deepText(byId.get('t-legend'));
+      return /data-pn="Griefer"/.test(legend)
+        ? true : 'the flat map still prints names as plain text';
+    });
+
+    check('...and so does the 3D world', () => {
+      sandbox.paintBlueLegend(['Griefer'], acts,
+        { counts: { markers: 1 }, generated: Date.now() });
+      const legend = deepText(byId.get('t-legend'));
+      const card = sandbox.blueClusterHtml(acts);
+      return /data-pn="Griefer"/.test(legend) && /data-pn="Griefer"/.test(card)
+        ? true : 'the 3D world still prints names as plain text';
+    });
+
+    check('...and so does the picture of what was built', () => {
+      sandbox.scene = { radius: 20, contextMinY: 0, contextMaxY: 40, turn: 0,
+                        players: [{ player: 'Griefer', x: 1, y: 5, z: 3,
+                                    wx: 1, wz: 3, at: Date.now() }] };
+      sandbox.mapOpts = Object.assign({}, sandbox.mapOpts, { scenePaths: true });
+      sandbox.paintSceneWho();
+      const key = deepText(byId.get('sc-who'));
+      sandbox.scene = null;
+      return /data-pn="Griefer"/.test(key)
+        ? true : 'the isometric scene still prints names as plain text';
+    });
+
+    sandbox.clusterAt = null;
+    sandbox.allData = null;
+
+  } catch (e) {
+    console.log('  FAIL  one player  -> ' + e.message);
+    failures.push('one player: ' + e.message);
+  }
 
   const missing = failures.filter((f) => f.startsWith('getElementById'));
   for (const m of new Set(missing)) console.log('  NOTE  ' + m);
