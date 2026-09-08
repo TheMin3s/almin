@@ -317,6 +317,19 @@ const responses = {
                       from: Date.now() - 5 * 86400e3, to: Date.now() - 90000,
                       events: 44, visits: 11, days: 5, weight: 40,
                       player: 'Steve', mask: '', people: 2 }] },
+  // A history part written: two days with a line, one waiting, one too quiet
+  // to be worth one.
+  '/api/story': { ai: { enabled: true, model: 'qwen2.5:3b', provider: 'local' },
+    story: { generated: Date.now(), missing: 1, problem: '', error: '',
+      days: [
+        { at: Date.now() - 0 * 86400e3, line: '', events: 640, players: 2, written: false },
+        { at: Date.now() - 1 * 86400e3,
+          line: 'Steve finished the spawn bridge while Alex cleared the ravine below it.',
+          events: 1820, players: 2, written: true },
+        { at: Date.now() - 2 * 86400e3,
+          line: 'Alex dug a shaft to bedrock and came back with most of an iron block.',
+          events: 900, players: 1, written: true },
+        { at: Date.now() - 3 * 86400e3, line: '', events: 4, players: 1, written: false }] } },
   // A server working hard, with an obvious culprit: an item pile in the
   // overworld, a forced chunk in the Nether, and one player standing in it.
   '/api/load': { at: Date.now() - 2000, took: 41,
@@ -438,15 +451,22 @@ const responses = {
                     maxPlayers: 20 },
 };
 
-function bodyFor(url) {
+// Path alone answered every question until one route did two different things
+// depending on the verb: reading the history costs nothing, writing it asks a
+// model. A check that a tab does not bill anybody for opening it has to be
+// able to tell those apart.
+const calls = [];
+
+function bodyFor(url, init) {
   const path = url.split('?')[0];
   asked.add(path);
+  calls.push(((init && init.method) || 'GET') + ' ' + path);
   return responses[path] !== undefined ? responses[path] : { ok: true };
 }
 
 const sandbox = {
   document,
-  fetch: async (url) => ({ status: 200, json: async () => bodyFor(url) }),
+  fetch: async (url, init) => ({ status: 200, json: async () => bodyFor(url, init) }),
   setTimeout: (fn, ms) => {
     // Zero-delay callbacks are the page wiring itself up after a render, and
     // the harness needs those to have happened by the time it looks. A real
@@ -1809,6 +1829,111 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     sandbox.mapOpts.cluster = true;
     sandbox.paintAll();
     return byPlayer !== byAction ? true : 'the colouring did not change';
+  });
+
+  // ---- the history ----
+  // The Timeline is the one AI feature that writes on a schedule somebody
+  // controls rather than on a question, so most of what these check is that
+  // nothing writes by itself and that a day nobody has written about reads as
+  // a gap rather than as the end of the list.
+  sandbox.tab = 'ai';
+  sandbox.aiView = 'story';
+  sandbox.render();
+  await new Promise((r) => setTimeout(r, 20));
+
+  const storyText = () => {
+    sandbox.paintStory();
+    return deepText(byId.get('t-story'));
+  };
+  const storyHtml = () => {
+    sandbox.paintStory();
+    return byId.get('t-story')._html || '';
+  };
+
+  check('the history reads what is written without asking a model', () => {
+    // A GET is the whole of opening the tab. If opening it ever POSTs, the
+    // menu bills somebody for looking.
+    const posted = calls.filter((c) => c === 'POST /api/story');
+    if (posted.length) return 'opening the tab wrote ' + posted.length + ' times';
+    if (!calls.includes('GET /api/story')) return 'it never read the history either';
+    const t = storyText();
+    return /spawn bridge/.test(t) ? true : t.slice(0, 140);
+  });
+
+  check('...and says how much of it is still to write', () => {
+    const t = storyText();
+    if (!/1 day still to write/.test(t)) return t.slice(0, 200);
+    // Four at a time, and the button says so rather than making somebody
+    // press it to find out.
+    return /Write 1 more/.test(t) ? true : 'the button does not say how many';
+  });
+
+  check('a day nobody has written about is a gap, not the end', () => {
+    const html = storyHtml();
+    if (!/Not written yet/.test(html)) return 'an unwritten day showed nothing at all';
+    if (!/A quiet day/.test(html)) return 'a day with four events was called unwritten';
+    // The hollow dot is what makes the difference visible on the line itself.
+    return /storyday bare/.test(html) ? true : 'nothing marks the unwritten days apart';
+  });
+
+  check('an account that may not use the model cannot press write', () => {
+    const was = sandbox.me.noModel;
+    sandbox.me.noModel = true;
+    const barred = storyHtml();
+    sandbox.me.noModel = was;
+    const back = storyHtml();
+    if (!/id="story-write" disabled/.test(barred)) return 'the write button stayed live';
+    return /id="story-write"(?! disabled)/.test(back) ? true : 'it never came back';
+  });
+
+  check('a reader the history is held from is told why', () => {
+    const was = sandbox.storyData;
+    sandbox.storyData = { held: 'This account is shown only its own activity.' };
+    const t = storyText();
+    sandbox.storyData = was;
+    sandbox.paintStory();
+    return /only its own activity/.test(t) ? true : t.slice(0, 120);
+  });
+
+  check('a model that is off still shows the days it has', () => {
+    const was = sandbox.storyData;
+    sandbox.storyData = { story: Object.assign({}, was.story,
+      { problem: 'Summaries are off (ai-enabled).' }) };
+    const t = storyText();
+    sandbox.storyData = was;
+    sandbox.paintStory();
+    if (!/ai-enabled/.test(t)) return 'it did not say why nothing can be written';
+    // The dates and counts are the log's, not the model's, so they stay.
+    return /spawn bridge/.test(t) ? true : 'it threw away what was already written';
+  });
+
+  // Pressing write is the one thing here that reaches a model, and the request
+  // it makes only lands a microtask later, so it is driven and awaited rather
+  // than checked in place.
+  const wroteBefore = calls.filter((c) => c === 'POST /api/story').length;
+  sandbox.paintStory();
+  const writeBtn = byId.get('story-write');
+  if (writeBtn && writeBtn.onclick) writeBtn.onclick();
+  await new Promise((r) => setTimeout(r, 20));
+
+  check('pressing write is the only thing that asks a model', () => {
+    if (!writeBtn || !writeBtn.onclick) return 'there is no write button to press';
+    const now = calls.filter((c) => c === 'POST /api/story').length;
+    if (now !== wroteBefore + 1) return 'pressing it wrote ' + (now - wroteBefore) + ' times';
+    return sandbox.storyBusy === false ? true : 'it never stopped saying it was writing';
+  });
+
+  check('the AI menu has an Ask side and a history side', () => {
+    sandbox.aiView = 'ask';
+    sandbox.render();
+    const ask = deepText(byId.get('main'));
+    sandbox.aiView = 'story';
+    sandbox.render();
+    const story = deepText(byId.get('main'));
+    sandbox.aiView = 'ask';
+    sandbox.render();
+    if (!/Ask about anything/.test(ask)) return 'the Ask side went missing';
+    return /one sentence for each day/i.test(story) ? true : story.slice(0, 120);
   });
 
   // ---- the Load menu ----

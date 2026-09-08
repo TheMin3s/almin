@@ -327,6 +327,7 @@ public final class WebUi {
         http.createContext("/api/bluemap", ui.guard("/api/bluemap", ui::handleBlueMap));
         http.createContext("/bluemap", ui.guard("/bluemap", ui::handleBlueMapProxy));
         http.createContext("/api/load", ui.guard("/api/load", ui::handleLoad));
+        http.createContext("/api/story", ui.guard("/api/story", ui::handleStory));
         http.createContext("/api/scene/context",
             ui.guard("/api/scene/context", ui::handleSceneContext));
         http.createContext("/api/head", ui.guard("/api/head", ui::handleHead));
@@ -530,6 +531,7 @@ public final class WebUi {
         // Ask button for a read-only account rather than let it be refused.
         java.util.Map.entry("/api/ai/chat", "ai"),
         java.util.Map.entry("/api/load", "load"),
+        java.util.Map.entry("/api/story", "ai"),
         java.util.Map.entry("/api/state", "dash"),
         java.util.Map.entry("/api/server", "dash"));
 
@@ -4195,6 +4197,96 @@ public final class WebUi {
      * rather than showing an empty menu for four seconds; after that the tick
      * has one ready and this only reads it.
      */
+    /**
+     * The server's history, one line a day.
+     *
+     * <p>GET reads what is already written and costs nothing. POST writes the
+     * next few days, which is the only thing here that talks to a model, and
+     * is therefore a write on the AI menu — the same rule that makes asking a
+     * question a write while reading the conversation is not.
+     */
+    private void handleStory(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            boolean write = "POST".equals(ex.getRequestMethod());
+            if (!write && !"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            if (write && noModel(ex)) return;
+            Accounts.Account me = who(ex);
+
+            JsonObject root = new JsonObject();
+            root.add("ai", aiStatusJson());
+
+            // A history is one text about the whole server, written once and
+            // shown to everybody. It cannot be written per account: a line
+            // written from one reader's narrower slice would then be the line
+            // everybody sees. So a reader who may only see their own activity
+            // is told why they are not shown it, rather than being shown a
+            // history of themselves that other people would inherit.
+            if (me != null && me.ownActivityOnly()) {
+                root.addProperty("held",
+                    "This account is shown only its own activity, and the history is one "
+                    + "text about the whole server. It is not written per account.");
+                json(ex, 200, root.toString());
+                return;
+            }
+            // The same rule the period summary keeps: where the model was
+            // given chat, what it wrote is a paraphrase of chat, and no amount
+            // of editing afterwards makes it reliably not that.
+            if (me != null && me.chatHidden() && AlminConfig.get().aiSendChat) {
+                root.addProperty("held",
+                    "This account is not shown what people said, and the history is written "
+                    + "with chat in front of the model. Turn off ai-send-chat to have a "
+                    + "history this account can read.");
+                json(ex, 200, root.toString());
+                return;
+            }
+
+            List<ActivityEntry> rows = ActivityLog.recent(storyRows());
+            if (write && !AlminConfig.get().aiEnabled) {
+                json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
+                return;
+            }
+            AiStory.Story story = write ? AiStory.write(rows) : AiStory.of(rows);
+            root.add("story", storyJson(story, hidden(ex)));
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Rows behind the history — the whole log the panel keeps, not a window. */
+    private static int storyRows() {
+        return Math.max(20_000, mapRows());
+    }
+
+    private static JsonObject storyJson(AiStory.Story s, boolean hide) {
+        JsonObject o = new JsonObject();
+        o.addProperty("generated", s.generated());
+        o.addProperty("missing", s.missing());
+        o.addProperty("problem", s.problem());
+        o.addProperty("error", s.error() == null ? "" : s.error());
+        JsonArray days = new JsonArray();
+        for (AiStory.Day d : s.days()) {
+            JsonObject j = new JsonObject();
+            j.addProperty("at", d.at());
+            // Prose the model wrote, so the coordinates in it come out the
+            // same way they do in every other sentence it writes.
+            j.addProperty("line", hide ? Coords.scrub(d.line()) : d.line());
+            j.addProperty("events", d.events());
+            j.addProperty("players", d.players());
+            j.addProperty("written", d.written());
+            days.add(j);
+        }
+        o.add("days", days);
+        return o;
+    }
+
     private void handleLoad(HttpExchange ex) throws IOException {
         try {
             if (!requireAuth(ex)) return;

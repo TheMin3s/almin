@@ -1264,6 +1264,8 @@ of things it may look up, and it goes and looks them up:
 | `player_positions` | one player's path, thinned across the window |
 | `list_players` / `player_summary` | who the server knows, playtime, sessions |
 | `server_status` | running, online, version, uptime, tick rate, memory |
+| `server_load` | what the server is spending its time on, and where |
+| `list_places` | the places on the server, and who keeps going back to them |
 | `list_mods` | the server's mods, or one player's reported client mods |
 | `settings_summary` | Almin's settings and what they mean |
 
@@ -1297,6 +1299,54 @@ given, and neither is the API key, which is not a setting at all.
 Conversations are per account, in memory, and go when the server stops. The log
 is on disk and can be asked about again; what somebody asked about it is not
 the sort of record that should quietly outlive the asking.
+
+### The Timeline: the server's own history
+
+The summary is about a period and the conversation is about a question. The
+**Timeline** tab beside Ask is about neither: it is the server's history, one
+sentence per day, from the oldest day the log still reaches to today.
+
+> **Yesterday** · 2 players · 1,820 events
+> Steve finished the spawn bridge while Alex cleared the ravine below it.
+>
+> **Sunday, September 6** · 1 player · 900 events
+> Alex dug a shaft to bedrock and came back with most of an iron block.
+
+Each day is written from what the log already worked out — the same episodes
+the map's **What happened** list is built from, not the raw rows — so a day of
+four thousand events reaches the model as forty sentences and comes back as
+one. That is what makes it work on a 3B model on the same machine.
+
+**A day that is over never changes,** so it is written once and kept, on disk,
+in `config/almin/ai-story.json`. A restart does not re-bill the history. Only
+today's line is ever rewritten, and only when today has moved on.
+
+**Nothing writes itself.** Opening the tab reads what is already there and asks
+no model at all. The button writes four more days and says so before you press
+it — a fortnight of requests fired at a paid service the moment somebody opens
+a tab is a bad surprise, and four at a time is a decision somebody keeps
+making.
+
+Days the model has not reached yet are still listed, with a hollow mark on the
+line and *not written yet* under them, because a gap in a timeline is
+information. A day with a handful of rows in it is marked quiet and never
+written: there is nothing to say about it.
+
+The dates, the event counts and how many people were there are the log's, not
+the model's. They are shown whether or not there is a sentence, and they are
+still shown when the model is switched off entirely — with a line saying why
+the sentences are missing.
+
+**Who sees it.** The history is one text about the whole server, written once
+and shown to everybody, so it cannot be written per reader: whatever one
+reader's narrower slice produced would become the line everybody else inherits.
+An account restricted to its own activity is told that in words instead of
+being shown a history of itself. And where `ai-send-chat` is on, what the model
+wrote is a paraphrase of chat, so an account that is not shown chat is not
+shown the history either — the same rule the period summary keeps.
+
+Clearing the activity log clears the history written from it. A history of a
+server that no longer exists is a fiction.
 
 ## Advertising mods to players
 

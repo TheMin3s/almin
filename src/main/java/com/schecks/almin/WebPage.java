@@ -152,6 +152,23 @@ final class WebPage {
                      flex:0 0 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
                      max-width:46%}
           .loadfoot{margin-top:12px}
+          /* ---- the history ---- */
+          .aitabs{margin-bottom:14px}
+          .storybar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+          .storylist{border-left:2px solid var(--line);margin-left:6px;padding-left:0}
+          .storyday{position:relative;padding:9px 0 9px 20px}
+          /* The dot on the line. Hollow for a day nothing has been written
+             about, so an unwritten history reads as gaps rather than as a
+             list that stops. */
+          .storyday::before{content:"";position:absolute;left:-5px;top:15px;width:8px;height:8px;
+                            border-radius:50%;background:var(--brand);
+                            border:2px solid var(--bg)}
+          .storyday.bare::before{background:var(--bg);border-color:var(--line)}
+          .storywhen{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+                     font-weight:600;font-size:13px}
+          .storymeta{color:var(--mute);font-size:11.5px;font-weight:400}
+          .storyline{margin-top:3px;line-height:1.6;overflow-wrap:anywhere}
+          .storyline.quiet{color:var(--mute);font-style:italic}
           .mapwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;
                    padding:10px;position:relative}
           /* Direct child only. The legend draws the same marker shapes inline
@@ -8663,9 +8680,24 @@ final class WebPage {
           'Is anything wrong with the server right now?'
         ];
 
+        /** Ask, or the history. Two things, one menu. */
+        let aiView='ask';
+
         function aiPanel(){
           const wrap=document.createElement('div');
-          wrap.innerHTML=
+          const strip=document.createElement('div');
+          strip.className='loadtabs aitabs';
+          for(const [id,label] of [['ask','Ask'],['story','Timeline']]){
+            const b=document.createElement('button');
+            b.className=(aiView===id?'on':''); b.textContent=label;
+            b.onclick=()=>{ aiView=id; render(); };
+            strip.appendChild(b);
+          }
+          wrap.appendChild(strip);
+          if(aiView==='story'){ wrap.appendChild(storyPanel()); return wrap; }
+          const inner=document.createElement('div');
+          wrap.appendChild(inner);
+          inner.innerHTML=
             '<p class="muted">Ask about anything the panel records \u2014 who did what, '+
             'when, and where. Questions reach the whole activity log, which is kept on '+
             'disk, so this is not limited to the session running now.</p>'+
@@ -10190,6 +10222,126 @@ final class WebPage {
 
         """;
 
+
+
+    /**
+     * The Timeline tab: the server's history, one line a day.
+     *
+     * <p>Its own piece because the constants each have a 64KB ceiling.
+     */
+    private static final String PARTSTORY = """
+
+        // ---- the server's history, a line at a time ----
+        let storyData=null, storyErr='', storyBusy=false, storyAsked=0;
+
+        function storyPanel(){
+          const wrap=document.createElement('div');
+          wrap.innerHTML=
+            '<p class="muted">One sentence for each day the server has been played, '+
+            'written from what the log already worked out. A day that is over never '+
+            'changes, so each line is written once and kept \\u2014 only today\\u2019s is '+
+            'ever rewritten.</p>'+
+            '<div id="t-story"></div>';
+          setTimeout(()=>{ paintStory(); loadStory(); },0);
+          return wrap;
+        }
+
+        /** Reads what is written. Costs nothing: no model is asked. */
+        async function loadStory(){
+          if(Date.now()-storyAsked<1200) return;
+          storyAsked=Date.now();
+          const r=await jget('/api/story');
+          if(r.status===200){ storyData=r.body; storyErr=''; }
+          else storyErr=(r.body&&r.body.error)||'The panel could not read the history.';
+          paintStory();
+        }
+
+        /** Writes the next few days. The one thing here that asks a model. */
+        async function writeStory(){
+          if(storyBusy) return;
+          storyBusy=true; storyErr=''; paintStory();
+          try {
+            const r=await jpost('/api/story',{});
+            if(r.status===200){ storyData=r.body; }
+            else storyErr=(r.body&&r.body.error)||'The history could not be written.';
+          } finally {
+            storyBusy=false;
+            paintStory();
+          }
+        }
+
+        /** "Tuesday 2 September", and "today" when it is. */
+        function storyDay(at){
+          const d=new Date(at), now=new Date();
+          const same=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()
+                            &&a.getDate()===b.getDate();
+          if(same(d,now)) return 'Today';
+          const y=new Date(now.getTime()-86400000);
+          if(same(d,y)) return 'Yesterday';
+          return d.toLocaleDateString(undefined,
+            {weekday:'long', day:'numeric', month:'long'});
+        }
+
+        function storyRow(d){
+          const when=storyDay(d.at);
+          const who=d.players===1?'1 player':d.players+' players';
+          const body=d.line
+            ? '<div class="storyline">'+esc(d.line)+'</div>'
+            : (d.events<12
+                ? '<div class="storyline quiet">A quiet day \\u2014 too little happened to '+
+                  'be worth a line.</div>'
+                : '<div class="storyline quiet">Not written yet.</div>');
+          return '<div class="storyday'+(d.line?'':' bare')+'">'+
+            '<div class="storywhen">'+esc(when)+
+              '<span class="storymeta">'+esc(who)+' \\u00b7 '+
+              (d.events||0).toLocaleString()+' events</span></div>'+
+            body+'</div>';
+        }
+
+        function paintStory(){
+          const box=$('t-story');
+          if(!box) return;
+          if(storyErr && !storyData){
+            box.innerHTML='<div class="note">'+esc(storyErr)+'</div>';
+            return;
+          }
+          if(!storyData){ box.innerHTML='<div class="note">Reading\\u2026</div>'; return; }
+          if(storyData.held){
+            box.innerHTML='<div class="note">'+esc(storyData.held)+'</div>';
+            return;
+          }
+          const s=storyData.story||{days:[],missing:0,problem:''};
+          const days=s.days||[];
+          let head='';
+          if(s.problem){
+            head='<div class="banner"><span class="state warn">Off</span>'+
+              '<span class="muted">'+esc(s.problem)+' The days below are what the log '+
+              'already knows; the sentences need a model.</span></div>';
+          }
+          let foot='';
+          if(!s.problem){
+            const left=s.missing||0;
+            const can=mayWrite('ai') && !me.noModel;
+            foot='<div class="storybar">'+
+              '<button class="btn go" id="story-write"'+
+                ((storyBusy||!left||!can)?' disabled':'')+'>'+
+                (storyBusy?'Writing\\u2026':(left?'Write '+Math.min(4,left)+' more':'All written'))+
+              '</button>'+
+              '<span class="muted">'+
+                (left? left+' day'+(left===1?'':'s')+' still to write. Four at a time, so '+
+                       'a paid model cannot run away with itself.'
+                     : 'Every day with something in it has a line.')+
+              '</span></div>';
+          }
+          const list=days.length
+            ? days.map(storyRow).join('')
+            : '<div class="note">Nothing has been recorded yet, so there is no history.</div>';
+          box.innerHTML=head+foot+'<div class="storylist">'+list+'</div>'+
+            (storyErr?'<div class="msg err">'+esc(storyErr)+'</div>':'');
+          const b=$('story-write');
+          if(b) b.onclick=()=>writeStory();
+        }
+        """;
 
     /**
      * The Load menu: what the server is spending its time on.
@@ -11835,5 +11987,5 @@ final class WebPage {
      */
     static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
         PARTMAPUI, PARTMAPUI2, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
-        PARTLOAD, PARTUPDATE, PARTSETTINGS);
+        PARTLOAD, PARTSTORY, PARTUPDATE, PARTSETTINGS);
 }

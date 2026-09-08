@@ -50,6 +50,7 @@ public class Almin implements ModInitializer {
             ActivityLog.init(server);
             WorldSnapshots.init(server);
             AiInsights.init(server.getServerDirectory());
+            AiStory.init(server.getServerDirectory());
             Accounts.init(server.getServerDirectory());
             PanelAudit.init(server.getServerDirectory());
             ClientProfiles.init(server);
