@@ -138,6 +138,15 @@ public class AiChatTests {
         ck("an account with only Activity does get it",
             activityOnly.contains("list_places"), String.join(",", activityOnly));
 
+        // The Load menu is its own menu, so the tool that reads it is too: an
+        // account given Activity to read the log is not thereby told what the
+        // server is doing right now.
+        ck("the load tool belongs to the Load menu and not to Activity",
+            !activityOnly.contains("server_load")
+                && toolNames(account(Map.of("load", "read"), Set.of()))
+                    .contains("server_load"),
+            String.join(",", activityOnly));
+
         ck("an account with no menus at all gets nothing",
             toolNames(account(Map.of(), Set.of())).isEmpty());
 
@@ -158,6 +167,17 @@ public class AiChatTests {
             "list_places", "{}");
         ck("and so is the places tool",
             places.contains("\"error\"") && places.contains("coordinates"), places);
+
+        // The load tool is the exception, and deliberately: "there are nine
+        // thousand items" is a fact about the server, not about anybody's
+        // build, so the counts stay and only the positions go. There is no
+        // world to sample here, so the withholding itself is exercised rather
+        // than the tool around it.
+        String kept = loadKinds(false), gone = loadKinds(true);
+        ck("the load tool keeps the counts for an account not shown coordinates",
+            gone.contains("6120") && kept.contains("6120"), gone);
+        ck("...and drops where they are",
+            !gone.contains("thickest") && kept.contains("thickest_at"), gone);
     }
 
     // ---------- what the tools actually return ----------
@@ -599,6 +619,15 @@ public class AiChatTests {
     }
 
     // ---------- reflection, because these classes are not public ----------
+
+    /** What {@code server_load} would say about one kind, hidden or not. */
+    static String loadKinds(boolean noCoords) throws Exception {
+        Method m = tools().getDeclaredMethod("loadKinds", List.class, boolean.class);
+        m.setAccessible(true);
+        var kind = new com.schecks.almin.ServerLoad.Kind(
+            "item", "Item", 6120, "overworld", -211, 64, 908);
+        return String.valueOf(m.invoke(null, List.of(kind), noCoords));
+    }
 
     static Class<?> tools() throws Exception { return Class.forName("com.schecks.almin.AiTools"); }
     static Class<?> chat() throws Exception { return Class.forName("com.schecks.almin.AiChat"); }

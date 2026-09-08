@@ -87,6 +87,9 @@ final class AiTools {
                 out.add(placesSpec());
             }
         }
+        if (may(me, "load")) {
+            out.add(loadSpec());
+        }
         if (may(me, "players")) {
             out.add(listPlayersSpec());
             out.add(playerSummarySpec());
@@ -168,6 +171,16 @@ final class AiTools {
             + "from the whole log at once, so it answers in a few lines where searching the "
             + "rows would take many pages and still not add up to a place.",
             schema(p));
+    }
+
+    private static Tool loadSpec() {
+        return new Tool("server_load",
+            "What the running server is spending its time on: how long a tick is taking, how "
+            + "much memory is in use, and \u2014 the part that is actually actionable \u2014 what "
+            + "there is a lot of and where it is. Use this for anything shaped like 'why is the "
+            + "server lagging', 'what is causing the TPS drop' or 'what should I clean up'. It "
+            + "measures the world as it is right now; it says nothing about the past.",
+            schema(props()));
     }
 
     private static Tool positionsSpec() {
@@ -259,6 +272,7 @@ final class AiTools {
                 case "activity_overview" -> activityOverview(me);
                 case "player_positions"  -> playerPositions(me, a);
                 case "list_places"       -> listPlaces(me, a);
+                case "server_load"       -> serverLoad(me);
                 case "list_players"      -> listPlayers(a);
                 case "player_summary"    -> playerSummary(me, a);
                 case "server_status"     -> serverStatus();
@@ -274,12 +288,98 @@ final class AiTools {
     }
 
     /** Which menu a tool belongs to, so one table settles both questions. */
+    /**
+     * What the server is spending its time on.
+     *
+     * <p>Asking is also what wakes the sampler: it stays asleep until somebody
+     * wants a number, and a model asking counts. Where things are is dropped
+     * for an account coordinates are kept from, which leaves the counts \u2014
+     * "there are nine thousand items" says nothing about anybody's build.
+     */
+    private static Result serverLoad(Accounts.Account me) {
+        net.minecraft.server.MinecraftServer server = WebUi.bound();
+        if (server == null) {
+            JsonObject o = new JsonObject();
+            o.addProperty("running", false);
+            o.addProperty("note", "The Minecraft server is not running, so there is no load "
+                + "to measure.");
+            return done(o, "server stopped");
+        }
+        ServerLoad.want();
+        ServerLoad.Sample s = ServerLoad.latest();
+        if (s == null) s = WebUi.onServerThread(() -> ServerLoad.sample(server), null);
+        if (s == null) return refuse("The server did not answer in time.");
+        boolean noCoords = coordsHidden(me);
+
+        JsonObject o = new JsonObject();
+        o.addProperty("measured", ago(s.at()));
+        o.addProperty("ms_per_tick", Math.round(s.mspt() * 10) / 10.0);
+        o.addProperty("ms_available_per_tick", Math.round(1000.0 / Math.max(1, s.target())));
+        o.addProperty("slowest_recent_tick_ms", Math.round(s.worst() * 10) / 10.0);
+        o.addProperty("memory_used_percent",
+            s.heapMax() <= 0 ? 0 : (int) (s.heapUsed() * 100 / s.heapMax()));
+        o.addProperty("garbage_collections", s.gcCount());
+        o.addProperty("players_online", s.players());
+        o.addProperty("loaded_chunks", s.chunks());
+        o.addProperty("force_loaded_chunks", s.forced());
+        o.addProperty("entities", s.entities());
+        o.addProperty("ticking_blocks", s.blockEntities());
+
+        o.add("most_entities", loadKinds(s.kinds(), noCoords));
+        o.add("most_ticking_blocks", loadKinds(s.blockKinds(), noCoords));
+
+        JsonArray spots = new JsonArray();
+        for (ServerLoad.Spot p : s.spots()) {
+            if (noCoords) break;
+            JsonObject e = new JsonObject();
+            e.addProperty("dimension", p.dim());
+            e.addProperty("where", p.x() + "," + p.z());
+            e.addProperty("entities", p.entities());
+            e.addProperty("ticking_blocks", p.blockEntities());
+            e.addProperty("mostly", p.mostly());
+            e.addProperty("chunks", p.chunks());
+            spots.add(e);
+        }
+        o.add("busiest_places", spots);
+
+        JsonArray dims = new JsonArray();
+        for (ServerLoad.Dim d : s.dims()) {
+            JsonObject e = new JsonObject();
+            e.addProperty("dimension", d.id());
+            e.addProperty("loaded_chunks", d.chunks());
+            e.addProperty("force_loaded_chunks", d.forced());
+            e.addProperty("entities", d.entities());
+            e.addProperty("ticking_blocks", d.blockEntities());
+            dims.add(e);
+        }
+        o.add("by_dimension", dims);
+
+        return done(o, Math.round(s.mspt() * 10) / 10.0 + " ms per tick, "
+            + s.entities() + " entities");
+    }
+
+    private static JsonArray loadKinds(List<ServerLoad.Kind> kinds, boolean noCoords) {
+        JsonArray arr = new JsonArray();
+        for (ServerLoad.Kind k : kinds) {
+            JsonObject o = new JsonObject();
+            o.addProperty("what", k.name().isEmpty() ? k.id() : k.name());
+            o.addProperty("count", k.count());
+            if (!noCoords && !k.dim().isEmpty()) {
+                o.addProperty("thickest_in", k.dim());
+                o.addProperty("thickest_at", k.x() + "," + k.y() + "," + k.z());
+            }
+            arr.add(o);
+        }
+        return arr;
+    }
+
     private static String menuFor(String tool) {
         return switch (tool) {
             case "search_activity", "count_activity", "activity_overview",
                  "player_positions", "list_places" -> "activity";
             case "list_players", "player_summary" -> "players";
             case "server_status" -> "dash";
+            case "server_load" -> "load";
             case "list_mods" -> "mods";
             case "settings_summary" -> "settings";
             default -> null;

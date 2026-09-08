@@ -123,6 +123,35 @@ final class WebPage {
           .btn.on{border-color:var(--good);color:#a8e6a8}
           .act{max-height:64vh;overflow:auto;background:var(--card);border:1px solid var(--line);
                border-radius:12px;padding:6px 4px}
+          /* ---- the Load menu ---- */
+          .loadsay{display:flex;gap:12px;align-items:baseline;background:var(--card);
+                   border:1px solid var(--line);border-radius:12px;padding:13px 16px;
+                   margin-bottom:14px}
+          .loadsay .state{white-space:nowrap}
+          .loadspark{margin-top:9px;display:block;width:100%;height:34px}
+          .loadlists{margin-top:16px}
+          .loadtabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
+          .loadtabs button{background:none;border:1px solid var(--line);color:var(--dim);
+                           border-radius:99px;padding:4px 12px;font-size:12px}
+          .loadtabs button.on{border-color:var(--brand);color:var(--brand)}
+          /* The bar sits behind the text rather than beside it: a column of
+             bars and a column of names read as two lists that happen to line
+             up, and the point is that they are one row. */
+          .loadrow{position:relative;display:flex;gap:10px;align-items:baseline;
+                   padding:6px 9px;border-radius:7px;overflow:hidden}
+          .loadrow.go{cursor:pointer}
+          .loadrow.go:hover .loadbar i{opacity:.5}
+          .loadbar{position:absolute;inset:0;pointer-events:none}
+          .loadbar i{display:block;height:100%;background:var(--brand);opacity:.16;
+                     transition:width .3s ease,opacity .15s}
+          .loadname{position:relative;white-space:nowrap;overflow:hidden;
+                    text-overflow:ellipsis}
+          .loadn{position:relative;margin-left:auto;font-variant-numeric:tabular-nums;
+                 font-weight:600}
+          .loadwhere{position:relative;color:var(--mute);font-size:12px;white-space:nowrap;
+                     flex:0 0 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+                     max-width:46%}
+          .loadfoot{margin-top:12px}
           .mapwrap{background:var(--card);border:1px solid var(--line);border-radius:12px;
                    padding:10px;position:relative}
           /* Direct child only. The legend draws the same marker shapes inline
@@ -1218,7 +1247,7 @@ final class WebPage {
           $('srvstart').title=canStart?('Runs: '+startCommand)
                                       :(startProblem||'No way to start the server from here');
           const nav=$('nav'); nav.innerHTML='';
-          const all = [['dash','Overview'],['term','Console'],
+          const all = [['dash','Overview'],['term','Console'],['load','Load'],
                        ['activity','Activity'],['files','Files'],['players','Players'],
                        ['mods','Mods'],['ai','AI'],['settings','Settings']];
           // The AI menu can be switched off for the whole panel, which is a
@@ -1262,6 +1291,7 @@ final class WebPage {
           if(authed && readOnly(tab)) m.appendChild(readOnlyNote(tab));
           if(tab==='dash') m.appendChild(dashPanel());
           else if(tab==='term') m.appendChild(termPanel());
+          else if(tab==='load') m.appendChild(loadPanel());
           else if(tab==='files') m.appendChild(filesPanel());
           else if(tab==='mods') m.appendChild(modsPanel());
           else if(tab==='players') m.appendChild(playersPanel());
@@ -1273,8 +1303,9 @@ final class WebPage {
 
         /** What a tab is called, matching the server's own names. */
         function menuLabel(menu){
-          return ({dash:'Overview',term:'Console',activity:'Activity',files:'Files',
-                   players:'Players',mods:'Mods',settings:'Settings'})[menu]||menu;
+          return ({dash:'Overview',term:'Console',load:'Load',activity:'Activity',
+                   files:'Files',players:'Players',mods:'Mods',ai:'AI',
+                   settings:'Settings'})[menu]||menu;
         }
 
         /**
@@ -10159,6 +10190,266 @@ final class WebPage {
 
         """;
 
+
+    /**
+     * The Load menu: what the server is spending its time on.
+     *
+     * <p>Its own piece because the constants each have a 64KB ceiling, and
+     * because the menu is self-contained — nothing else on the page reads
+     * anything in here.
+     */
+    private static final String PARTLOAD = """
+
+        // ---- what the server is spending its time on ----
+        /**
+         * The last sample, and whether one is on its way.
+         *
+         * <p>Held rather than refetched on every paint: the menu repaints on
+         * the same three-second poll as everything else, and the server only
+         * takes a fresh sample every few seconds anyway.
+         */
+        let loadData=null, loadAsked=0, loadErr='', loadShow='spots';
+
+        function loadPanel(){
+          const wrap=document.createElement('div');
+          if(!serverRunning){
+            const b=document.createElement('div'); b.className='banner';
+            b.innerHTML='<span class="state crit">Stopped</span><span class="muted">'+
+              'Nothing is running, so there is nothing to measure.</span>';
+            wrap.appendChild(b);
+            return wrap;
+          }
+          const body=document.createElement('div'); body.id='t-load';
+          wrap.appendChild(body);
+          paintLoad();
+          loadLoad();
+          return wrap;
+        }
+
+        /** Asks for a sample. Also what keeps the server sampling at all. */
+        async function loadLoad(){
+          if(Date.now()-loadAsked<1500) return;
+          loadAsked=Date.now();
+          const r=await jget('/api/load');
+          if(r.status===200){ loadData=r.body; loadErr=''; }
+          else loadErr=(r.body&&r.body.error)||'The panel could not read the load.';
+          paintLoad();
+        }
+
+        /** How much of a tick is being used, as a word. */
+        function loadHealth(d){
+          const budget=1000/Math.max(1,d.target||20);
+          const use=d.mspt/budget;
+          if(use>=0.95) return {state:'crit', word:'over budget',
+            why:'Ticks are taking longer than the server has, so the game is running slow.'};
+          if(use>=0.7) return {state:'warn', word:'working hard',
+            why:'There is headroom, but not much. A busy moment will be felt.'};
+          return {state:'good', word:'keeping up',
+            why:'Ticks finish well inside their budget.'};
+        }
+
+        function fmtBytes(n){
+          if(!n) return '0 B';
+          const u=['B','KB','MB','GB','TB']; let i=0, v=n;
+          while(v>=1024 && i<u.length-1){ v/=1024; i++; }
+          return (v>=10||i===0?Math.round(v):v.toFixed(1))+' '+u[i];
+        }
+
+        function fmtNum(n){ return (n||0).toLocaleString(); }
+
+        /**
+         * The last hundred ticks, as a line.
+         *
+         * <p>Scaled to the budget rather than to its own maximum: a chart that
+         * rescales itself makes a calm server and a struggling one look the
+         * same, and the whole question here is which of those it is.
+         */
+        function loadSpark(d){
+          const pts=d.recent||[];
+          if(pts.length<2) return '';
+          const W=600, H=54, budget=1000/Math.max(1,d.target||20);
+          const top=Math.max(budget*1.5, ...pts);
+          const x=i=>i*(W/(pts.length-1));
+          const y=v=>H-Math.max(0,Math.min(H,(v/top)*H));
+          let path='';
+          for(let i=0;i<pts.length;i++) path+=(i?'L':'M')+x(i).toFixed(1)+' '+y(pts[i]).toFixed(1);
+          const line=y(budget);
+          return '<svg class="loadspark" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+            '<line x1="0" y1="'+line.toFixed(1)+'" x2="'+W+'" y2="'+line.toFixed(1)+
+            '" stroke="#ffab33" stroke-opacity=".55" stroke-dasharray="4 4" stroke-width="1"/>'+
+            '<path d="'+path+'" fill="none" stroke="var(--brand)" stroke-width="1.6" '+
+            'stroke-linejoin="round"/></svg>';
+        }
+
+        /** One row of a ranked list, with a bar for how big its share is. */
+        function loadBar(label, count, most, right, click){
+          const pct=most>0?Math.max(2,Math.round(count*100/most)):0;
+          return '<div class="loadrow'+(click?' go':'')+'"'+(click?' data-go="'+esc(click)+'"':'')+'>'+
+            '<div class="loadbar"><i style="width:'+pct+'%"></i></div>'+
+            '<span class="loadname">'+esc(label)+'</span>'+
+            '<span class="loadn">'+fmtNum(count)+'</span>'+
+            '<span class="loadwhere">'+esc(right||'')+'</span></div>';
+        }
+
+        function loadTiles(d){
+          const h=loadHealth(d);
+          const budget=1000/Math.max(1,d.target||20);
+          const memPct=d.heapMax>0?Math.round(d.heapUsed*100/d.heapMax):0;
+          const memState=memPct>=92?'crit':(memPct>=80?'warn':'good');
+          return '<div class="tiles">'+
+            '<div class="tile '+h.state+'"><div class="cap">Tick time</div>'+
+              '<div class="big">'+d.mspt.toFixed(1)+' ms</div>'+
+              '<div class="sub">'+esc(h.word)+' \\u00b7 '+budget.toFixed(0)+' ms to spend</div>'+
+              loadSpark(d)+'</div>'+
+            '<div class="tile"><div class="cap">Slowest recent tick</div>'+
+              '<div class="big">'+d.worst.toFixed(0)+' ms</div>'+
+              '<div class="sub">of the last '+(d.recent||[]).length+' ticks</div></div>'+
+            '<div class="tile '+memState+'"><div class="cap">Memory</div>'+
+              '<div class="big">'+memPct+'%</div>'+
+              '<div class="sub">'+fmtBytes(d.heapUsed)+' of '+fmtBytes(d.heapMax)+
+              ' \\u00b7 '+fmtNum(d.gcCount)+' collections</div>'+
+              '<div class="meter"><i class="'+memState+'" style="width:'+memPct+'%"></i></div></div>'+
+            '<div class="tile"><div class="cap">Loaded</div>'+
+              '<div class="big">'+fmtNum(d.chunks)+'</div>'+
+              '<div class="sub">chunks \\u00b7 '+fmtNum(d.entities)+' entities \\u00b7 '+
+              fmtNum(d.blockEntities)+' ticking blocks</div></div>'+
+            '</div>';
+        }
+
+        /**
+         * The sentence at the top.
+         *
+         * <p>A menu of numbers is a menu somebody has to interpret. This says
+         * what the numbers add up to and, when something is wrong, names the
+         * largest single thing it could be — which is nearly always the answer.
+         */
+        function loadVerdict(d){
+          const h=loadHealth(d);
+          const bits=[h.why];
+          const worst=(d.spots||[])[0];
+          const kind=(d.kinds||[])[0];
+          if(h.state!=='good' && worst){
+            bits.push('The busiest ground is '+prettyDim(worst.dim)+' around '+
+              worst.x+', '+worst.z+' \\u2014 '+fmtNum(worst.entities)+' entities and '+
+              fmtNum(worst.blockEntities)+' ticking blocks in about '+
+              (worst.chunks||1)+' chunk'+((worst.chunks||1)===1?'':'s')+'.');
+          } else if(h.state!=='good' && kind){
+            bits.push('There is more '+kind.name.toLowerCase()+' than anything else: '+
+              fmtNum(kind.count)+'.');
+          }
+          if(d.forced>0){
+            bits.push(fmtNum(d.forced)+' chunk'+(d.forced===1?' is':'s are')+
+              ' force-loaded, so '+(d.forced===1?'it keeps':'they keep')+
+              ' ticking whether anybody is there or not.');
+          }
+          return '<div class="loadsay"><span class="state '+h.state+'">'+esc(h.word)+
+            '</span><span class="muted">'+bits.map(esc).join(' ')+'</span></div>';
+        }
+
+        function loadLists(d){
+          const tabs=[['spots','Hotspots'],['kinds','Entities'],
+                      ['blockKinds','Ticking blocks'],['dims','Worlds'],['near','Players']];
+          let head='<div class="loadtabs">';
+          for(const [id,label] of tabs){
+            head+='<button class="'+(loadShow===id?'on':'')+'" data-load="'+id+'">'+
+              esc(label)+'</button>';
+          }
+          head+='</div>';
+
+          let rows='';
+          if(loadShow==='spots'){
+            const list=d.spots||[];
+            if(d.noCoords) rows='<div class="note">Hotspots are places, so this account is '+
+              'not shown them.</div>';
+            else if(!list.length) rows='<div class="note">Nothing is packed together '+
+              'anywhere. Whatever is costing time is spread out.</div>';
+            else {
+              const most=list[0].entities+list[0].blockEntities;
+              for(const s of list){
+                rows+=loadBar(prettyDim(s.dim)+' '+s.x+', '+s.z,
+                  s.entities+s.blockEntities, most,
+                  (s.mostly?'mostly '+s.mostly+' \\u00b7 ':'')+
+                  fmtNum(s.entities)+' entities, '+fmtNum(s.blockEntities)+' blocks',
+                  s.dim+' '+s.x+' '+s.z);
+              }
+            }
+          } else if(loadShow==='kinds' || loadShow==='blockKinds'){
+            const list=d[loadShow]||[];
+            if(!list.length) rows='<div class="note">Nothing at all, which would be unusual.</div>';
+            const most=list.length?list[0].count:0;
+            for(const k of list){
+              const where=k.dim?prettyDim(k.dim)+' '+k.x+', '+k.z:'';
+              rows+=loadBar(k.name||k.id, k.count, most,
+                where?('thickest at '+where):'', k.dim?(k.dim+' '+k.x+' '+k.z):'');
+            }
+          } else if(loadShow==='dims'){
+            const list=d.dims||[];
+            const most=list.length?(list[0].entities+list[0].blockEntities):0;
+            for(const w of list){
+              rows+=loadBar(prettyDim(w.dim), w.entities+w.blockEntities, most,
+                fmtNum(w.chunks)+' chunks'+(w.forced?' \\u00b7 '+fmtNum(w.forced)+' forced':''), '');
+            }
+          } else {
+            const list=d.near||[];
+            if(!list.length) rows='<div class="note">Nobody is online, so nothing is '+
+              'being kept loaded for anybody.</div>';
+            const most=list.length?(list[0].entities+list[0].blockEntities):0;
+            for(const n of list){
+              rows+=loadBar((n.mask?n.mask+' ('+n.player+')':n.player),
+                n.entities+n.blockEntities, most,
+                prettyDim(n.dim)+' \\u00b7 '+fmtNum(n.entities)+' entities, '+
+                fmtNum(n.blockEntities)+' blocks', '');
+            }
+          }
+          return '<section class="loadlists"><h2>'+esc(whatLoadList())+'</h2>'+head+rows+'</section>';
+        }
+
+        function whatLoadList(){
+          return loadShow==='spots' ? 'Where it is thickest'
+            : loadShow==='kinds' ? 'What there is most of'
+            : loadShow==='blockKinds' ? 'Which blocks are ticking'
+            : loadShow==='dims' ? 'How the worlds compare'
+            : 'What is loaded around each player';
+        }
+
+        function paintLoad(){
+          const box=$('t-load');
+          if(!box) return;
+          if(loadErr && !loadData){
+            box.innerHTML='<div class="note">'+esc(loadErr)+'</div>';
+            return;
+          }
+          if(!loadData){ box.innerHTML='<div class="note">Measuring\\u2026</div>'; return; }
+          const d=loadData;
+          const age=Math.max(0,Math.round((Date.now()-d.at)/1000));
+          box.innerHTML=loadVerdict(d)+loadTiles(d)+loadLists(d)+
+            '<div class="muted loadfoot">Sampled '+(age<2?'just now':age+'s ago')+
+            ', and it took '+d.took+' ms to look. Nothing is measured while this '+
+            'menu is closed.</div>';
+          wireLoad();
+        }
+
+        function wireLoad(){
+          const box=$('t-load');
+          if(!box) return;
+          box.querySelectorAll('button[data-load]').forEach(b=>{
+            b.onclick=()=>{ loadShow=b.getAttribute('data-load'); paintLoad(); };
+          });
+          // A hotspot is somewhere, and somewhere is what the map is for.
+          box.querySelectorAll('.loadrow.go').forEach(el=>{
+            const parts=(el.getAttribute('data-go')||'').split(' ');
+            if(parts.length!==3) return;
+            el.onclick=()=>{
+              if(!mayRead('activity')) return;
+              allDim=parts[0];
+              view={cx:+parts[1], cz:+parts[2], span:256, set:true};
+              tab='activity';
+              render();
+            };
+          });
+        }
+        """;
+
     /**
      * Putting an update off until later.
      *
@@ -11521,6 +11812,7 @@ final class WebPage {
           }
           setChrome();
           if(tab==='dash') updateMetrics();
+          else if(tab==='load') loadLoad();
           else if(tab==='term') loadConsole();
           else if(tab==='players') loadPlayers();
           else if(tab==='activity'){ refreshActivity(); liveTick(); }
@@ -11543,5 +11835,5 @@ final class WebPage {
      */
     static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
         PARTMAPUI, PARTMAPUI2, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
-        PARTUPDATE, PARTSETTINGS);
+        PARTLOAD, PARTUPDATE, PARTSETTINGS);
 }

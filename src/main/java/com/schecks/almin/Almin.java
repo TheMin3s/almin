@@ -78,6 +78,10 @@ public class Almin implements ModInitializer {
         // schedule lives in WorldSnapshots; this only has to offer the tick.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
             .register(WorldSnapshots::tick);
+        // What the server is spending its time on. Does nothing at all until
+        // somebody opens the Load menu; its own schedule lives in ServerLoad.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
+            .register(ServerLoad::tick);
         // A queued update is a null check until everybody has left. The final
         // player-count check and jar swap both happen on this server thread.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK
@@ -114,6 +118,7 @@ public class Almin implements ModInitializer {
             // their players should not sit in memory across a restart.
             AiChat.forget();
             BlockTextures.close();
+            ServerLoad.reset();
             ServerAutoUpdater.reset();
             // Last, and deliberately so: when the stop was a restart, this
             // starts the server again and then ends this process. Anything

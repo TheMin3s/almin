@@ -317,6 +317,33 @@ const responses = {
                       from: Date.now() - 5 * 86400e3, to: Date.now() - 90000,
                       events: 44, visits: 11, days: 5, weight: 40,
                       player: 'Steve', mask: '', people: 2 }] },
+  // A server working hard, with an obvious culprit: an item pile in the
+  // overworld, a forced chunk in the Nether, and one player standing in it.
+  '/api/load': { at: Date.now() - 2000, took: 41,
+    mspt: 38.4, tps: 20, target: 20, worst: 112.5,
+    recent: [18, 21, 44, 39, 37, 112.5, 36, 35, 33, 38.4],
+    heapUsed: 3865470566, heapMax: 4294967296, gcCount: 812, gcMillis: 41233,
+    players: 2, entities: 9184, blockEntities: 2611, chunks: 1840, forced: 12,
+    noCoords: false,
+    kinds: [
+      { id: 'item', name: 'Item', count: 6120, dim: 'overworld', x: -211, y: 64, z: 908 },
+      { id: 'zombie', name: 'Zombie', count: 1440, dim: 'the_nether', x: 40, y: 32, z: 12 },
+      { id: 'villager', name: 'Villager', count: 388, dim: 'overworld', x: 20, y: 64, z: 40 }],
+    blockKinds: [
+      { id: 'hopper', name: 'Hopper', count: 1802, dim: 'overworld', x: -211, y: 64, z: 908 },
+      { id: 'chest', name: 'Chest', count: 512, dim: 'overworld', x: 20, y: 64, z: 40 }],
+    spots: [
+      { dim: 'overworld', x: -211, z: 908, entities: 6120, blockEntities: 1802,
+        mostly: 'Item', chunks: 9 },
+      { dim: 'the_nether', x: 40, z: 12, entities: 1440, blockEntities: 60,
+        mostly: 'Zombie', chunks: 4 }],
+    dims: [
+      { dim: 'overworld', chunks: 1420, forced: 0, entities: 7500, blockEntities: 2400 },
+      { dim: 'the_nether', chunks: 380, forced: 12, entities: 1600, blockEntities: 190 },
+      { dim: 'the_end', chunks: 40, forced: 0, entities: 84, blockEntities: 21 }],
+    near: [
+      { player: 'Steve', mask: '', dim: 'overworld', entities: 5900, blockEntities: 1700 },
+      { player: 'Alex', mask: 'Ghost', dim: 'overworld', entities: 40, blockEntities: 6 }] },
   '/api/map': { every: 30, shots: [
       { at: Date.now() - 55000, dim: 'overworld', minX: -200, minZ: -200, span: 384 },
       { at: Date.now() - 15000, dim: 'overworld', minX: -180, minZ: -190, span: 384 }] },
@@ -474,7 +501,8 @@ try {
 }
 
 // Every tab must render without throwing, and ask for its own data.
-const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'settings'];
+const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'ai',
+              'settings'];
 (async () => {
   sandbox.authed = true;
   sandbox.serverRunning = true;
@@ -494,7 +522,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
 
   // The panel must actually call the routes the server exposes.
   for (const p of ['/api/config', '/api/players', '/api/update', '/api/mods', '/api/activity',
-                   '/api/console', '/api/ai/chat']) {
+                   '/api/console', '/api/ai/chat', '/api/load']) {
     const ok = asked.has(p);
     console.log((ok ? '  PASS  ' : '  FAIL  ') + 'panel calls ' + p);
     if (!ok) failures.push('never called ' + p);
@@ -1781,6 +1809,99 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
     sandbox.mapOpts.cluster = true;
     sandbox.paintAll();
     return byPlayer !== byAction ? true : 'the colouring did not change';
+  });
+
+  // ---- the Load menu ----
+  // A menu of numbers is a menu somebody has to interpret. Most of what these
+  // check is the sentence at the top, which is the part that says what the
+  // numbers mean, and the rule that a place is a place: an account that is not
+  // shown coordinates is not shown a hotspot either.
+  const loadText = () => {
+    sandbox.paintLoad();
+    return deepText(byId.get('t-load'));
+  };
+
+  check('the load menu says what the numbers add up to', () => {
+    sandbox.tab = 'load';
+    sandbox.render();
+    const t = loadText();
+    if (!/working hard/i.test(t)) return 'no verdict: ' + t.slice(0, 120);
+    // The largest single thing it could be, which is nearly always the answer.
+    if (!t.includes('-211')) return 'the verdict does not name the busiest ground';
+    return /force-loaded/.test(t) ? true : 'forced chunks went unmentioned';
+  });
+
+  check('...and reads the budget from the server rather than assuming twenty', () => {
+    const saved = sandbox.loadData;
+    sandbox.loadData = Object.assign({}, saved, { target: 40, mspt: 18 });
+    const slow = loadText();
+    sandbox.loadData = Object.assign({}, saved, { target: 10, mspt: 18 });
+    const fine = loadText();
+    sandbox.loadData = saved;
+    sandbox.paintLoad();
+    // 18ms of a 25ms budget is working hard; 18ms of 100ms is not.
+    if (!/over budget|working hard/i.test(slow)) return 'a fast tickrate was called healthy';
+    return /keeping up/i.test(fine) ? true : 'a slow tickrate was called unhealthy';
+  });
+
+  check('a hotspot is somewhere, so it is a place an account can be kept from', () => {
+    const saved = sandbox.loadData;
+    sandbox.loadData = Object.assign({}, saved, { noCoords: true, spots: [] });
+    sandbox.loadShow = 'spots';
+    const hidden = loadText();
+    sandbox.loadData = saved;
+    sandbox.paintLoad();
+    const shown = loadText();
+    if (hidden.includes('-211')) return 'coordinates showed to an account they are kept from';
+    if (!/not shown them/.test(hidden)) return 'it went blank rather than saying why';
+    return shown.includes('-211') ? true : 'the hotspot never came back';
+  });
+
+  check('each list in the load menu draws its own rows', () => {
+    const saw = {};
+    for (const view of ['spots', 'kinds', 'blockKinds', 'dims', 'near']) {
+      sandbox.loadShow = view;
+      saw[view] = loadText();
+    }
+    sandbox.loadShow = 'spots';
+    sandbox.paintLoad();
+    if (!/Item/.test(saw.kinds)) return 'the entity list is empty';
+    if (!/Hopper/.test(saw.blockKinds)) return 'the ticking-block list is empty';
+    if (!/Nether/.test(saw.dims)) return 'the world list is empty';
+    // A mask stands in for the name here as it does everywhere else.
+    if (!/Ghost \(Alex\)/.test(saw.near)) return 'the player list does not use the mask';
+    return /-211/.test(saw.spots) ? true : 'the hotspot list is empty';
+  });
+
+  check('a hotspot carries somewhere for the map to go', () => {
+    // The click handler reads this attribute back and splits it into three.
+    // A row whose dimension had a space in it, or whose coordinates were
+    // formatted with a comma, would fail that split silently and the row
+    // would simply do nothing when pressed.
+    sandbox.loadShow = 'spots';
+    sandbox.paintLoad();
+    const html = byId.get('t-load')._html || '';
+    const gos = [...html.matchAll(/data-go="([^"]*)"/g)].map((m) => m[1]);
+    if (!gos.length) return 'no hotspot offered anywhere to go';
+    for (const go of gos) {
+      const parts = go.split(' ');
+      if (parts.length !== 3) return 'unsplittable: ' + go;
+      if (!Number.isFinite(+parts[1]) || !Number.isFinite(+parts[2])) return 'not a place: ' + go;
+    }
+    const first = sandbox.loadData.spots[0];
+    return gos[0] === first.dim + ' ' + first.x + ' ' + first.z
+      ? true : gos[0] + ' is not the busiest place';
+  });
+
+  check('a stopped server is not measured', () => {
+    sandbox.serverRunning = false;
+    sandbox.tab = 'load';
+    sandbox.render();
+    const t = deepText(byId.get('main'));
+    sandbox.serverRunning = true;
+    sandbox.tab = 'load';
+    sandbox.render();
+    return /nothing to measure/i.test(t) ? true : 'it tried to measure a stopped server';
   });
 
   // ---- places ----

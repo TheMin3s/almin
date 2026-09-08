@@ -164,12 +164,13 @@ panel — see [Restarting](#restarting). You should not need to set it at all.
 
 - **Without logging in:** basic metrics only — versions, uptime, a player count,
   TPS. No names, no console, no files, no settings.
-- **After logging in:** seven tabs, covering what the in-game admin UI does.
+- **After logging in:** eight tabs, covering what the in-game admin UI does.
 
 | Tab | What's on it |
 |---|---|
 | Overview | live metrics, TPS trend, the dashboard rows |
 | Console | the server log, tailing, with a command box under it |
+| Load | what the server is spending its time on, and where |
 | Files | a full-width folder browser — right-click anything for what you can do with it |
 | Activity | a timeline map of everyone, and what players have been doing |
 | Players | who's online, who's been on before, and display-name masks |
@@ -512,6 +513,69 @@ command, which is re-checked exactly as if it had been typed. That is why a
 whole set of admin surfaces needs no permission logic of its own — there is
 nothing to get wrong, because the buttons are only ever commands you could have
 typed yourself.
+
+## What the server is spending its time on
+
+The Overview tab says *how* the server is doing: ticks are taking 71ms, memory
+is at 84%. Neither number tells anybody what to do about it. The reason a
+Minecraft server is slow is almost never mysterious — it is nine thousand items
+on a hopper floor, or a villager hall somebody left running, or a chunk loader
+in the Nether that has been ticking a mob farm for a week with nobody near it —
+but finding out which of those it is means running commands and guessing at
+coordinates.
+
+The **Load** tab samples the running server and reports the things you can
+actually go and change. It opens on a sentence rather than a number:
+
+> **working hard** — There is headroom, but not much. A busy moment will be
+> felt. The busiest ground is Overworld around -211, 908 — 6,120 entities and
+> 1,802 ticking blocks in about 9 chunks. 12 chunks are force-loaded, so they
+> keep ticking whether anybody is there or not.
+
+Under it: tick time against the budget the server actually has (a server on a
+non-default tickrate is judged against its own), the slowest of the last
+hundred ticks, memory with its collection count, and what is loaded. Then five
+lists — the busiest patches of ground, what there is most of, which blocks are
+ticking, how the worlds compare, and what is loaded around each player, which
+is the closest thing there is to a per-person bill.
+
+**Every hotspot is somewhere.** Click one and the Activity map opens on it.
+"4,812 items" is a fact; "4,812 items at -211, 908 in the overworld" is a
+decision.
+
+### What it costs to look
+
+Nothing, until somebody looks. A sample is one pass over every entity and every
+ticking chunk, which is not free, so it does not happen unless the Load tab is
+open — opening it is what wakes the sampler, and it goes back to sleep on its
+own about a minute after the last person closes it. While awake it samples at
+most once every four seconds, however often the panel refreshes. The footer
+says how long the last pass took.
+
+Sampling runs on the server thread, because entities and chunks belong to it,
+and the panel reads whatever the last pass produced rather than blocking on
+one.
+
+There is deliberately no per-entity timing. Attributing milliseconds to
+individual entities means instrumenting the tick loop, which costs something on
+every tick forever in exchange for a number that is only read for a minute at a
+time. Counts and positions answer the same question.
+
+### Who sees it
+
+Load is its own menu, granted separately like every other. An account given
+Activity to read the log is not thereby told what the server is doing now.
+Accounts that existed before this menu did start without it — a new menu is off
+for everybody but the owner until somebody grants it, which is the same rule
+every other menu has always followed.
+
+Positions are the one part of a sample that is about somebody's build rather
+than about the server, so an account that is not shown coordinates gets the
+counts and not the hotspots — "there are nine thousand items" says nothing
+about where anybody lives.
+
+The AI menu gets the same thing as a tool, `server_load`, behind the same
+menu and the same coordinate rule.
 
 ## The activity log
 

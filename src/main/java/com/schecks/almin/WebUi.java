@@ -326,6 +326,7 @@ public final class WebUi {
         http.createContext("/api/map", ui.guard("/api/map", ui::handleMap));
         http.createContext("/api/bluemap", ui.guard("/api/bluemap", ui::handleBlueMap));
         http.createContext("/bluemap", ui.guard("/bluemap", ui::handleBlueMapProxy));
+        http.createContext("/api/load", ui.guard("/api/load", ui::handleLoad));
         http.createContext("/api/scene/context",
             ui.guard("/api/scene/context", ui::handleSceneContext));
         http.createContext("/api/head", ui.guard("/api/head", ui::handleHead));
@@ -528,6 +529,7 @@ public final class WebUi {
         // is therefore a write, which is also what makes the panel disable the
         // Ask button for a read-only account rather than let it be refused.
         java.util.Map.entry("/api/ai/chat", "ai"),
+        java.util.Map.entry("/api/load", "load"),
         java.util.Map.entry("/api/state", "dash"),
         java.util.Map.entry("/api/server", "dash"));
 
@@ -4184,6 +4186,134 @@ public final class WebUi {
      * handed to the server thread, and {@link SceneContext} refuses to load
      * chunks while doing it.
      */
+    /**
+     * What the server is spending its time on.
+     *
+     * <p>Asking is what keeps the sampler awake: {@link ServerLoad} does
+     * nothing on a server nobody is watching, and this is the only thing that
+     * tells it somebody is. The first request also takes a sample itself
+     * rather than showing an empty menu for four seconds; after that the tick
+     * has one ready and this only reads it.
+     */
+    private void handleLoad(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            if (!serverRunning) {
+                json(ex, 503, err("The Minecraft server is not running."));
+                return;
+            }
+            ServerLoad.want();
+            ServerLoad.Sample s = ServerLoad.latest();
+            if (s == null) s = onServer(() -> ServerLoad.sample(server), null);
+            if (s == null) {
+                json(ex, 503, err("The server did not answer in time."));
+                return;
+            }
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            json(ex, 200, loadJson(s, hidden(ex)).toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * A sample as the panel reads it.
+     *
+     * <p>Every position is dropped for an account coordinates are kept from,
+     * which leaves the counts intact: "there are nine thousand items" is a
+     * fact about the server, and "they are at these coordinates" is a fact
+     * about somebody's build.
+     */
+    private static JsonObject loadJson(ServerLoad.Sample s, boolean noCoords) {
+        JsonObject root = new JsonObject();
+        root.addProperty("at", s.at());
+        root.addProperty("took", s.took());
+        root.addProperty("mspt", Math.round(s.mspt() * 100) / 100.0);
+        root.addProperty("tps", Math.round(s.tps() * 100) / 100.0);
+        root.addProperty("target", s.target());
+        root.addProperty("worst", Math.round(s.worst() * 100) / 100.0);
+        JsonArray recent = new JsonArray();
+        for (double d : s.recent()) recent.add(Math.round(d * 100) / 100.0);
+        root.add("recent", recent);
+        root.addProperty("heapUsed", s.heapUsed());
+        root.addProperty("heapMax", s.heapMax());
+        root.addProperty("gcCount", s.gcCount());
+        root.addProperty("gcMillis", s.gcMillis());
+        root.addProperty("players", s.players());
+        root.addProperty("entities", s.entities());
+        root.addProperty("blockEntities", s.blockEntities());
+        root.addProperty("chunks", s.chunks());
+        root.addProperty("forced", s.forced());
+        root.addProperty("noCoords", noCoords);
+
+        root.add("kinds", kindsJson(s.kinds(), noCoords));
+        root.add("blockKinds", kindsJson(s.blockKinds(), noCoords));
+
+        JsonArray spots = new JsonArray();
+        for (ServerLoad.Spot p : s.spots()) {
+            if (noCoords) continue;
+            JsonObject o = new JsonObject();
+            o.addProperty("dim", p.dim());
+            o.addProperty("x", p.x());
+            o.addProperty("z", p.z());
+            o.addProperty("entities", p.entities());
+            o.addProperty("blockEntities", p.blockEntities());
+            o.addProperty("mostly", p.mostly());
+            o.addProperty("chunks", p.chunks());
+            spots.add(o);
+        }
+        root.add("spots", spots);
+
+        JsonArray dims = new JsonArray();
+        for (ServerLoad.Dim d : s.dims()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("dim", d.id());
+            o.addProperty("chunks", d.chunks());
+            o.addProperty("forced", d.forced());
+            o.addProperty("entities", d.entities());
+            o.addProperty("blockEntities", d.blockEntities());
+            dims.add(o);
+        }
+        root.add("dims", dims);
+
+        JsonArray near = new JsonArray();
+        for (ServerLoad.Near n : s.near()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("player", n.player());
+            o.addProperty("mask", maskOf(n.uuid()));
+            o.addProperty("dim", n.dim());
+            o.addProperty("entities", n.entities());
+            o.addProperty("blockEntities", n.blockEntities());
+            near.add(o);
+        }
+        root.add("near", near);
+        return root;
+    }
+
+    private static JsonArray kindsJson(List<ServerLoad.Kind> kinds, boolean noCoords) {
+        JsonArray arr = new JsonArray();
+        for (ServerLoad.Kind k : kinds) {
+            JsonObject o = new JsonObject();
+            o.addProperty("id", k.id());
+            o.addProperty("name", k.name());
+            o.addProperty("count", k.count());
+            if (!noCoords && !k.dim().isEmpty()) {
+                o.addProperty("dim", k.dim());
+                o.addProperty("x", k.x());
+                o.addProperty("y", k.y());
+                o.addProperty("z", k.z());
+            }
+            arr.add(o);
+        }
+        return arr;
+    }
+
     private void handleSceneContext(HttpExchange ex) throws IOException {
         try {
             if (!requireAuth(ex)) return;
