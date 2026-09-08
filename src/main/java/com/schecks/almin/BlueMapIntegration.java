@@ -462,18 +462,52 @@ final class BlueMapIntegration {
         (() => {
           'use strict';
           const SOURCE='almin-activity-v1';
+          // One number for the face, because the CSS that draws it and the
+          // anchor that places it on the world have to agree: half of it is
+          // the offset that puts the head over the player rather than up and
+          // to the right of them.
+          const HEAD_PX=42;
           let state=null, root=null, lastFocus=-1, changing=false;
 
           const esc=s=>String(s==null?'':s).replace(/[&<>\"']/g,c=>
             ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
+          /**
+           * A colour Almin wrote, as the channels BlueMap's markers take.
+           *
+           * <p>Read here rather than handed to the app's copy of Three, which
+           * is where this went wrong: player colours are written as
+           * {@code hsl(12 68% 66%)}, the space-separated spelling CSS has
+           * taken for years, and Three's parser wants commas. It does not
+           * throw on one it cannot read — it warns and leaves the colour
+           * white — so every player's path came out the same white line and
+           * the fallback below never ran. Doing the arithmetic here also
+           * settles the other half of it: Three converts to its own working
+           * colour space on the way in, and the numbers that came back out
+           * were not the ones Almin picked.
+           */
           const rgb=h=>{
-            try {
-              const c=new window.BlueMap.Three.Color(h||'#9aa3ae');
-              return {r:Math.round(c.r*255),g:Math.round(c.g*255),b:Math.round(c.b*255),a:.72};
-            } catch(e) {}
-            const m=/^#?([0-9a-f]{6})$/i.exec(h||'');
-            const n=m?parseInt(m[1],16):0x9aa3ae;
-            return {r:(n>>16)&255,g:(n>>8)&255,b:n&255,a:0.72};
+            const s=String(h||'').trim();
+            let m=/^#?([0-9a-f]{3})$/i.exec(s);
+            if(m){
+              const n=parseInt(m[1],16);
+              return {r:((n>>8)&15)*17,g:((n>>4)&15)*17,b:(n&15)*17,a:.72};
+            }
+            m=/^#?([0-9a-f]{6})$/i.exec(s);
+            if(m){
+              const n=parseInt(m[1],16);
+              return {r:(n>>16)&255,g:(n>>8)&255,b:n&255,a:.72};
+            }
+            // Both spellings: "hsl(12 68% 66%)" and "hsl(12, 68%, 66%)".
+            m=/^hsla?[(] *([-0-9.]+)(?:deg)? *[, ] *([0-9.]+)% *[, ] *([0-9.]+)%/i.exec(s);
+            if(m){
+              const hue=((+m[1]%360)+360)%360, sat=+m[2]/100, li=+m[3]/100;
+              const c=(1-Math.abs(2*li-1))*sat, x=c*(1-Math.abs((hue/60)%2-1));
+              const o=li-c/2, seg=Math.floor(hue/60)%6;
+              const t=[[c,x,0],[x,c,0],[0,c,x],[0,x,c],[x,0,c],[c,0,x]][seg];
+              return {r:Math.round((t[0]+o)*255),g:Math.round((t[1]+o)*255),
+                      b:Math.round((t[2]+o)*255),a:.72};
+            }
+            return {r:154,g:163,b:174,a:.72};
           };
           // What a mark says, as Almin's own tooltip rather than the
           // browser's. `title` waits about a second, cannot be styled, and is
@@ -487,13 +521,23 @@ final class BlueMapIntegration {
             'style="--almin-color:'+esc(m.color||'#9aa3ae')+';--almin-size:'+
             esc(m.size||1)+';opacity:'+(m.opacity==null?1:m.opacity)+'" '+says(m)+'>'+
             esc(m.text||'')+'</button>';
-          const headHtml=m=>'<button class="almin-head'+(m.gone?' gone':'')+'" data-almin-kind="player" '+
-            'data-almin-id="'+esc(m.id)+'" style="--almin-color:'+esc(m.color)+';--almin-size:'+
-            esc(m.size||1)+'" '+says(m)+'>'+
+          // A face the size of the thing being looked for, with the name
+          // written inside the head rather than beside it: a label off to one
+          // side is a second thing to trace back to a face, and with several
+          // people in one place the labels stop lining up with the heads they
+          // belong to. Gone, away, or through a portal is a caption on the
+          // corner over a greyed face — which the panel has already decided,
+          // because the flat map draws the same four states.
+          const headHtml=m=>'<button class="almin-head'+
+            (m.state&&m.state!=='here'?' dimmed '+esc(m.state):'')+
+            '" data-almin-kind="player" data-almin-id="'+esc(m.id)+
+            '" style="--almin-color:'+esc(m.color)+';--almin-size:'+esc(m.size||1)+'" '+
+            says(m)+'>'+
             (m.icon?'<img src="'+esc(m.icon)+'" alt="">':'<span class="almin-fallback">'+
               esc(m.fallback||'?')+'</span>')+
-            (m.gone?'<i class="almin-left-clock" aria-hidden="true"></i>':
-              '<span class="almin-name">'+esc(m.text)+'</span>')+'</button>';
+            '<span class="almin-name">'+esc(m.text||'')+'</span>'+
+            (m.cap?'<span class="almin-cap" style="--almin-cap:'+
+              esc(m.capColor||'#e6ebf2')+'">'+esc(m.cap)+'</span>':'')+'</button>';
 
           /**
            * Almin's tooltip, inside BlueMap's page.
@@ -554,9 +598,9 @@ final class BlueMapIntegration {
               fillColor:{...c,a:(m.fill==null?.34:m.fill)*opacity},
               minDistance:0,maxDistance:Number.MAX_VALUE};
           }
-          function htmlData(m,html){
+          function htmlData(m,html,anchor){
             return {type:'html',position:{x:m.x,y:m.y,z:m.z},label:m.title||'',listed:false,
-              anchor:{x:0,y:0},html:html,classes:['almin-html'],minDistance:0,
+              anchor:anchor||{x:0,y:0},html:html,classes:['almin-html'],minDistance:0,
               maxDistance:Number.MAX_VALUE};
           }
 
@@ -634,7 +678,11 @@ final class BlueMapIntegration {
             if(!root) return;
             const sets={}, actions={}, tracks={}, scenes={}, grid={};
             for(const m of state.markers||[]) actions[m.id]=htmlData(m,markerHtml(m));
-            for(const m of state.players||[]) tracks[m.id]=htmlData(m,headHtml(m));
+            // Centred on the point rather than hanging off it by its own
+            // top-left corner, which a small badge got away with and a face
+            // does not: it stood a head and a half to the side of the player.
+            for(const m of state.players||[])
+              tracks[m.id]=htmlData(m,headHtml(m),{x:HEAD_PX/2,y:HEAD_PX/2});
             for(const m of state.lines||[]) tracks[m.id]=lineData(m);
             for(const m of state.scenes||[]){
               scenes[m.id]=m.type==='box'?boxData(m):htmlData(m,markerHtml(m));
@@ -728,23 +776,36 @@ final class BlueMapIntegration {
               'body.almin-no-live-players [class*="marker-player"],'+
               'body.almin-no-live-players [class*="player-marker"]{display:none!important}'+
               '.almin-html{pointer-events:auto}.almin-mark,.almin-head{pointer-events:auto;'+
+              'box-sizing:border-box;'+
               'border:2px solid #0b0d11;color:#fff;background:var(--almin-color);box-shadow:0 2px 8px #000b;'+
               'cursor:pointer;font:700 11px system-ui;transform:scale(var(--almin-size));transform-origin:center}'+
               '.almin-mark{min-width:15px;height:15px;border-radius:50%;padding:0 3px}.almin-mark.cluster{'+
               'min-width:25px;height:21px;border-radius:7px}.almin-mark.scene{width:auto;height:23px;border-radius:5px;'+
               'padding:0 6px;background:#ffab33;color:#14100a}.almin-mark.gridlabel{width:auto;height:auto;'+
               'border:0;background:#10141bc9;color:#d9e0e8;border-radius:3px;padding:1px 3px;font-size:9px}'+
-              '.almin-head{display:flex;align-items:center;gap:4px;position:relative;'+
-              'border-radius:5px;padding:2px 5px}.almin-head img{width:20px;height:20px;image-rendering:pixelated}'+
-              '.almin-head.gone{width:28px;height:28px;padding:2px;justify-content:center;'+
-              'filter:grayscale(1);opacity:.82}.almin-head.gone img{width:22px;height:22px}'+
-              '.almin-fallback{min-width:20px;text-align:center}.almin-left-clock{position:absolute;'+
-              'right:-5px;bottom:-5px;width:12px;height:12px;border:2px solid #0b0d11;'+
-              'border-radius:50%;background:#e8edf3;box-shadow:0 1px 4px #000c}'+
-              '.almin-left-clock:before{content:"";position:absolute;left:5px;top:2px;width:1px;'+
-              'height:4px;background:#303844;transform-origin:bottom;transform:rotate(-8deg)}'+
-              '.almin-left-clock:after{content:"";position:absolute;left:5px;top:5px;width:3px;'+
-              'height:1px;background:#303844;transform:rotate(24deg);transform-origin:left}';
+              '.almin-head{position:relative;display:block;padding:2px;border-radius:7px;'+
+              'width:'+HEAD_PX+'px;height:'+HEAD_PX+'px;overflow:visible}'+
+              '.almin-head img,.almin-head .almin-fallback{display:block;width:100%;height:100%;'+
+              'border-radius:4px;image-rendering:pixelated;object-fit:cover}'+
+              '.almin-head .almin-fallback{background:#161b23;color:#e8eaed;text-align:center;'+
+              'font:700 15px/'+(HEAD_PX-8)+'px system-ui}'+
+              // Tight tracking and every pixel of the head's width: "Steve"
+              // coming out as "Ste..." on a face wide enough for it is the
+              // name band failing at the one job it has.
+              '.almin-name{position:absolute;left:1px;right:1px;bottom:1px;padding:0 1px;'+
+              'border-radius:0 0 4px 4px;background:rgba(8,10,14,.78);color:#fff;'+
+              'font:700 9px/13px system-ui;letter-spacing:-.2px;text-align:center;'+
+              'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'+
+              '.almin-cap{position:absolute;right:-7px;top:-9px;white-space:nowrap;'+
+              'background:#0b0e14;border:1px solid var(--almin-cap,#e6ebf2);'+
+              'color:var(--almin-cap,#e6ebf2);border-radius:9px;padding:0 5px;'+
+              'font:700 9px/14px system-ui}'+
+              // Greyed rather than hidden: where somebody is still matters, it
+              // is only that they are not doing anything there. The caption
+              // keeps its colour, because it is the part that says which.
+              '.almin-head.dimmed img,.almin-head.dimmed .almin-fallback{'+
+              'filter:grayscale(1);opacity:.6}'+
+              '.almin-head.dimmed .almin-name{opacity:.78}';
             document.head.appendChild(s);
           }
           ready();

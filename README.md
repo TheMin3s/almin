@@ -227,6 +227,37 @@ Mojang, and the lists draw a coloured initial instead. That fallback is also
 what you get for any player whose skin cannot be found, so a cracked server
 without the setting changed simply shows initials.
 
+### A face on the map, and what it is doing
+
+On both maps a player is drawn as their head at the size you actually look for
+one, with their name written across the bottom of it rather than on a label
+beside it — at six people crossing the same clearing, labels stop lining up
+with the faces they belong to. The frame around the head is that player's
+colour, so it survives a face that will not load or a server with
+`web-player-heads` off.
+
+Anything that is not simply "standing there" greys the face and puts a short
+caption on the corner, so it reads without hovering:
+
+| Caption | What it means |
+| --- | --- |
+| *(none)* | Here, and moving. |
+| `afk 10m` | Here, and has not moved for ten minutes — `activity-afk-seconds` sets the threshold. Nobody is sampled while they stand still, so this stays true when you scrub back rather than only describing right now. |
+| `→ Nether` | They went through a portal. A path is drawn one dimension at a time, so the last point in this one is where they *left from*, not where they are. |
+| `left 30m` | Off the server, half an hour ago. Where they were is still worth knowing; `bluemap-left-player-hours` says for how long. |
+
+Hovering any of them gives the whole sentence, with the clock time as well as
+the "ago" — three hours ago is a number you have to do arithmetic on before you
+can compare it to anything else you know.
+
+With the 3D map connected, Almin draws every one of these faces itself and asks
+BlueMap not to draw its own, which otherwise put a second copy of everybody at
+wherever they are standing this second — beside the one Almin drew where they
+actually were. That includes the people Almin never records: a trusted UUID or
+an operator is not in the activity log or in any path, so their face comes
+straight from the live player list. Turning **Players** off in the map's own
+options hands the job back to BlueMap.
+
 ### What each client is running
 
 Every row in the **Players** list carries a badge saying whether that client

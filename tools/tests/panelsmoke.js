@@ -1924,10 +1924,17 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
 
   check('a face goes grey once nobody is moving it', () => {
     sandbox.live = false;
-    sandbox.cursorAt = sandbox.allData.to; sandbox.cursorSet = true;
+    // Before Steve's portal, so this is about somebody standing still rather
+    // than about somebody who is in another dimension: 25 seconds after Alex's
+    // last sample and 5 after Steve's, against a 20-second threshold.
+    sandbox.cursorAt = sandbox.allData.to - 25000; sandbox.cursorSet = true;
     sandbox.paintAll();
-    return /class="thead afk"/.test(byId.get('t-map')._html || '')
-      ? true : 'everyone was drawn as active';
+    const grey = /class="thead afk"/.test(byId.get('t-map')._html || '');
+    // Put it back on the newest moment: what follows is about pictures of the
+    // ground and about the 3D map, and both read the cursor.
+    sandbox.cursorAt = sandbox.allData.to;
+    sandbox.paintAll();
+    return grey ? true : 'everyone was drawn as active';
   });
 
   check('...and is not grey while they are still moving', () => {
@@ -2743,6 +2750,13 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
   });
 
   // ---- somebody who has gone ----
+  // What one player's face was drawn as, read back out of the markup.
+  function headStateIn(html, who) {
+    const m = new RegExp('class="thead[^"]*"[^>]*data-who="' + who +
+      '"[^>]*data-state="([^"]*)"').exec(html);
+    return m ? m[1] : '';
+  }
+
   check('a face does not stand where somebody logged off', () => {
     const d = sandbox.allData;
     const alex = d.tracks.Alex;
@@ -2757,7 +2771,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
     d.actions.pop();
     sandbox.paintAll();
     if (!/class="thead gone"/.test(html)) return 'they were drawn as if still there';
-    return /left here/.test(html) ? true : 'nothing said they had gone';
+    return /left the server/.test(html) ? true : 'nothing said they had gone';
   });
 
   check('...and is drawn smaller than the people still here', () => {
@@ -2832,6 +2846,66 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
     d.online = wasOnline; sandbox.live = wasLive;
     sandbox.paintAll();
     return state === 'gone' ? true : 'an offline player was drawn as ' + state;
+  });
+
+  // ---- through a portal ----
+  // A path is drawn one dimension at a time, so the last point in this one is
+  // not the last thing the player did. Walk into the Nether and the Overworld
+  // map kept the spot you left from, with a clock on it that never stopped —
+  // read, every time, as somebody standing still at their keyboard.
+  check('somebody who walked into the Nether is not left standing in the Overworld',
+    () => {
+      const d = sandbox.allData;
+      const wasLive = sandbox.live, wasOnline = d.online;
+      // Steve's path ends on a nether point; say he is in the nether too, so
+      // the live list and the path agree the way they do on a real server.
+      d.online = d.online.map((p) => p.name === 'Steve'
+        ? { ...p, dim: 'the_nether' } : p);
+      sandbox.live = true;
+      sandbox.cursorAt = d.to; sandbox.cursorSet = true;
+      sandbox.paintAll();
+      const html = byId.get('t-map')._html || '';
+      d.online = wasOnline; sandbox.live = wasLive;
+      sandbox.paintAll();
+      const m = /class="thead moved"[^>]*data-who="Steve"[^>]*data-dim="([^"]*)"/.exec(html);
+      if (!m) return 'Steve was drawn as ' + (headStateIn(html, 'Steve') || 'nothing at all');
+      if (m[1] !== 'the_nether') return 'it did not say where they went: ' + m[1];
+      return /Nether/.test(html) ? true : 'the caption did not name the dimension';
+    });
+
+  check('...and the live list outranks the path about where they are', () => {
+    const d = sandbox.allData;
+    const wasLive = sandbox.live;
+    // The path's newest point is in the nether and the server says overworld,
+    // which is what a portal taken since the last sample looks like. The
+    // server is never the stale one of the two.
+    sandbox.live = true;
+    sandbox.cursorAt = d.to; sandbox.cursorSet = true;
+    sandbox.paintAll();
+    const html = byId.get('t-map')._html || '';
+    sandbox.live = wasLive;
+    sandbox.paintAll();
+    return headStateIn(html, 'Steve') === 'afk'
+      ? true : 'the path won: Steve was ' + headStateIn(html, 'Steve');
+  });
+
+  check('a face says what is true of it without being hovered', () => {
+    const d = sandbox.allData;
+    const alex = d.tracks.Alex;
+    const leftAt = alex[alex.length - 1].at + 1000;
+    d.actions.push({ at: leftAt, player: 'Alex', mask: '', action: 'leave',
+                     detail: '', dim: 'overworld', x: 30, y: 64, z: 70, count: 1 });
+    sandbox.live = false;
+    sandbox.cursorAt = d.to; sandbox.cursorSet = true;
+    sandbox.paintAll();
+    const html = byId.get('t-map')._html || '';
+    d.actions.pop();
+    sandbox.paintAll();
+    // The name is written into the head, and the clock beside it says how long
+    // ago they went — both readable without pointing at anything.
+    if (!/>Alex</.test(html)) return 'the head does not carry the name';
+    return /left \d+[smhd]/.test(html)
+      ? true : 'a departed head carries no leave clock';
   });
 
   check('...and somebody who is still on it is not', () => {
@@ -2918,7 +2992,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
     el.getAttribute = (k) => ({ 'data-who': 'Alex', 'data-state': 'gone',
                                 'data-at': String(at), 'data-still': '0' })[k];
     const said = sandbox.headStory(el);
-    if (!/Alex left here/.test(said)) return 'it did not say who or what: ' + said;
+    if (!/Alex left the server/.test(said)) return 'it did not say who or what: ' + said;
     if (!/ago/.test(said)) return 'it did not say how long ago: ' + said;
     // And the clock, because "three hours ago" is a number you have to do
     // arithmetic on before it can be compared to anything else.
@@ -4177,8 +4251,9 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
       leftPlayerHours:24,windowMs:4*3600000};
     const wasLive=sandbox.live; sandbox.live=true;
     const departed=sandbox.blueMapPayload(leftData,[],[],[]).players[0];
-    const leftHead=departed&&departed.gone&&departed.text==='Alex'&&
-      departed.title.includes('Alex left here')&&
+    const leftHead=departed&&departed.state==='gone'&&departed.text==='Alex'&&
+      /^left \d/.test(departed.cap||'')&&
+      departed.title.includes('Alex left the server')&&
       departed.title.includes('at '+sandbox.fmtWhen(leftAt))&&
       !departed.title.includes('afk');
     console.log((leftHead ? '  PASS  ' : '  FAIL  ') +
@@ -4193,17 +4268,23 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
 
     // BlueMap draws its own player heads at wherever everybody is standing
     // this second. Scrubbed back an hour that is a second copy of every
-    // player, in the wrong place, beside the one Almin drew where they were.
-    const liveWas=sandbox.live;
+    // player, in the wrong place, beside the one Almin drew where they were —
+    // and live it was two heads on the same person. Almin draws its own in
+    // every mode now, including for the people it does not record, so
+    // BlueMap's are asked for only when Almin is drawing none of its own.
+    const liveWas=sandbox.live, playersWas=sandbox.mapOpts.players;
     sandbox.live=true; sandbox.paintAll();
     const liveFlag=(sandbox.bluePendingState||{}).livePlayers;
     sandbox.live=false; sandbox.paintAll();
     const pastFlag=(sandbox.bluePendingState||{}).livePlayers;
+    sandbox.live=true; sandbox.mapOpts.players=false; sandbox.paintAll();
+    const noneOfOurs=(sandbox.bluePendingState||{}).livePlayers;
+    sandbox.mapOpts.players=playersWas;
     sandbox.live=liveWas; sandbox.paintAll();
-    const ownHeads=liveFlag===true && pastFlag===false;
+    const ownHeads=liveFlag===false && pastFlag===false && noneOfOurs===true;
     console.log((ownHeads ? '  PASS  ' : '  FAIL  ') +
-      "BlueMap's own live player heads are turned off once the timeline moves back");
-    if (!ownHeads) failures.push('the BlueMap payload does not say whether it is live');
+      "BlueMap's own player heads give way to Almin's, and come back when it draws none");
+    if (!ownHeads) failures.push('BlueMap and Almin both drew a head for the same player');
 
     // ---- what the flat map could do and the 3D one could not ----
     // Eleven of these were only ever wired to the SVG. The point of each

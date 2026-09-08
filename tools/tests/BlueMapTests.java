@@ -184,11 +184,37 @@ public class BlueMapTests {
             check("departed BlueMap heads have a configurable 24-hour default",
                 Integer.valueOf(24).equals(leftHours) && leftKey != null,
                 "default=" + leftHours + ", key=" + leftKey);
-            check("the BlueMap bridge draws a clock on a departed head",
-                integration.contains("almin-left-clock")
-                    && integration.contains("m.gone?' gone'")
-                    && integration.contains("bottom:-5px"),
-                "departed-head clock styling missing");
+            check("a face on the 3D map wears its name and its state",
+                integration.contains("almin-name")
+                    && integration.contains("almin-cap")
+                    && integration.contains("m.state&&m.state!=='here'?' dimmed '")
+                    && integration.contains("--almin-cap")
+                    && integration.contains(".almin-head.dimmed img"),
+                "the 3D face is missing its name band or its corner caption");
+            check("the 3D face is placed over the player rather than beside them",
+                integration.contains("const HEAD_PX=")
+                    && integration.contains("{x:HEAD_PX/2,y:HEAD_PX/2}")
+                    && integration.contains("function htmlData(m,html,anchor)"),
+                "the 3D face still hangs off the point by its own corner");
+            // Player colours are written hsl(12 68% 66%) — the space-separated
+            // spelling — and the app's own colour parser wants commas. It does
+            // not fail on one it cannot read, it goes white, so every path on
+            // the 3D map was the same white line with nothing to say it had
+            // gone wrong.
+            check("the 3D map reads the colours Almin actually writes",
+                integration.contains("hsla?[(]")
+                    && integration.contains("[0-9a-f]{6}")
+                    && !integration.contains("BlueMap.Three.Color"),
+                "the bridge still hands player colours to the app's parser");
+            check("Almin's faces and BlueMap's are never both drawn",
+                page.contains("livePlayers:live&&!mapOpts.players")
+                    && integration.contains("almin-no-live-players"),
+                "the 3D map can still show two heads for one player");
+            check("both maps decide gone, away and through-a-portal the same way",
+                page.contains("function headState")
+                    && page.contains("state:'moved'")
+                    && countOf(page, "headState(") >= 3,
+                "the two renderers still work out a player's state separately");
             // What the flat map could do and the 3D one could not. Each of
             // these was wired to the SVG alone; the pairs are named together
             // so the next one that drifts apart fails here.
@@ -217,7 +243,7 @@ public class BlueMapTests {
                     && page.contains("actionKeyHtml(used)"),
                 "the 3D legend still stands in a dot for the mark");
             check("the 3D map obeys the server's own player-heads switch",
-                page.contains("headsOn&&mapOpts.faces&&d.ids[who]"),
+                page.contains("(headsOn&&mapOpts.faces&&uuid)?'/api/head?uuid='"),
                 "the 3D map asks for faces a server has turned off");
             check("a group opened on the 3D map is recorded and can be walked",
                 page.contains("noteWatch('cluster'")
@@ -280,6 +306,13 @@ public class BlueMapTests {
     static String section(String text, String start, int length) {
         int at = text.indexOf(start);
         return at < 0 ? "" : text.substring(at, Math.min(text.length(), at + length));
+    }
+
+    /** How many times one renderer's code calls something. */
+    static int countOf(String text, String needle) {
+        int n = 0;
+        for (int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) n++;
+        return n;
     }
 
     static void fakeBlueMap(Path jar) throws Exception {

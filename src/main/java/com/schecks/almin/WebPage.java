@@ -181,8 +181,17 @@ final class WebPage {
           @media(max-width:1080px){.maplayout.side{grid-template-columns:minmax(0,1fr)}}
           .mapwrap > svg{cursor:grab;touch-action:none}
           .mapwrap > svg.grabbing{cursor:grabbing}
+          /* The strip is as wide as the map, and until it stopped taking
+             clicks it was an invisible sheet over everything underneath it —
+             which on the 3D map is BlueMap's own row of controls. Only the
+             chips are clickable now; the gaps between them are not there. */
           .onlinebar{position:absolute;left:12px;top:12px;right:64px;display:flex;gap:6px;
-                     flex-wrap:wrap;max-height:74px;overflow:hidden}
+                     flex-wrap:wrap;max-height:74px;overflow:hidden;pointer-events:none}
+          .onlinebar .who{pointer-events:auto}
+          /* Below BlueMap's own top bar rather than across it: the app has a
+             menu at one end and a row of buttons at the other, and a chip
+             sitting on either of them is a button nobody can press. */
+          .bluemapwrap .onlinebar{top:54px;right:112px}
           .sceneexpand{position:absolute;left:12px;bottom:12px;background:rgba(11,13,17,.9);
                        border:1px solid var(--brand);color:var(--ink);border-radius:8px;
                        padding:6px 10px;font:600 12px/1.2 inherit;cursor:pointer}
@@ -343,6 +352,10 @@ final class WebPage {
           .fullmap.side .mapbtns{right:358px}
           .fullmap.side .onlinebar{right:410px}
           .fullmap .onlinebar{top:14px;left:14px}
+          /* Fullscreen puts the strip back at the top of the window, which
+             over BlueMap is the top of BlueMap's own bar. Named more
+             specifically so the 3D map keeps its clearance. */
+          .fullmap .bluemapwrap .onlinebar{top:56px;left:14px}
           @media(max-width:900px){.fullmap .mapside{display:none}
                                   .fullmap .legend{right:14px}
                                   .fullmap.side .mapbtns{right:12px}
@@ -4076,6 +4089,7 @@ final class WebPage {
             if(!seen || a.at>=seen.at) away[a.player]={at:a.at, gone:a.action==='leave'};
           }
           const onlineNow=new Set(online.map(p=>String(p.name||'').toLowerCase()));
+          const whereNow=nowDims(online);
           const inDim=p=>p.dim===allDim;
           const mine=a=>!focusPlayer || a.player===focusPlayer;
           // Everything that had happened by the cursor, not just the last
@@ -4229,71 +4243,37 @@ final class WebPage {
               }
               if(!mapOpts.players) return titled(out);
               // Where they were at the cursor, drawn as their own face —
-              // square, because a Minecraft head is. The player's colour is
-              // the frame around it, and stays visible if the face never
-              // loads or is turned off.
+              // square, because a Minecraft head is. What is true of them
+              // besides being there is worked out in one place for both
+              // renderers, so the flat map and the 3D one cannot drift into
+              // disagreeing about who has gone.
               const last=upto[upto.length-1];
-              // Nobody is sampled while they stand still, so the gap between
-              // the cursor and their last sample is exactly how long they have
-              // not moved — which is what AFK means, and it stays true when
-              // you scrub back rather than only describing right now.
-              const stillFor=cursor-last.at;
-              const leftEvent=away[n]&&away[n].gone?away[n]:null;
-              const gone=hasLeft(n,away,onlineNow);
-              const leftAt=leftEvent?leftEvent.at:last.at;
-              const idle=!gone && afkSecs>0 && stillFor>afkSecs*1000;
-              const dim=gone||idle;
-              const hx=sx(last.x), hy=sz(last.z);
-              // Faces are sized on their own: they are what you look for on
-              // the map, and tying them to the marker size meant making them
-              // readable made everything else shout. Somebody who has left is
-              // drawn smaller as well as greyer — where they went is still
-              // worth knowing, and it is not worth as much as where the people
-              // still here are.
-              const R=13*mapOpts.head*unitAdjust*(gone?0.62:1);
-              const frame=dim?'#5b6472':c;
-              let head='<rect x="'+(hx-R).toFixed(1)+'" y="'+(hy-R).toFixed(1)+
-                '" width="'+(R*2).toFixed(1)+'" height="'+(R*2).toFixed(1)+
-                '" rx="'+(R*0.19).toFixed(1)+'" fill="'+frame+
-                '" stroke="#0a0c10" stroke-width="'+(2.5*unitAdjust).toFixed(1)+'"/>';
-              if(headsOn && mapOpts.faces && ids[n]){
-                const inset=R*0.23;
-                head+='<image href="/api/head?uuid='+encodeURIComponent(ids[n])+
-                  '&name='+encodeURIComponent(n)+'" x="'+(hx-R+inset).toFixed(1)+
-                  '" y="'+(hy-R+inset).toFixed(1)+'" width="'+((R-inset)*2).toFixed(1)+
-                  '" height="'+((R-inset)*2).toFixed(1)+
-                  '" style="image-rendering:pixelated"'+
-                  // Greyed rather than hidden: where they are still matters,
-                  // it is only that they are not doing anything there.
-                  (dim?' filter="url(#grey)" opacity="'+(gone?'.55':'.72')+'"':'')+'/>';
-              }
-              if(gone){
-                // A small tag on the corner, so a greyed face is read as
-                // "left here" rather than as a face that failed to load.
-                const tx=hx+R*0.72, ty=hy-R*0.72, tr=R*0.52;
-                head+='<circle cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="'+
-                  tr.toFixed(1)+'" fill="#0a0c10" stroke="#9aa3ae" stroke-width="'+
-                  (1.4*unitAdjust).toFixed(1)+'"/>'+
-                  // The same left-pointing arrow the leave mark uses.
-                  '<polygon points="'+
-                  [[tr*0.42,-tr*0.5],[-tr*0.42,0],[tr*0.42,tr*0.5]]
-                    .map(q=>(tx+q[0]).toFixed(1)+','+(ty+q[1]).toFixed(1)).join(' ')+
-                  '" fill="#9aa3ae"/>';
-              }
-              // The state and the moment travel with the mark, so the hover
-              // handler does not have to work them out again from data that
-              // will have been rebuilt by the time anyone points at it.
-              const when=gone?leftAt:last.at;
-              heads.push('<g class="thead'+(idle?' afk':'')+(gone?' gone':'')+
-                '" data-who="'+esc(n)+'" data-state="'+(gone?'gone':idle?'afk':'here')+
-                '" data-at="'+when+'" data-still="'+Math.round(stillFor/1000)+
-                '" style="cursor:pointer">'+head+'<title>'+esc(n)+
-                (gone?' — left here '+fmtAgo(leftAt)
-                     :(idle?' — not moving for '+humanSeconds(Math.round(stillFor/1000)):''))+
-                '</title></g>');
+              heads.push(headMark(n,sx(last.x),sz(last.z),c,
+                headState(n,tracks[n],last,cursor,away,onlineNow,afkSecs,
+                  live?whereNow[n]:''),ids[n]));
             }
             return titled(out);
           }).join('');
+
+          // Somebody the recorder does not follow — a trusted UUID, an
+          // operator — is on the server and is somewhere, and the map is the
+          // thing being asked where. Drawn from the live list, in this
+          // dimension, and only for people no path has already put on the map.
+          // Without this, stopping BlueMap from drawing its own copy of
+          // everybody would quietly lose them.
+          if(live && mapOpts.players){
+            const drawn=new Set(shownNames.filter(n=>
+              tracks[n].some(p=>p.dim===allDim && p.at<=cursor)));
+            for(const w of online){
+              const nm=w.name;
+              if(!nm || drawn.has(nm) || w.dim!==allDim) continue;
+              if(focusPlayer && nm!==focusPlayer) continue;
+              const since=w.stillSince||cursor;
+              heads.push(headMark(nm,sx(w.x),sz(w.z),playerColor(nm),
+                {state:w.afk?'afk':'here',at:since,
+                 still:Math.max(0,cursor-since),dim:''},w.uuid||ids[nm]));
+            }
+          }
 
           // Work represented by an isometric badge is one thing on the map by
           // default, instead of the badge sitting on top of every block-place
@@ -4569,7 +4549,24 @@ final class WebPage {
             saveMapOpts(); paintAll();
           };
           const close=$('o-close');
-          if(close) close.onclick=()=>{ optsOpen=false; paintAll(); };
+          if(close) close.onclick=()=>{ optsOpen=false; optsScroll=0; paintAll(); };
+          keepOptsScroll();
+        }
+
+        /**
+         * Where the options panel was scrolled to.
+         *
+         * <p>The panel is drawn with the map, and a live map redraws itself
+         * every few seconds. Rebuilt markup starts at the top, so the list
+         * jumped back under your hand roughly as often as you could reach the
+         * bottom of it — which is the whole of the difference between a panel
+         * you can use and one you cannot.
+         */
+        let optsScroll=0;
+        function keepOptsScroll(){
+          const el=$('t-opts'); if(!el) return;
+          if(optsScroll) el.scrollTop=optsScroll;
+          el.onscroll=()=>{ optsScroll=el.scrollTop; };
         }
 
         /**
@@ -4882,6 +4879,173 @@ final class WebPage {
           if(live) return !onlineNow.has(String(name).toLowerCase());
           const seen=away[name];
           return !!(seen&&seen.gone);
+        }
+
+        /** Name to the dimension they are standing in this second. */
+        function nowDims(online){
+          const m={};
+          for(const p of (online||[])) if(p&&p.name) m[p.name]=p.dim||'';
+          return m;
+        }
+
+        /**
+         * What one player's face is saying, at the cursor.
+         *
+         * <p>Worked out here rather than in each renderer, because the two of
+         * them answering it separately is how they came to answer it
+         * differently. There are four things a face can mean and only one of
+         * them is "standing there":
+         *
+         * <ul>
+         *   <li><b>gone</b> — off the server. Live that is the server's own
+         *       list; scrubbed back it is the last join or leave before the
+         *       cursor.</li>
+         *   <li><b>moved</b> — through a portal. A path is drawn one dimension
+         *       at a time, so the last point in <em>this</em> dimension is not
+         *       the last thing they did: walk into the Nether and the Overworld
+         *       map keeps the spot you left from, with a stopped clock on it
+         *       that used to be read as away-from-keyboard. Anything sampled
+         *       after that point is on the far side of a portal, and the first
+         *       one is when they went.</li>
+         *   <li><b>afk</b> — here, and not moving. Nobody is sampled while they
+         *       stand still, so the gap to their last sample is exactly how
+         *       long they have not moved, scrubbed back as well as now.</li>
+         *   <li><b>here</b> — everything else.</li>
+         * </ul>
+         */
+        function headState(who,track,here,cursor,away,onlineNow,afkSecs,nowDim){
+          const still=Math.max(0,cursor-here.at);
+          if(hasLeft(who,away,onlineNow)){
+            const seen=away[who]&&away[who].gone?away[who]:null;
+            return {state:'gone',at:seen?seen.at:here.at,still:still,dim:''};
+          }
+          // The first sample after their last one here, which is where the
+          // path picks up on the other side of the portal.
+          let went=null;
+          for(const p of (track||[])){
+            if(p.at>here.at && p.at<=cursor){ went=p; break; }
+          }
+          // Live, the server's own answer outranks the path. The path is at
+          // best one sampling interval old and the online list is current, so
+          // it is the online list that knows about a portal taken ten seconds
+          // ago — and equally that somebody is back, when the sampler has not
+          // caught up with the return trip either.
+          if(nowDim){
+            if(nowDim!==here.dim)
+              return {state:'moved',at:went?went.at:here.at,still:still,dim:nowDim};
+          } else if(went){
+            return {state:'moved',at:went.at,still:still,dim:went.dim};
+          }
+          if(afkSecs>0 && still>afkSecs*1000)
+            return {state:'afk',at:here.at,still:still,dim:''};
+          return {state:'here',at:here.at,still:still,dim:''};
+        }
+
+        /**
+         * The corner caption: the short form of whatever is not "here".
+         *
+         * <p>Small enough to sit on a face without covering it, and specific
+         * enough that the face does not have to be hovered to be understood —
+         * a grey head on its own reads as a picture that failed to load.
+         */
+        function headCaption(st){
+          if(st.state==='gone')
+            return {text:'left '+tightDur(Date.now()-st.at),colour:'#e6ebf2'};
+          if(st.state==='moved')
+            return {text:'\u2192 '+prettyDim(st.dim),colour:'#5cc0ff'};
+          if(st.state==='afk')
+            return {text:'afk '+tightDur(st.still),colour:'#ffab33'};
+          return null;
+        }
+
+        /** "40s", "12m", "2h", "3d" — a span with room for one on a face. */
+        function tightDur(ms){
+          const s=Math.max(0,Math.round(ms/1000));
+          if(s<60) return s+'s';
+          const m=Math.round(s/60); if(m<60) return m+'m';
+          const h=Math.round(m/60); if(h<48) return h+'h';
+          return Math.round(h/24)+'d';
+        }
+
+        /**
+         * One player's face on the flat map.
+         *
+         * <p>Big, with the name inside the head rather than beside it. A label
+         * off to one side is a second thing to trace back to a face, and with
+         * six people crossing the same clearing the labels stop lining up with
+         * the heads they belong to. The player's colour is the frame, so it
+         * survives the face failing to load or being switched off, and
+         * everything that is not simply "here" is a caption in the corner over
+         * a greyed face — read at the same glance as the person.
+         */
+        function headMark(name,hx,hy,colour,st,uuid){
+          const off=st.state!=='here';
+          const R=17*mapOpts.head*unitAdjust*(st.state==='gone'?0.76:1);
+          const face=R*0.85;
+          let head='<rect x="'+(hx-R).toFixed(1)+'" y="'+(hy-R).toFixed(1)+
+            '" width="'+(R*2).toFixed(1)+'" height="'+(R*2).toFixed(1)+
+            '" rx="'+(R*0.17).toFixed(1)+'" fill="'+(off?'#5b6472':colour)+
+            '" stroke="#0a0c10" stroke-width="'+(2.4*unitAdjust).toFixed(1)+'"/>';
+          if(headsOn && mapOpts.faces && uuid){
+            head+='<image href="/api/head?uuid='+encodeURIComponent(uuid)+
+              '&name='+encodeURIComponent(name)+'" x="'+(hx-face).toFixed(1)+
+              '" y="'+(hy-face).toFixed(1)+'" width="'+(face*2).toFixed(1)+
+              '" height="'+(face*2).toFixed(1)+'" style="image-rendering:pixelated"'+
+              // Greyed rather than hidden: where they are still matters, it is
+              // only that they are not doing anything there.
+              (off?' filter="url(#grey)" opacity="'+
+                (st.state==='gone'?'.55':'.72')+'"':'')+'/>';
+          } else {
+            head+='<text x="'+hx.toFixed(1)+'" y="'+(hy+R*0.16).toFixed(1)+
+              '" text-anchor="middle" font-size="'+(R*0.95).toFixed(1)+
+              '" font-weight="700" fill="#0a0c10" fill-opacity=".5">'+
+              esc(name.charAt(0).toUpperCase())+'</text>';
+          }
+          // The name across the foot of the head. Squeezed a little rather
+          // than cut, and cut rather than squeezed flat: a name pressed to
+          // half its width is a smear, and the first several letters of one
+          // are still the person.
+          const band=face*0.72, fs=band*0.72, room=face*2-fs*0.5;
+          const wide=t=>t.length*fs*0.56;
+          let label=name;
+          if(wide(label)>room*1.34){
+            const keep=Math.max(3,Math.floor(room*1.28/(fs*0.56))-1);
+            label=name.slice(0,keep)+'\u2026';
+          }
+          head+='<rect x="'+(hx-face).toFixed(1)+'" y="'+(hy+face-band).toFixed(1)+
+            '" width="'+(face*2).toFixed(1)+'" height="'+band.toFixed(1)+
+            '" fill="#080a0e" fill-opacity="'+(off?'.66':'.78')+'"/>'+
+            '<text x="'+hx.toFixed(1)+'" y="'+(hy+face-band*0.24).toFixed(1)+
+            '" text-anchor="middle" font-size="'+fs.toFixed(1)+
+            '" font-weight="700" fill="'+(off?'#c9d1db':'#ffffff')+'"'+
+            (wide(label)>room
+              ? ' textLength="'+room.toFixed(1)+'" lengthAdjust="spacingAndGlyphs"'
+              : '')+'>'+esc(label)+'</text>';
+          // Above the top-right corner rather than across the face: a caption
+          // long enough to name a dimension is wider than the head it belongs
+          // to, and centring it covered the person it was describing.
+          const cap=headCaption(st);
+          if(cap){
+            const ch=Math.max(8,R*0.5), cfs=ch*0.7;
+            const cw=cap.text.length*cfs*0.6+ch*0.8;
+            const right=hx+R+ch*0.2, top=hy-R-ch*0.72;
+            head+='<rect x="'+(right-cw).toFixed(1)+'" y="'+top.toFixed(1)+
+              '" width="'+cw.toFixed(1)+'" height="'+ch.toFixed(1)+
+              '" rx="'+(ch/2).toFixed(1)+'" fill="#0b0e14" fill-opacity=".95" stroke="'+
+              cap.colour+'" stroke-width="'+(1.2*unitAdjust).toFixed(1)+'"/>'+
+              '<text x="'+(right-cw/2).toFixed(1)+'" y="'+(top+ch*0.74).toFixed(1)+
+              '" text-anchor="middle" font-size="'+cfs.toFixed(1)+
+              '" font-weight="700" fill="'+cap.colour+'">'+esc(cap.text)+'</text>';
+          }
+          // The state and the moment travel with the mark, so the hover handler
+          // does not have to work them out again from data that will have been
+          // rebuilt by the time anyone points at it.
+          return '<g class="thead'+(st.state==='here'?'':' '+st.state)+
+            '" data-who="'+esc(name)+'" data-state="'+st.state+
+            '" data-at="'+st.at+'" data-still="'+Math.round(st.still/1000)+
+            '" data-dim="'+esc(st.dim||'')+'" style="cursor:pointer">'+head+'<title>'+
+            esc(headTale(name,st.state,st.at,Math.round(st.still/1000),st.dim))+
+            '</title></g>';
         }
 
         /** Who is on right now, greyed if they have stopped moving. */
@@ -5265,11 +5429,19 @@ final class WebPage {
           const note=$('t-rate');
           if(note) note.textContent='1s = '+humanSeconds(playSpeed);
         }
-        /** "45 seconds", "2 minutes", "1 hour" — for the speed readout. */
+        /**
+         * "45 seconds", "2 minutes", "1.5 hours" — for the speed readout, and
+         * for how long somebody has been standing still.
+         *
+         * <p>Rounded to a tenth. It was written for the speed buttons, whose
+         * numbers are all round, and the first thing that handed it a real
+         * measurement got "not moving for 10.333333333333334 minutes".
+         */
         function humanSeconds(n){
-          if(n<60) return n+(n===1?' second':' seconds');
-          if(n<3600){ const m=n/60; return m+(m===1?' minute':' minutes'); }
-          const h=n/3600; return h+(h===1?' hour':' hours');
+          const round=v=>Math.round(v*10)/10;
+          if(n<60){ const s=Math.round(n); return s+(s===1?' second':' seconds'); }
+          if(n<3600){ const m=round(n/60); return m+(m===1?' minute':' minutes'); }
+          const h=round(n/3600); return h+(h===1?' hour':' hours');
         }
 
         /**
@@ -5484,7 +5656,8 @@ final class WebPage {
          */
         function headStory(el){
           return headTale(el.getAttribute('data-who')||'',el.getAttribute('data-state'),
-            +el.getAttribute('data-at')||0,+el.getAttribute('data-still')||0);
+            +el.getAttribute('data-at')||0,+el.getAttribute('data-still')||0,
+            el.getAttribute('data-dim')||'');
         }
 
         /**
@@ -5495,11 +5668,16 @@ final class WebPage {
          * one hands it to the bridge; a shorter sentence in the second was not
          * a different design, it was the first one going stale.
          */
-        function headTale(who,state,at,still){
+        function headTale(who,state,at,still,dim){
           if(state==='gone'){
-            return who+' left here '+fmtAgo(at)+
+            return who+' left the server '+fmtAgo(at)+
               (fmtWhen(at)?', at '+fmtWhen(at):'')+
-              ' · click to show only them';
+              ' · this is where they were · click to show only them';
+          }
+          if(state==='moved'){
+            return who+' went to '+prettyDim(dim)+' '+fmtAgo(at)+
+              (fmtWhen(at)?', at '+fmtWhen(at):'')+
+              ' · this is where they left from · click to show only them';
           }
           if(state==='afk'){
             return who+' — not moving for '+humanSeconds(still)+
@@ -7686,7 +7864,8 @@ final class WebPage {
           if(opts) opts.innerHTML=optsOpen?mapOptionsHtml():'';
           const full=$('t-full'); if(full){ full.textContent=fullMap?'⤡':'⤢';
             full.onclick=()=>setFull(!fullMap); }
-          const cog=$('t-cog'); if(cog) cog.onclick=()=>{ optsOpen=!optsOpen; paintAll(); };
+          const cog=$('t-cog'); if(cog) cog.onclick=()=>{
+            optsOpen=!optsOpen; if(!optsOpen) optsScroll=0; paintAll(); };
           const zin=$('t-blue-in'); if(zin) zin.onclick=()=>zoomBlue(1/1.5);
           const zout=$('t-blue-out'); if(zout) zout.onclick=()=>zoomBlue(1.5);
           const home=$('t-blue-home'); if(home) home.onclick=()=>{
@@ -7769,8 +7948,25 @@ final class WebPage {
           }
 
           const onlineNow=new Set((d.online||[]).map(p=>String(p.name||'').toLowerCase()));
+          const whereNow=nowDims(d.online);
           const playerClock=live?Math.max(d.cursor,+d.now||0):d.cursor;
           const leftWindow=Math.max(0,+d.leftPlayerHours||0)*3600000;
+          const bluePlaced=new Set();
+          const bluePlayer=(who,pos,st,uuid)=>{
+            const cap=headCaption(st);
+            const id='p-'+who;
+            players.push({id:id,x:pos.x+.5,y:pos.y+2.2,z:pos.z+.5,
+              color:st.state==='here'?playerColor(who):'#6d7682',
+              size:mapOpts.head*(st.state==='gone'?.84:1),state:st.state,
+              fallback:who.charAt(0).toUpperCase(),text:who,
+              cap:cap?cap.text:'',capColor:cap?cap.colour:'',
+              icon:(headsOn&&mapOpts.faces&&uuid)?'/api/head?uuid='+
+                encodeURIComponent(uuid)+'&name='+encodeURIComponent(who):'',
+              title:headTale(who,st.state,st.at,Math.round(st.still/1000),st.dim)+
+                atTail(pos.x,pos.y,pos.z)});
+            bluePlaced.add(who);
+            return id;
+          };
           for(const who of d.shownNames){
             const full=(d.tracks[who]||[]).filter(p=>p.dim===allDim);
             const upto=full.filter(p=>p.at<=d.cursor);
@@ -7787,30 +7983,35 @@ final class WebPage {
               }
             }
             if(!upto.length || !mapOpts.players) continue;
-            const last=upto[upto.length-1], id='p-'+who;
-            // Live mode has a definitive answer: the server's online list.
-            // Timeline playback instead uses the latest join/leave row at
-            // that cursor. The old one-second comparison with a movement
-            // sample mislabeled real departures as AFK whenever the two
-            // recorders happened to run on different ticks.
-            const leftEvent=d.away[who]&&d.away[who].gone?d.away[who]:null;
-            const gone=hasLeft(who,d.away,onlineNow);
-            const leftAt=leftEvent?leftEvent.at:last.at;
-            if(gone&&(!leftWindow||playerClock-leftAt>=leftWindow)) continue;
-            const stillFor=d.cursor-last.at;
-            const idle=!gone&&d.afkSecs>0&&stillFor>d.afkSecs*1000;
-            // headsOn is the server's own web-player-heads switch. Without it
-            // the 3D map asked for a face per player on a server that had
-            // turned them off, and took a 404 for each one.
-            const icon=(headsOn&&mapOpts.faces&&d.ids[who])?'/api/head?uuid='+
-              encodeURIComponent(d.ids[who])+'&name='+encodeURIComponent(who):'';
-            players.push({id:id,x:last.x+.5,y:last.y+2.2,z:last.z+.5,
-              color:(gone||idle)?'#6d7682':playerColor(who),
-              size:mapOpts.head*(gone?.78:1),gone:gone,fallback:who.charAt(0),
-              text:who+(idle?' · afk':''),icon:icon,
-              title:headTale(who,gone?'gone':idle?'afk':'here',gone?leftAt:last.at,
-                Math.round(stillFor/1000))+atTail(last.x,last.y,last.z)});
-            blueRefs.set(id,{type:'player',data:{name:who,point:last}});
+            const last=upto[upto.length-1];
+            // Gone, through a portal, standing still or simply here — decided
+            // once for both maps, so the 3D one cannot come to a different
+            // answer from the flat one about the same person at the same
+            // moment. headsOn is the server's own web-player-heads switch:
+            // without it the 3D map asked for a face per player on a server
+            // that had turned them off, and took a 404 for each one.
+            const st=headState(who,d.tracks[who]||[],last,d.cursor,d.away,onlineNow,
+              d.afkSecs,live?whereNow[who]:'');
+            if(st.state==='gone'&&(!leftWindow||playerClock-st.at>=leftWindow)) continue;
+            blueRefs.set(bluePlayer(who,last,st,d.ids[who]),
+              {type:'player',data:{name:who,point:last}});
+          }
+
+          // Almin now draws every head on this map, so the people it does not
+          // record — a trusted UUID, an operator — have to be among them.
+          // BlueMap drew those; it is no longer being allowed to, because
+          // drawing them at where they are standing this second put a second
+          // copy of everybody on a map that had been scrubbed back an hour.
+          if(live && mapOpts.players){
+            for(const w of (d.online||[])){
+              const nm=w.name;
+              if(!nm || bluePlaced.has(nm) || w.dim!==allDim) continue;
+              if(focusPlayer && nm!==focusPlayer) continue;
+              const since=w.stillSince||d.cursor;
+              const id=bluePlayer(nm,w,{state:w.afk?'afk':'here',at:since,
+                still:Math.max(0,d.cursor-since),dim:''},w.uuid||d.ids[nm]);
+              blueRefs.set(id,{type:'player',data:{name:nm,point:w}});
+            }
           }
 
           let episodeNo=0;
@@ -7922,8 +8123,13 @@ final class WebPage {
             // BlueMap keeps its own heads on the map, at wherever everybody is
             // standing this second. Scrubbed back to last night that is a
             // second copy of every player in the wrong place, next to the one
-            // Almin drew where they actually were.
-            grid:grid,darkness:mapOpts.dim*.55,focus:blueFocus,livePlayers:live,
+            // Almin drew where they actually were — and live it is two heads
+            // on the same person, which is what this looked like in practice.
+            // Almin's own are drawn in every mode now, including for the
+            // people it does not record, so BlueMap's are asked for only when
+            // Almin is drawing none of its own.
+            grid:grid,darkness:mapOpts.dim*.55,focus:blueFocus,
+            livePlayers:live&&!mapOpts.players,
             // BlueMap has its own position readout, which Almin does not draw
             // and cannot remove; the bridge hides what it can find of it.
             hideCoords:noCoords(),
