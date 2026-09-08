@@ -400,6 +400,24 @@ const responses = {
         bytes: 900000, modified: Date.now(), loaded: false, enabled: true, ours: false },
       { file: 'ledger-1.3.6.jar.disabled', id: 'ledger', name: 'Ledger', version: '1.3.6',
         bytes: 800000, modified: Date.now(), loaded: false, enabled: false, ours: false }] },
+  // Asked for one row at a time, so the fixture is one row's worth. Both
+  // verbs of the config route land on the same key: a GET wants the content
+  // and a POST wants the acknowledgement, and one object can be both.
+  '/api/servermods/mod': { file: 'carpet-1.4.163.jar', id: 'carpet', name: 'Carpet',
+      version: '1.4.163', ours: false,
+      description: 'Take full control over what your server is doing.',
+      environment: '*', license: 'MIT',
+      homepage: 'https://github.com/gnembon/fabric-carpet',
+      sources: '', issues: 'javascript:alert(1)', authors: ['gnembon'],
+      needs: ['fabric-api'], maxBytes: 2097152,
+      configs: [
+        { path: 'carpet/carpet.conf', name: 'carpet.conf', bytes: 412,
+          modified: Date.now(), editable: true },
+        { path: 'carpet-huge.json', name: 'carpet-huge.json', bytes: 9000000,
+          modified: Date.now(), editable: false }] },
+  '/api/servermods/config': { file: 'carpet-1.4.163.jar', path: 'carpet/carpet.conf',
+      content: 'commandSpawn true\n', ok: true,
+      message: 'Saved. It takes effect at the next start.' },
   '/api/client': { enabled: true, known: true, name: 'Steve', at: Date.now(),
       historyDays: 7, minecraft: '26.2', loader: 'fabric 0.19.4', launcher: 'minecraft 3.1',
       os: 'Mac OS X', osVersion: '15.6', arch: 'aarch64', java: '25', cores: 10,
@@ -3665,6 +3683,139 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     if (/Turn off/.test(text)) return 'it offered to turn off the panel it is drawn by';
     return /updated from the panel/.test(text) ? true : 'it says nothing about why';
   });
+
+  // ---- the drawer under a server mod ----
+  // Configuring a mod through the file browser means knowing it calls itself
+  // "carpet" and finding the right one of ninety files. The list already knows
+  // which mod is which, so these check that it says so — and that saying so
+  // costs nothing until somebody asks.
+  {
+    const carpet = { file: 'carpet-1.4.163.jar', id: 'carpet', name: 'Carpet',
+                     version: '1.4.163', loaded: true, enabled: true, ours: false,
+                     bytes: 900000 };
+    calls.length = 0;
+    const wrap = sandbox.serverModRow(carpet);
+    // The wait is the check: a fetch this row started would only reach the
+    // list of calls a microtask later, so asking straight away asks nothing.
+    await new Promise((r) => setTimeout(r, 20));
+    check('listing the mods does not open any of them', () =>
+      calls.some((c) => /servermods\/mod/.test(c))
+        ? 'drawing the list read a jar nobody had opened' : true);
+
+    sandbox.toggleServerMod(wrap, carpet);
+    await new Promise((r) => setTimeout(r, 20));
+
+    check('opening a mod reads that one jar, and only when opened', () => {
+      const reads = calls.filter((c) => c === 'GET /api/servermods/mod');
+      return reads.length === 1 ? true : reads.length + ' reads';
+    });
+    check('the drawer says what the mod is, who wrote it and what it needs', () => {
+      const text = deepText(wrap);
+      if (!/full control over what your server is doing/.test(text))
+        return 'the description is not shown';
+      if (!/gnembon/.test(text)) return 'the author is not shown';
+      return /Needs fabric-api/.test(text) ? true : 'its dependencies are not shown';
+    });
+    check('its settings files are listed by name and by where they are', () => {
+      const text = deepText(wrap);
+      return /carpet\.conf/.test(text) && /config\/carpet\/carpet\.conf/.test(text)
+        ? true : 'the settings file is not offered';
+    });
+    check('a file too big for the editor is shown as unopenable, not hidden', () => {
+      const html = (wrap.__det && wrap.__det._html) || '' ;
+      const rows = (wrap.__det && wrap.__det.children) || [];
+      // The rows are appended after the text, so walk them rather than the
+      // scraped html: what matters is that the big one is there and disabled.
+      const all = [];
+      const walk = (n) => { (n.children || []).forEach((c) => { all.push(c); walk(c); }); };
+      walk(wrap.__det);
+      const big = all.find((n) => /carpet-huge/.test(n._html || ''));
+      if (!big) return 'the big file was left out of the list altogether';
+      return big.disabled === true ? true : 'it is offered as editable';
+    });
+
+    sandbox.toggleServerMod(wrap, carpet);
+    check('opening it again closes it', () =>
+      wrap.__det ? 'the drawer stayed open' : true);
+  }
+
+  check('a link out of a jar cannot be a script', () => {
+    // Every field here was written by whoever built the jar. An href is a
+    // place a page will run what it is given, so only the two schemes a link
+    // has any business being get one.
+    const html = sandbox.modDetailHtml(responses['/api/servermods/mod']);
+    if (/javascript:/.test(html)) return 'a javascript: url was made a link';
+    return /github\.com\/gnembon/.test(html) ? true : 'the real link was dropped too';
+  });
+
+  check('a name with a quotation mark in it cannot end an attribute', () => {
+    const row = sandbox.modConfigRow({ file: 'x.jar' },
+      { path: 'a"onmouseover=alert(1).json', name: 'a"b.json', bytes: 1,
+        editable: false });
+    const html = row._html || '';
+    return /&quot;/.test(html) && !/"onmouseover/.test(html)
+      ? true : 'it went into the markup as written';
+  });
+
+  check('the drawer styles nothing but itself', () => {
+    // The first name for these rows was .cfgrow, which the Settings menu had
+    // already taken. Nothing errored: the two rules simply merged, and one
+    // menu quietly restyled the other. So the classes are read off the
+    // elements the panel actually builds, and each has to be styled only from
+    // the mods section — renaming one back into somebody else's fails here.
+    const mods = css.indexOf('/* ---- mods ---- */');
+    if (mods < 0) return 'the stylesheet no longer says where the mods rules start';
+    const row = sandbox.modConfigRow({ file: 'x.jar' },
+      { path: 'a.json', name: 'a.json', bytes: 1, editable: true });
+    const wrap = sandbox.serverModRow({ file: 'x.jar', id: 'x', name: 'X', version: '1',
+                                        loaded: true, enabled: true, ours: false });
+    const used = [row.className, wrap.className, 'moddet']
+      .join(' ').split(/\s+/).filter(Boolean);
+    for (const cls of used) {
+      const re = new RegExp('\\.' + cls + '[\\s{,:>.]', 'g');
+      let m;
+      while ((m = re.exec(css))) {
+        if (m.index < mods) return '.' + cls + ' is also styled by another menu';
+      }
+      if (!new RegExp('\\.' + cls + '[\\s{,:>.]').test(css))
+        return '.' + cls + ' is not styled at all';
+    }
+    return true;
+  });
+
+  check("Almin's own settings are not offered in the mods menu", () => {
+    const html = sandbox.modDetailHtml({ ours: true, configs: [] });
+    return /Settings menu/.test(html)
+      ? true : 'it says nothing about where the panel’s own settings are';
+  });
+
+  check('a settings file is not saved before it has loaded', () => {
+    sandbox.editModConfig({ file: 'carpet-1.4.163.jar', name: 'Carpet' },
+      { path: 'carpet/carpet.conf', name: 'carpet.conf', bytes: 412, editable: true });
+    const save = byId.get('mcsave');
+    // An empty box saved over a file that had simply not arrived yet is a
+    // configuration deleted by a slow request.
+    return save && save.disabled === true ? true : 'Save was live over an empty box';
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  check('...and is once it has', () => {
+    const save = byId.get('mcsave'), box = byId.get('mcbody');
+    if (!save || save.disabled) return 'Save never came back';
+    return box && /commandSpawn/.test(box.value || '')
+      ? true : 'the file did not reach the box';
+  });
+  calls.length = 0;
+  await sandbox.saveModConfig({ file: 'carpet-1.4.163.jar', name: 'Carpet' },
+    { path: 'carpet/carpet.conf', name: 'carpet.conf' });
+  check('saving goes through the mods route, not the file browser', () => {
+    if (calls.some((c) => /\/api\/file/.test(c)))
+      return 'it wrote through the Files menu instead';
+    if (!calls.includes('POST /api/servermods/config')) return 'nothing was posted';
+    const msg = byId.get('mcmsg');
+    return msg && /next start/.test(msg.textContent || '')
+      ? true : 'it does not say when the change takes effect';
+  });
+  sandbox.closeModal();
 
   check('installing on this server is a different act from offering one', () => {
     const here = sandbox.addServerModMenu().filter((i) => i.label).map((i) => i.label);

@@ -7,6 +7,8 @@ import com.google.gson.JsonParser;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -37,6 +39,28 @@ public final class ModJars {
         }
         public boolean ok() { return !modId.isEmpty(); }
         public static Meta none() { return new Meta("", "", "", ""); }
+    }
+
+    /**
+     * The rest of what a jar says about itself.
+     *
+     * <p>{@link Meta} is the part detection needs — the identity, and nothing
+     * else. This is the part a person reads: what the mod is for, who wrote
+     * it, where its page is, what it needs, and whether the server even has to
+     * load it. Kept apart because one is asked of every jar on every join and
+     * the other is asked once, when somebody opens a row.
+     *
+     * @param environment {@code "*"}, {@code "client"} or {@code "server"} as
+     *                    the jar declares it — a client-only mod sitting in a
+     *                    server's folder is a thing worth being told
+     */
+    public record Details(String description, List<String> authors, String environment,
+                          String license, String homepage, String sources, String issues,
+                          List<String> needs) {
+
+        public static Details none() {
+            return new Details("", List.of(), "", "", "", "", "", List.of());
+        }
     }
 
     /** {@code fabric.mod.json} is small; anything this size is not one. */
@@ -115,6 +139,79 @@ public final class ModJars {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * Everything else {@code fabric.mod.json} says, for one jar.
+     *
+     * <p>Every field is optional in the schema and plenty of jars leave most
+     * of them out, so nothing here fails — a jar that says nothing comes back
+     * saying nothing.
+     */
+    public static Details details(Path jar) {
+        if (jar == null) return Details.none();
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            ZipEntry entry = zip.getEntry("fabric.mod.json");
+            if (entry == null || entry.getSize() > MAX_MANIFEST) return Details.none();
+            try (InputStream in = zip.getInputStream(entry)) {
+                byte[] bytes = in.readNBytes(MAX_MANIFEST);
+                JsonObject o = JsonParser.parseString(
+                    new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
+                JsonObject contact = o.has("contact") && o.get("contact").isJsonObject()
+                    ? o.getAsJsonObject("contact") : new JsonObject();
+                List<String> needs = new ArrayList<>();
+                if (o.has("depends") && o.get("depends").isJsonObject()) {
+                    for (String k : o.getAsJsonObject("depends").keySet()) {
+                        // Everything depends on these three; saying so is noise.
+                        if (k.equals("fabricloader") || k.equals("minecraft")
+                            || k.equals("java")) continue;
+                        needs.add(k);
+                        if (needs.size() >= 16) break;
+                    }
+                }
+                return new Details(cut(str(o, "description"), 600),
+                    strings(o, "authors"),
+                    cut(str(o, "environment"), 16), cut(str(o, "license"), 120),
+                    cut(str(contact, "homepage"), 300), cut(str(contact, "sources"), 300),
+                    cut(str(contact, "issues"), 300), needs);
+            }
+        } catch (Exception e) {
+            return Details.none();
+        }
+    }
+
+    /**
+     * Manifest fields are whatever the jar's author typed. Every one of these
+     * ends up on a page, so each has a length past which it is not telling
+     * anybody anything they wanted to know.
+     */
+    private static String cut(String s, int max) {
+        String t = s.strip();
+        return t.length() <= max ? t : t.substring(0, max).strip() + "…";
+    }
+
+    /**
+     * A list of names, however the jar chose to write them.
+     *
+     * <p>The schema allows a plain string or an object with a {@code name} in
+     * it, and real jars use both — sometimes in the same array.
+     */
+    private static List<String> strings(JsonObject o, String k) {
+        List<String> out = new ArrayList<>();
+        try {
+            if (!o.has(k) || !o.get(k).isJsonArray()) return out;
+            for (var e : o.getAsJsonArray(k)) {
+                if (e.isJsonPrimitive()) out.add(cut(e.getAsString(), 60));
+                else if (e.isJsonObject()) {
+                    String name = str(e.getAsJsonObject(), "name");
+                    if (!name.isEmpty()) out.add(cut(name, 60));
+                }
+                if (out.size() >= 12) break;
+            }
+        } catch (RuntimeException ignored) {
+            // A malformed list is a list nothing is known about.
+        }
+        return out;
     }
 
     private static String str(JsonObject o, String k) {

@@ -1348,10 +1348,90 @@ shown the history either — the same rule the period summary keeps.
 Clearing the activity log clears the history written from it. A history of a
 server that no longer exists is a fiction.
 
+## The mods this server runs
+
+The **Mods** tab holds two lists that are easy to confuse and are not the same
+thing at all: what this server runs, and what it suggests to the people who
+join it. The first is the jars in `mods/`, loaded by this server itself. The
+second is covered further down.
+
+Each row says which of three states a jar is in, because a list that only says
+"installed" cannot answer *why is it not working*:
+
+| Chip | What it means |
+|---|---|
+| **Loaded** | running in this server right now |
+| **Waiting for a restart** | the jar is in `mods/`, but this server started before it arrived |
+| **Off** | renamed to `.jar.disabled`; it will not load |
+
+**Turn off** is the reversible one, and it is what to reach for when the
+question is *is this mod the problem*. Deleting the jar answers the same
+question permanently. Neither touches the running server: nothing in `mods/` is
+hot-loaded, so adding, removing or switching one off takes effect at the next
+start. **+ Install a mod** searches Modrinth or takes an upload; Almin's own jar
+is in the list but cannot be switched off from the panel it is drawing.
+
+### Configuring a mod from the mods list
+
+Every row opens. The **▾** button — or clicking the row — asks the server about
+that one jar and shows what the mod says about itself: its description, who
+wrote it, what it is licensed under, what it depends on, and links to its home
+page, source and bug tracker. Underneath that are its **settings files**, each
+of which opens in an editor and saves back.
+
+That is the whole point of the redesign. Configuring a Fabric mod used to mean
+knowing that FTB Chunks calls itself `ftbchunks`, opening the file browser,
+finding the right one of the ninety files in `config/`, and editing it. Every
+step of that is knowledge the panel already had and the person did not.
+
+**It is asked for one row at a time.** Reading a manifest means opening a zip
+and listing a mod's settings means walking `config/`, and doing both for every
+jar on a server with a hundred of them — on every refresh, to draw something
+nobody has opened — is work nobody asked for. Nothing is read until a row is.
+
+**How a file is matched to a mod.** There is no standard: Fabric has nothing to
+say about where a mod keeps its settings, so mods pick their own. In practice
+they pick one of a few shapes, and all of them are matched:
+
+| Shape | Example |
+|---|---|
+| a folder named after the mod | `config/carpet/carpet.conf` |
+| a file named after it | `config/sodium.json` |
+| the same with a suffix | `config/sodium-mixins.properties` |
+| any of those against the jar's own name | `carpet-extra-1.4.163.jar` → `config/carpet-extra.conf` |
+
+It will miss some. A mod that writes `config/mycoolmod-v2/` under a name
+nothing can be derived from is not found, and a mod that has never been started
+has not written its file yet. That is fine — the file browser still reaches all
+of it. What it must not do is claim a file belongs to a mod when it does not,
+because the panel offers to edit what it finds, so "sodium" is not allowed to
+claim `sodiumextra.json`: the character after a matched name has to be a
+separator.
+
+**What it will not reach.** Only `config/`, only text-shaped settings files
+(`.json`, `.toml`, `.properties`, `.conf`, `.yaml` and a handful of others),
+only files under 2 MB, and only paths Almin derived itself — a request names a
+file from the list it was given, and that name is looked for in the list again
+rather than resolved, so a path that was never offered cannot be read whatever
+it claims to be.
+
+**`config/almin/` is never offered here**, whatever name reaches it. It holds
+the panel's own password, its accounts and its AI key, and the Mods menu is a
+different door from the Settings menu: an account allowed to configure mods is
+not thereby allowed to read the settings that decide who may log in. Almin's own
+row says so instead of listing them.
+
+Both routes behind this sit under the **Mods** menu permission, and writing a
+file needs a secure session, not merely a logged-in one. A saved file takes
+effect the next time the server starts — the editor says so, because a
+configuration that appears to do nothing is worse than one that plainly waits.
+
 ## Advertising mods to players
 
 A server can suggest mods to joining players. Manage the list with
-`/almin mods` in game, or the web panel's **Mods** tab.
+`/almin mods` in game, or the second list in the web panel's **Mods** tab.
+These run on the player's computer, not this one, and nothing is installed
+without that player agreeing to it.
 
 In the panel it is **one list**, whichever way a mod got onto it. Each row has
 the mod's own icon, its name and version, whether the jar is served by this

@@ -341,6 +341,10 @@ public final class WebUi {
         http.createContext("/api/servermods", ui.guard("/api/servermods", ui::handleServerMods));
         http.createContext("/api/servermods/upload",
             ui.guard("/api/servermods/upload", ui::handleServerModUpload));
+        http.createContext("/api/servermods/mod",
+            ui.guard("/api/servermods/mod", ui::handleServerModDetail));
+        http.createContext("/api/servermods/config",
+            ui.guard("/api/servermods/config", ui::handleServerModConfig));
         http.createContext("/api/servermods/change",
             ui.guard("/api/servermods/change", ui::handleServerModChange));
         http.createContext("/api/properties", ui.guard("/api/properties", ui::handleProperties));
@@ -498,6 +502,8 @@ public final class WebUi {
         java.util.Map.entry("/api/servermods", "mods"),
         java.util.Map.entry("/api/servermods/upload", "mods"),
         java.util.Map.entry("/api/servermods/change", "mods"),
+        java.util.Map.entry("/api/servermods/mod", "mods"),
+        java.util.Map.entry("/api/servermods/config", "mods"),
         java.util.Map.entry("/api/players", "players"),
         java.util.Map.entry("/api/players/action", "players"),
         java.util.Map.entry("/api/mask", "players"),
@@ -1561,6 +1567,144 @@ public final class WebUi {
     }
 
     /** Turns a server mod on or off, or deletes it. */
+    /**
+     * One installed mod, opened up: what it says it is, and its settings.
+     *
+     * <p>Asked for a row at a time rather than folded into the list. Reading
+     * the manifest and scanning {@code config/} for every jar on a server with
+     * a hundred of them would be a hundred zip opens and a hundred directory
+     * walks, on every refresh, to draw something nobody has opened.
+     */
+    private void handleServerModDetail(HttpExchange ex) throws IOException {
+        try {
+            if (!requireAuth(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            String file = queryParam(ex, "file");
+            java.nio.file.Path jar = onServer(() -> ServerMods.resolve(server, file), null);
+            if (jar == null || !java.nio.file.Files.isRegularFile(jar)) {
+                json(ex, 404, err("There is no such mod in mods/."));
+                return;
+            }
+            ModJars.Meta meta = ModJars.read(jar);
+            ModJars.Details d = ModJars.details(jar);
+            List<ModConfigs.Entry> configs = onServer(
+                () -> ModConfigs.of(server, meta.modId(), file), List.of());
+
+            JsonObject o = new JsonObject();
+            o.addProperty("file", file);
+            o.addProperty("id", meta.modId());
+            o.addProperty("name", meta.ok() ? meta.name() : file);
+            o.addProperty("version", meta.version());
+            o.addProperty("ours", Almin.MOD_ID.equals(meta.modId()));
+            o.addProperty("description", d.description());
+            o.addProperty("environment", d.environment());
+            o.addProperty("license", d.license());
+            o.addProperty("homepage", d.homepage());
+            o.addProperty("sources", d.sources());
+            o.addProperty("issues", d.issues());
+            JsonArray authors = new JsonArray();
+            for (String a : d.authors()) authors.add(a);
+            o.add("authors", authors);
+            JsonArray needs = new JsonArray();
+            for (String n : d.needs()) needs.add(n);
+            o.add("needs", needs);
+            JsonArray files = new JsonArray();
+            for (ModConfigs.Entry e : configs) {
+                JsonObject j = new JsonObject();
+                j.addProperty("path", e.path());
+                j.addProperty("name", e.name());
+                j.addProperty("bytes", e.bytes());
+                j.addProperty("modified", e.modified());
+                j.addProperty("editable", e.editable());
+                files.add(j);
+            }
+            o.add("configs", files);
+            o.addProperty("maxBytes", ModConfigs.MAX_BYTES);
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Reading and writing one mod's settings file.
+     *
+     * <p>Deliberately not {@code /api/file} with a path: that route is behind
+     * the Files menu, and the point of this one is that configuring a mod is
+     * something the Mods menu can do on its own. What makes that safe is that
+     * the path is never resolved from what the request said — it is looked for
+     * in the list {@link ModConfigs} produced for this mod, so a path that was
+     * not offered cannot be reached whatever it claims to be.
+     */
+    private void handleServerModConfig(HttpExchange ex) throws IOException {
+        try {
+            boolean write = "POST".equals(ex.getRequestMethod());
+            if (write ? !requireAuthSecure(ex) : !requireAuth(ex)) return;
+            if (!requireServer(ex)) return;
+            if (!write && !"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            JsonObject body = write ? readBody(ex) : new JsonObject();
+            String file = write && body.has("file")
+                ? body.get("file").getAsString() : queryParam(ex, "file");
+            String rel = write && body.has("path")
+                ? body.get("path").getAsString() : queryParam(ex, "path");
+
+            java.nio.file.Path jar = onServer(() -> ServerMods.resolve(server, file), null);
+            if (jar == null || !java.nio.file.Files.isRegularFile(jar)) {
+                json(ex, 404, err("There is no such mod in mods/."));
+                return;
+            }
+            String modId = ModJars.read(jar).modId();
+            java.nio.file.Path target = onServer(
+                () -> ModConfigs.file(server, modId, file, rel), null);
+            if (target == null) {
+                json(ex, 404, err("That is not one of this mod's settings files."));
+                return;
+            }
+            if (java.nio.file.Files.size(target) > ModConfigs.MAX_BYTES) {
+                json(ex, 413, err("That file is too big to edit here. Use the file browser."));
+                return;
+            }
+
+            if (!write) {
+                JsonObject o = new JsonObject();
+                o.addProperty("file", file);
+                o.addProperty("path", rel);
+                o.addProperty("content", java.nio.file.Files.readString(target,
+                    java.nio.charset.StandardCharsets.UTF_8));
+                ex.getResponseHeaders().set("Cache-Control", "no-store");
+                json(ex, 200, o.toString());
+                return;
+            }
+
+            String content = body.has("content") ? body.get("content").getAsString() : "";
+            if (content.length() > ModConfigs.MAX_BYTES) {
+                json(ex, 413, err("That is more than this editor will save."));
+                return;
+            }
+            java.nio.file.Files.writeString(target, content,
+                java.nio.charset.StandardCharsets.UTF_8);
+            AlminLog.info("[almin] web wrote config/{} for {}", rel, file);
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", true);
+            o.addProperty("message", "Saved. It takes effect at the next start.");
+            json(ex, 200, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
     private void handleServerModChange(HttpExchange ex) throws IOException {
         try {
             if (!requireAuthSecure(ex)) return;

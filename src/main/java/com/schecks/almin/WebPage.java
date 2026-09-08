@@ -819,6 +819,32 @@ final class WebPage {
                        font-size:19px;font-weight:700;color:var(--mute)}
           .modrow .acts{display:flex;gap:7px;flex:none}
           @media(max-width:620px){.modrow{flex-wrap:wrap}.modrow .acts{width:100%}}
+          /* A server mod is a row with a drawer under it, so the separator
+             moves out to the pair — otherwise every row is the last child of
+             its own wrapper and the list loses its lines. */
+          .modwrap{border-bottom:1px solid rgba(255,255,255,.05)}
+          .modwrap:last-child{border-bottom:0}
+          .modwrap.open{background:rgba(255,255,255,.022)}
+          .moddet{padding:2px 16px 15px 76px}
+          @media(max-width:620px){.moddet{padding-left:16px}}
+          .modabout{margin:0 0 8px;font-size:13px;max-width:70ch}
+          .modfacts{color:var(--mute);font-size:12px;margin-bottom:9px}
+          .modlinks{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+          .modlinks a.btn{text-decoration:none}
+          .modcfgh{font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+                   color:var(--mute);margin-bottom:7px}
+          /* Not .cfgrow: Settings already has one of those, and two classes
+             with one name is two features editing each other's stylesheet. */
+          .mcfg{display:flex;gap:10px;align-items:center;width:100%;text-align:left;
+                background:#0e1116;border:1px solid var(--line);border-radius:9px;
+                color:var(--ink);font:inherit;padding:8px 11px;margin-bottom:6px;
+                cursor:pointer}
+          .mcfg:hover:enabled{border-color:var(--brand)}
+          .mcfg:disabled{opacity:.5;cursor:not-allowed}
+          .mcfg .nm{font-weight:600;flex:none}
+          .mcfg .wh{color:var(--mute);font-size:11.5px;flex:1;min-width:0;
+                    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .mcfg .sz{color:var(--mute);font-size:11.5px;flex:none}
         </style>
         <header>
           <span class="brand">ALMIN</span>
@@ -907,7 +933,12 @@ final class WebPage {
         // which is never coming back stops pretending it is.
         const WAIT_LIMIT=5*60*1000;
 
-        const esc = s => (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+        // Quotes as well as tags: half the uses of this are inside an
+        // attribute, and some of what goes through it comes out of a jar
+        // somebody else wrote. In text an entity renders as the character, so
+        // escaping more than a text node needs costs nothing.
+        const esc = s => (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;',
+          '>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         async function jget(u){ const r=await fetch(u,{credentials:'same-origin'});
           return {status:r.status, body:await r.json().catch(()=>({}))}; }
         async function jpost(u,d){
@@ -10400,13 +10431,6 @@ final class WebPage {
             why:'Ticks finish well inside their budget.'};
         }
 
-        function fmtBytes(n){
-          if(!n) return '0 B';
-          const u=['B','KB','MB','GB','TB']; let i=0, v=n;
-          while(v>=1024 && i<u.length-1){ v/=1024; i++; }
-          return (v>=10||i===0?Math.round(v):v.toFixed(1))+' '+u[i];
-        }
-
         function fmtNum(n){ return (n||0).toLocaleString(); }
 
         /**
@@ -11233,7 +11257,7 @@ final class WebPage {
           setTimeout(()=>{
             $('sm-add').onclick=()=>menuUnder($('sm-add'),addServerModMenu());
             $('srvmodlist').oncontextmenu=e=>{
-              if(e.target.closest('.modrow')) return;
+              if(e.target.closest('.modwrap')) return;
               menuAt(e,addServerModMenu());
             };
             $('m-add').onclick=()=>menuUnder($('m-add'),addModMenu());
@@ -11296,6 +11320,7 @@ final class WebPage {
         }
 
         function serverModRow(m){
+          const wrap=document.createElement('div'); wrap.className='modwrap';
           const row=document.createElement('div'); row.className='modrow';
           const letter=document.createElement('span'); letter.className='modicon';
           letter.textContent=((m.name||m.file||'?').trim().charAt(0)||'?').toUpperCase();
@@ -11316,31 +11341,183 @@ final class WebPage {
               (m.id?'<code>'+esc(m.id)+'</code> · ':'')+esc(m.file)+
               (m.bytes?' · '+fmtBytes(m.bytes):'')+'</div>';
           const acts=document.createElement('div'); acts.className='acts';
+          // The drawer is the point of this list now, so it opens from the row
+          // itself as well as from a button somebody has to find first.
+          const open=document.createElement('button'); open.className='btn cog';
+          open.innerHTML='&#9662;'; open.title='What this mod is, and its settings';
+          open.onclick=()=>toggleServerMod(wrap,m);
+          body.style.cursor='pointer';
+          body.onclick=()=>toggleServerMod(wrap,m);
           if(!m.ours){
             const flip=document.createElement('button'); flip.className='btn';
             flip.textContent=m.enabled?'Turn off':'Turn on';
             flip.onclick=()=>changeServerMod(m,m.enabled?'disable':'enable');
             const more=document.createElement('button'); more.className='btn cog';
             more.innerHTML='&#8943;'; more.title='More';
-            more.onclick=()=>menuUnder(more,serverModMenu(m));
-            acts.append(flip,more);
+            more.onclick=()=>menuUnder(more,serverModMenu(m,wrap));
+            acts.append(open,flip,more);
           } else {
             const note=document.createElement('span'); note.className='muted';
             note.style.fontSize='11.5px'; note.textContent='updated from the panel';
-            acts.appendChild(note);
+            acts.append(note,open);
           }
           row.append(body,acts);
-          if(!m.ours) row.oncontextmenu=ev=>menuAt(ev,serverModMenu(m));
-          return row;
+          wrap.appendChild(row);
+          if(!m.ours) row.oncontextmenu=ev=>menuAt(ev,serverModMenu(m,wrap));
+          return wrap;
         }
 
-        function serverModMenu(m){
+        function serverModMenu(m,wrap){
           return [{header:m.name||m.file},
+            {label:'Settings and details',icon:ICON.cog,
+             run:()=>toggleServerMod(wrap,m,true)},
             {label:m.enabled?'Turn off':'Turn on',
              run:()=>changeServerMod(m,m.enabled?'disable':'enable')},
             'sep',
             {label:'Delete the jar…',icon:ICON.trash,danger:true,
              run:()=>deleteServerModDialog(m)}];
+        }
+
+        // ---- one mod, opened up ----
+
+        /**
+         * Configuring a mod used to mean knowing it calls itself
+         * <code>ftbchunks</code>, opening the file browser, and finding the
+         * right one of the ninety files in <code>config/</code>. The list
+         * already knows which mod is which; this is it saying so.
+         *
+         * <p>Asked for a row at a time. The manifest is inside the jar and the
+         * settings are a walk of <code>config/</code>, and doing both for every
+         * row on every refresh would be a hundred zip opens to draw something
+         * nobody has opened.
+         */
+        function toggleServerMod(wrap,m,keepOpen){
+          if(!wrap) return;
+          if(wrap.__det){
+            if(keepOpen) return;      // the menu asked to show it; it is shown
+            wrap.__det.remove(); wrap.__det=null; wrap.classList.remove('open');
+            return;
+          }
+          const det=document.createElement('div'); det.className='moddet';
+          det.innerHTML='<div class="muted">Reading the jar…</div>';
+          wrap.appendChild(det); wrap.__det=det; wrap.classList.add('open');
+          loadServerModDetail(det,m);
+        }
+
+        async function loadServerModDetail(det,m){
+          const r=await jget('/api/servermods/mod?file='+encodeURIComponent(m.file));
+          if(!det.isConnected && det.isConnected!==undefined) return;
+          if(r.status!==200){
+            det.innerHTML='<div class="msg err">'+
+              esc(r.body.error||'could not read this jar')+'</div>';
+            return;
+          }
+          det.innerHTML=modDetailHtml(r.body);
+          const list=document.createElement('div');
+          for(const c of (r.body.configs||[])) list.appendChild(modConfigRow(m,c));
+          det.appendChild(list);
+        }
+
+        /** Everything about a mod that is text: what it says it is, and links. */
+        function modDetailHtml(d){
+          let out='';
+          if(d.description) out+='<p class="modabout">'+esc(d.description)+'</p>';
+          const facts=[];
+          if(d.environment==='client')
+            facts.push('Declares itself client-side — it may do nothing here');
+          else if(d.environment==='server') facts.push('Server-side');
+          if((d.authors||[]).length)
+            facts.push('By '+esc(d.authors.slice(0,4).join(', '))+
+              (d.authors.length>4?' and others':''));
+          if(d.license) facts.push('Licence: '+esc(d.license));
+          if((d.needs||[]).length) facts.push('Needs '+esc(d.needs.join(', ')));
+          if(facts.length) out+='<div class="modfacts">'+facts.join(' · ')+'</div>';
+          let links='';
+          for(const [k,label] of [['homepage','Home page'],['sources','Source'],
+                                  ['issues','Bug tracker']]){
+            const u=(d[k]||'').trim(), low=u.toLowerCase();
+            // Only the two schemes a link in a jar has any business being. A
+            // manifest is written by whoever built the jar, and javascript:
+            // in an href is a script this page ran.
+            if(!low.startsWith('https://') && !low.startsWith('http://')) continue;
+            links+='<a class="btn" target="_blank" rel="noopener noreferrer" href="'+
+              esc(u)+'">'+label+'</a>';
+          }
+          if(links) out+='<div class="modlinks">'+links+'</div>';
+          const n=(d.configs||[]).length;
+          out+='<div class="modcfgh">Settings</div>';
+          if(!n){
+            out+='<div class="muted" style="font-size:12.5px">'+
+              (d.ours
+                ? 'Almin’s own settings are in the Settings menu, not here.'
+                : 'Nothing in <code>config/</code> is named after this mod. Either it '+
+                  'has no settings, it writes them somewhere this cannot guess, or it '+
+                  'has not been started yet — most mods write their file the first '+
+                  'time they run. The file browser reaches all of it either way.')+
+              '</div>';
+          }
+          return out;
+        }
+
+        function modConfigRow(m,c){
+          const b=document.createElement('button'); b.className='mcfg';
+          b.type='button';
+          b.innerHTML='<span class="nm">'+esc(c.name)+'</span>'+
+            '<span class="wh">config/'+esc(c.path)+'</span>'+
+            '<span class="sz">'+fmtBytes(c.bytes)+'</span>';
+          if(!c.editable){
+            b.disabled=true;
+            b.title='Too big to edit here — the file browser has it.';
+          } else {
+            b.onclick=()=>editModConfig(m,c);
+          }
+          return b;
+        }
+
+        /**
+         * The editor. Deliberately plain text rather than a form built from
+         * the file: a mod's settings are in whatever shape that mod chose, and
+         * a form that guessed wrong would silently drop the half it did not
+         * understand.
+         */
+        function editModConfig(m,c){
+          modal('config/'+c.path,(body)=>{
+            body.innerHTML=
+              '<p class="muted">A settings file for <b>'+esc(m.name||m.file)+'</b>. '+
+              'It is read when the mod starts, so a change here takes effect at the '+
+              'next server start.</p>'+
+              '<textarea id="mcbody" placeholder="Loading…" spellcheck="false">'+
+                '</textarea>'+
+              '<div class="row2"><button class="btn go" id="mcsave">Save</button></div>'+
+              '<div class="msg" id="mcmsg"></div>';
+            $('mcsave').disabled=true;
+            $('mcsave').onclick=()=>saveModConfig(m,c);
+            openModConfig(m,c);
+          },{wide:true});
+        }
+
+        async function openModConfig(m,c){
+          const r=await jget('/api/servermods/config?file='+encodeURIComponent(m.file)+
+            '&path='+encodeURIComponent(c.path));
+          const msg=$('mcmsg'); if(!msg) return;
+          if(r.status!==200){
+            msg.className='msg err'; msg.textContent=r.body.error||'could not open';
+            return;
+          }
+          $('mcbody').value=r.body.content;
+          // Saving is only offered once there is something to save: an empty
+          // box saved over a file that simply had not loaded would be a
+          // configuration deleted by a slow request.
+          $('mcsave').disabled=false;
+        }
+
+        async function saveModConfig(m,c){
+          const msg=$('mcmsg'); msg.className='msg'; msg.textContent='Saving…';
+          const r=await jpost('/api/servermods/config',
+            {file:m.file,path:c.path,content:$('mcbody').value});
+          msg.className='msg '+(r.body.ok?'ok':'err');
+          msg.textContent=r.body.ok?(r.body.message||'Saved.')
+            :(r.body.message||r.body.error||'save failed');
         }
 
         async function changeServerMod(m,action){
