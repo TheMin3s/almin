@@ -31,6 +31,10 @@ node "$T/panelsmoke.js" "$OUT/panel.js"
 javac -cp "$CP" -d "$OUT" "$T/BlueMapBridgeDump.java"
 java -cp "$CP:$OUT" BlueMapBridgeDump "$OUT/bluemap-bridge.js"
 node --check "$OUT/bluemap-bridge.js"
+# And run it, against an app it was not written against. Parsing says the
+# bridge is JavaScript; this says it still draws a map when BlueMap has moved
+# something it used to reach for.
+node "$T/bridgesmoke.js" "$OUT/bluemap-bridge.js"
 
 bad=""
 for f in "$T"/*Tests.java "$T"/AssetPick.java "$T"/PayloadTypes.java; do

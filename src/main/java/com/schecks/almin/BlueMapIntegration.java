@@ -798,31 +798,80 @@ final class BlueMapIntegration {
           };
           window.addEventListener('resize',()=>{ clearTimeout(resizeTimer);
             resizeTimer=setTimeout(chrome,180); });
-          let cameraTimer=0;
+          let cameraTimer=0, cameraPoll=0;
           const camera=()=>{
-            if(changing||!window.bluemap||!window.bluemap.mapViewer.map) return;
-            clearTimeout(cameraTimer);
-            cameraTimer=setTimeout(()=>{
-              const c=window.bluemap.mapViewer.controlsManager, map=window.bluemap.mapViewer.map;
-              parent.postMessage({source:SOURCE,type:'camera',x:c.position.x,y:c.position.y,
-                z:c.position.z,distance:c.distance,map:map.data.id},location.origin);
-            },120);
+            try {
+              if(changing||!window.bluemap||!window.bluemap.mapViewer) return;
+              const map=window.bluemap.mapViewer.map;
+              const c=window.bluemap.mapViewer.controlsManager;
+              if(!map||!c||!c.position) return;
+              clearTimeout(cameraTimer);
+              cameraTimer=setTimeout(()=>{
+                parent.postMessage({source:SOURCE,type:'camera',x:c.position.x,y:c.position.y,
+                  z:c.position.z,distance:c.distance,map:map.data.id},location.origin);
+              },120);
+            } catch(e) { /* a version that keeps its camera elsewhere */ }
           };
+
+          /**
+           * BlueMap's own event source, wherever this version keeps it.
+           *
+           * <p>The app is an optional install and its internals are not
+           * Almin's to depend on. One version hangs an {@code EventTarget} off
+           * {@code bluemap.events}; another keeps it on the map viewer; some
+           * dispatch on the document as well. Asking each in turn, and
+           * settling for none of them, is the difference between losing the
+           * camera and losing the whole bridge.
+           */
+          function eventSource(){
+            const app=window.bluemap||{};
+            for(const t of [app.events, app.mapViewer&&app.mapViewer.events,
+                            app.appState&&app.appState.events, document]){
+              if(t && typeof t.addEventListener==='function') return t;
+            }
+            return null;
+          }
+
           const ready=()=>{
             if(!ensureRoot()) return setTimeout(ready,100);
-            window.bluemap.events.addEventListener('bluemapCameraMoved',camera);
-            window.bluemap.events.addEventListener('bluemapMapChanged',()=>{
-              ensureRoot(); render().catch(console.error); camera();
-            });
-            window.bluemap.events.addEventListener('bluemapMapInteraction',e=>{
-              const p=e.detail&&e.detail.hit&&e.detail.hit.point;
-              if(!p) return;
-              parent.postMessage({source:SOURCE,type:'worldclick',x:Math.floor(p.x),
-                y:Math.floor(p.y-.01),z:Math.floor(p.z)},location.origin);
-            });
+            // Everything that has to happen happens first, and none of it may
+            // depend on the installed BlueMap being the one this was written
+            // against. This used to open by registering a camera listener on
+            // bluemap.events, and on an app that keeps its events anywhere
+            // else that threw — taking the stylesheet, the ready message and
+            // the first render down with it. The panel then waited forever
+            // for a frame that had already given up, so the 3D map showed
+            // none of Almin's places, faces or paths, drew no styling for the
+            // marks it had made, and said nothing about why.
             injectStyle();
             parent.postMessage({source:SOURCE,type:'ready'},location.origin);
-            camera(); watchChrome(); render().catch(console.error);
+            watchChrome();
+            render().catch(console.error);
+
+            const events=eventSource();
+            if(!events){
+              // No camera events to be had. The view still works; it just
+              // cannot say where it is looking, so it is asked on a slow
+              // timer instead — otherwise the panel keeps sending markers for
+              // a camera that moved half an hour ago.
+              if(!cameraPoll) cameraPoll=setInterval(camera,1500);
+              return;
+            }
+            try {
+              events.addEventListener('bluemapCameraMoved',camera);
+              events.addEventListener('bluemapMapChanged',()=>{
+                ensureRoot(); render().catch(console.error); camera();
+              });
+              events.addEventListener('bluemapMapInteraction',e=>{
+                const p=e.detail&&e.detail.hit&&e.detail.hit.point;
+                if(!p) return;
+                parent.postMessage({source:SOURCE,type:'worldclick',x:Math.floor(p.x),
+                  y:Math.floor(p.y-.01),z:Math.floor(p.z)},location.origin);
+              });
+            } catch(e) {
+              if(!cameraPoll) cameraPoll=setInterval(camera,1500);
+            }
+            camera();
           };
           function injectStyle(){
             if(document.getElementById('almin-bridge-style')) return;

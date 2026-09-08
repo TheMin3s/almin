@@ -1567,6 +1567,27 @@ a plain `.jar` in that one folder — so the request path can't be turned into
 "read me any file on the server".
 
 
+### When the 3D map shows none of Almin's marks
+
+Almin's half of the 3D view is a small script served into BlueMap's own page.
+BlueMap is an optional install with versions of its own, and the bridge does
+not get to pick which one it lands in — so it is written to keep working when
+the app is not the one it was written against.
+
+The one that bit: it used to open by registering a camera listener on
+`bluemap.events`. On an app that keeps its events anywhere else that threw, and
+took the stylesheet, the "ready" message and the first render down with it. The
+panel waits for that ready message before it sends anything, so the result was
+a 3D map with none of Almin's places, faces or coloured paths on it — and
+nothing on screen to say why, because from the panel's side the frame had
+simply never answered. Fixed in v2.69.0: everything that has to happen happens
+before anything that can fail, the event source is looked for in several
+places, and a version that offers none of them gets its camera polled instead.
+
+If the 3D map is still bare, the browser console inside the BlueMap frame is
+where it will say so; **Legacy 2D** in the map's mode switch draws the same
+data with no BlueMap involved at all.
+
 ## Who can open the admin UI
 
 The in-game panel is not something a client can open by itself. Every admin
