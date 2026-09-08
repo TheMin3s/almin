@@ -109,6 +109,10 @@ public class Almin implements ModInitializer {
             PlayerTracks.save();
             WorldSnapshots.close();
             AiInsights.close();
+            // The panel outlives the server in supervisor mode, so this has to
+            // be done rather than assumed: what somebody asked the model about
+            // their players should not sit in memory across a restart.
+            AiChat.forget();
             BlockTextures.close();
             ServerAutoUpdater.reset();
             // Last, and deliberately so: when the stop was a restart, this

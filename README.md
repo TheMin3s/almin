@@ -1049,6 +1049,61 @@ Nothing is sent until somebody presses **Summarise**, or sets
 recorded since the last one — re-summarising an unchanged log is spending money
 to be told the same thing.
 
+### The AI menu: asking it things
+
+The summary above is one paragraph about a period. The **AI** tab is a
+conversation about the whole server — *who has been digging near spawn*, *what
+happened while I was away*, *has anyone been in the nether this week*. It uses
+the same model and the same settings, and it reaches the whole activity log,
+which is kept on disk: questions are not limited to the session running now,
+only to how far back the log still goes.
+
+**Nothing is pasted into the question.** That is the difference from the
+summary, and it is the whole design. The model is sent the question and a list
+of things it may look up, and it goes and looks them up:
+
+| Tool | What it reads |
+|---|---|
+| `search_activity` | log rows, filtered by player, action, dimension, text or time |
+| `count_activity` | those same rows counted by player, action, dimension, day or hour |
+| `activity_overview` | how far back the log goes and who is in it |
+| `player_positions` | one player's path, thinned across the window |
+| `list_players` / `player_summary` | who the server knows, playtime, sessions |
+| `server_status` | running, online, version, uptime, tick rate, memory |
+| `list_mods` | the server's mods, or one player's reported client mods |
+| `settings_summary` | Almin's settings and what they mean |
+
+So "who has been busiest this week" is one `count_activity` call over the whole
+log and a two-line answer, not four thousand rows in a prompt. Every result is
+capped; when one is too big the model is told so and asked to narrow it, which
+it can, because narrowing is what the arguments are for. Each lookup is one
+request to the provider, and `ai-tool-rounds` is the ceiling on how many a
+single question may make — running out is not an error, the model is asked to
+answer with what it has and to say what it did not reach.
+
+The panel shows every lookup above the answer it was written from — *counted
+4,102 rows by player* next to *Steve, by a distance*. An answer about your own
+server should be checkable rather than taken on faith.
+
+**Every tool runs as the person who asked.** A tool is a second road to data
+the panel already guards, so it is guarded the same way: an account is only
+handed the tools for menus it can open, every call is re-checked, and the
+readers go through the same helpers the panel's own pages use. An account that
+is not shown chat does not get chat here, and cannot use the text filter to
+find out what a hidden line said — searching for a word in it matches nothing,
+exactly as if the line were blank. An account restricted to its own activity
+gets its own activity. The password hash is never among the settings a model is
+given, and neither is the API key, which is not a setting at all.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ai-chat` | `true` | show the AI menu at all |
+| `ai-tool-rounds` | `6` | lookups one question may make |
+
+Conversations are per account, in memory, and go when the server stops. The log
+is on disk and can be asked about again; what somebody asked about it is not
+the sort of record that should quietly outlive the asking.
+
 ## Advertising mods to players
 
 A server can suggest mods to joining players. Manage the list with

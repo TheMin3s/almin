@@ -487,6 +487,511 @@ final class AiTransport {
             d.responseBody(), d.elapsedMs(), error == null ? "" : error));
     }
 
+    // ---------- tool-using conversations ----------
+
+    /**
+     * One lookup the model has asked Almin to perform.
+     *
+     * <p>The {@code id} is the provider's, not ours. Every shape but Google
+     * pairs a call with its result by an identifier it made up, and inventing
+     * our own would only mean translating twice; Google pairs by name instead,
+     * so there the id is left empty and never missed.
+     */
+    record Call(String id, String name, JsonObject args) {}
+
+    /**
+     * One turn of a conversation, in a shape none of the four providers uses.
+     *
+     * <p>Deliberately so. A conversation that was stored in a provider's own
+     * format would have to be thrown away when the provider changed, which is
+     * a setting people flip while trying to get their model working. This is
+     * the neutral middle the four encoders read from, so the same thread
+     * survives switching from a local runner to Anthropic and back.
+     *
+     * @param role    "user", "assistant" or "tool"
+     * @param text    what was said, empty for a turn that is only tool calls
+     * @param calls   what the assistant asked to look up, never null
+     * @param results what came back, as {@code id -> JSON}, for a "tool" turn
+     */
+    record Turn(String role, String text, List<Call> calls, List<Outcome> results) {
+        static Turn user(String text) {
+            return new Turn("user", text, List.of(), List.of());
+        }
+        static Turn assistant(String text, List<Call> calls) {
+            return new Turn("assistant", text, calls, List.of());
+        }
+        static Turn tool(List<Outcome> results) {
+            return new Turn("tool", "", List.of(), results);
+        }
+    }
+
+    /** What one tool call produced, on its way back to the model. */
+    record Outcome(String id, String name, String json) {}
+
+    /** What the model said: words, or a request to look things up, or both. */
+    record Answer(String text, List<Call> calls) {
+        boolean wantsTools() { return !calls.isEmpty(); }
+    }
+
+    /**
+     * One round trip of a tool-using conversation.
+     *
+     * <p>This does not loop. Deciding when to stop asking is a policy question
+     * about somebody's money and patience, so it belongs to {@link AiChat},
+     * which owns the budget; this only knows how to say one thing to one
+     * provider and read one reply.
+     */
+    static Answer converse(AlminConfig cfg, String provider, String system,
+                           List<Turn> turns, List<AiTools.Tool> tools) throws IOException {
+        Request r = switch (provider) {
+            case "openai" -> openAiTools(cfg, system, turns, tools);
+            case "anthropic" -> anthropicTools(cfg, system, turns, tools);
+            case "google" -> googleTools(cfg, system, turns, tools);
+            case "custom", "local" -> chatTools(cfg, provider, system, turns, tools);
+            default -> throw new IOException("Unknown AI provider: " + provider);
+        };
+        return converseOnce(r);
+    }
+
+    private static Answer converseOnce(Request request) throws IOException {
+        Reply reply = send(request);
+        String raw = new String(reply.body(), StandardCharsets.UTF_8);
+        try {
+            if (reply.status() / 100 != 2) throw new IOException(explain(reply.status(), raw));
+            JsonObject json;
+            try {
+                JsonElement parsed = JsonParser.parseString(raw);
+                if (!parsed.isJsonObject()) {
+                    throw new IOException("The service did not return a JSON object.");
+                }
+                json = parsed.getAsJsonObject();
+            } catch (com.google.gson.JsonParseException e) {
+                throw new IOException("The service sent back something that was not JSON.");
+            }
+            if (json.has("error") && !json.get("error").isJsonNull()) {
+                throw new IOException(errorText(json.get("error"), "The model reported an error."));
+            }
+            Answer answer = switch (request.shape()) {
+                case OPENAI_RESPONSES -> new Answer(readOpenAi(json), openAiCalls(json));
+                case OPENAI_CHAT -> new Answer(readOpenAiChat(json), chatCalls(json));
+                case ANTHROPIC -> new Answer(readAnthropic(json), anthropicCalls(json));
+                case GOOGLE -> new Answer(readGoogle(json), googleCalls(json));
+            };
+            if (answer.text().isBlank() && !answer.wantsTools()) {
+                throw new IOException(noTextReason(request.shape(), json));
+            }
+            return answer;
+        } catch (IOException e) {
+            markLastError(request, e.getMessage());
+            throw e;
+        }
+    }
+
+    // ---------- Anthropic: content blocks both ways ----------
+
+    private static Request anthropicTools(AlminConfig cfg, String system,
+                                          List<Turn> turns, List<AiTools.Tool> tools) {
+        JsonObject body = new JsonObject();
+        body.addProperty("model", cfg.aiModel.trim());
+        body.addProperty("max_tokens", 2000);
+        body.addProperty("system", system);
+
+        JsonArray declared = new JsonArray();
+        for (AiTools.Tool t : tools) {
+            JsonObject o = new JsonObject();
+            o.addProperty("name", t.name());
+            o.addProperty("description", t.description());
+            o.add("input_schema", t.schema());
+            declared.add(o);
+        }
+        if (!declared.isEmpty()) body.add("tools", declared);
+
+        JsonArray messages = new JsonArray();
+        for (Turn t : turns) {
+            JsonObject m = new JsonObject();
+            JsonArray content = new JsonArray();
+            switch (t.role()) {
+                case "assistant" -> {
+                    m.addProperty("role", "assistant");
+                    if (!t.text().isBlank()) content.add(textPart("text", t.text()));
+                    for (Call c : t.calls()) {
+                        JsonObject use = new JsonObject();
+                        use.addProperty("type", "tool_use");
+                        use.addProperty("id", c.id());
+                        use.addProperty("name", c.name());
+                        use.add("input", c.args());
+                        content.add(use);
+                    }
+                }
+                // Results go back as a user turn. That is Anthropic's shape,
+                // not a workaround: the model spoke last, so the next thing in
+                // the transcript is something said to it.
+                case "tool" -> {
+                    m.addProperty("role", "user");
+                    for (Outcome o : t.results()) {
+                        JsonObject res = new JsonObject();
+                        res.addProperty("type", "tool_result");
+                        res.addProperty("tool_use_id", o.id());
+                        res.addProperty("content", o.json());
+                        content.add(res);
+                    }
+                }
+                default -> {
+                    m.addProperty("role", "user");
+                    content.add(textPart("text", t.text()));
+                }
+            }
+            if (content.isEmpty()) continue;
+            m.add("content", content);
+            messages.add(m);
+        }
+        body.add("messages", messages);
+
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("x-api-key", AiInsights.key());
+        headers.put("anthropic-version", "2023-06-01");
+        return request("anthropic", cfg.aiModel,
+            endpoint("anthropic", "https://api.anthropic.com/v1/messages"),
+            Shape.ANTHROPIC, body, headers);
+    }
+
+    private static List<Call> anthropicCalls(JsonObject reply) {
+        List<Call> out = new ArrayList<>();
+        JsonArray content = array(reply, "content");
+        if (content == null) return out;
+        for (JsonElement el : content) {
+            if (!el.isJsonObject()) continue;
+            JsonObject part = el.getAsJsonObject();
+            if (!"tool_use".equals(string(part, "type"))) continue;
+            out.add(new Call(string(part, "id"), string(part, "name"), objectOf(part, "input")));
+        }
+        return out;
+    }
+
+    // ---------- OpenAI Chat Completions, and everything shaped like it ----------
+
+    private static Request chatTools(AlminConfig cfg, String provider, String system,
+                                     List<Turn> turns, List<AiTools.Tool> tools) {
+        JsonObject body = new JsonObject();
+        body.addProperty("model", cfg.aiModel.trim());
+        body.addProperty("stream", false);
+
+        JsonArray declared = new JsonArray();
+        for (AiTools.Tool t : tools) {
+            JsonObject fn = new JsonObject();
+            fn.addProperty("name", t.name());
+            fn.addProperty("description", t.description());
+            fn.add("parameters", t.schema());
+            JsonObject o = new JsonObject();
+            o.addProperty("type", "function");
+            o.add("function", fn);
+            declared.add(o);
+        }
+        if (!declared.isEmpty()) body.add("tools", declared);
+
+        JsonArray messages = new JsonArray();
+        messages.add(message("system", system));
+        for (Turn t : turns) {
+            switch (t.role()) {
+                case "assistant" -> {
+                    JsonObject m = new JsonObject();
+                    m.addProperty("role", "assistant");
+                    m.addProperty("content", t.text());
+                    if (!t.calls().isEmpty()) {
+                        JsonArray calls = new JsonArray();
+                        for (Call c : t.calls()) {
+                            JsonObject fn = new JsonObject();
+                            fn.addProperty("name", c.name());
+                            // Arguments travel as a JSON string here, not as an
+                            // object. Sending the object is the classic way to
+                            // get a 400 out of this API.
+                            fn.addProperty("arguments", c.args().toString());
+                            JsonObject call = new JsonObject();
+                            call.addProperty("id", c.id());
+                            call.addProperty("type", "function");
+                            call.add("function", fn);
+                            calls.add(call);
+                        }
+                        m.add("tool_calls", calls);
+                    }
+                    messages.add(m);
+                }
+                case "tool" -> {
+                    for (Outcome o : t.results()) {
+                        JsonObject m = new JsonObject();
+                        m.addProperty("role", "tool");
+                        m.addProperty("tool_call_id", o.id());
+                        m.addProperty("name", o.name());
+                        m.addProperty("content", o.json());
+                        messages.add(m);
+                    }
+                }
+                default -> messages.add(message("user", t.text()));
+            }
+        }
+        body.add("messages", messages);
+
+        String base = trimSlashes(cfg.aiBaseUrl);
+        Map<String, String> headers = new LinkedHashMap<>();
+        String key = AiInsights.key();
+        if (!key.isEmpty()) headers.put("Authorization", "Bearer " + key);
+        return request(provider, cfg.aiModel, base + "/chat/completions",
+            Shape.OPENAI_CHAT, body, headers);
+    }
+
+    private static List<Call> chatCalls(JsonObject reply) {
+        List<Call> out = new ArrayList<>();
+        JsonArray choices = array(reply, "choices");
+        if (choices == null || choices.isEmpty() || !choices.get(0).isJsonObject()) return out;
+        JsonObject first = choices.get(0).getAsJsonObject();
+        if (!first.has("message") || !first.get("message").isJsonObject()) return out;
+        JsonArray calls = array(first.getAsJsonObject("message"), "tool_calls");
+        if (calls == null) return out;
+        for (JsonElement el : calls) {
+            if (!el.isJsonObject()) continue;
+            JsonObject call = el.getAsJsonObject();
+            if (!call.has("function") || !call.get("function").isJsonObject()) continue;
+            JsonObject fn = call.getAsJsonObject("function");
+            out.add(new Call(string(call, "id"), string(fn, "name"),
+                parseArguments(string(fn, "arguments"))));
+        }
+        return out;
+    }
+
+    // ---------- OpenAI Responses ----------
+
+    private static Request openAiTools(AlminConfig cfg, String system,
+                                       List<Turn> turns, List<AiTools.Tool> tools) {
+        JsonObject body = new JsonObject();
+        body.addProperty("model", cfg.aiModel.trim());
+        body.addProperty("instructions", system);
+        body.addProperty("store", false);
+
+        JsonArray declared = new JsonArray();
+        for (AiTools.Tool t : tools) {
+            // Responses puts the function flat on the tool rather than nesting
+            // it under "function" the way Chat Completions does.
+            JsonObject o = new JsonObject();
+            o.addProperty("type", "function");
+            o.addProperty("name", t.name());
+            o.addProperty("description", t.description());
+            o.add("parameters", t.schema());
+            declared.add(o);
+        }
+        if (!declared.isEmpty()) body.add("tools", declared);
+
+        JsonArray input = new JsonArray();
+        for (Turn t : turns) {
+            switch (t.role()) {
+                case "assistant" -> {
+                    if (!t.text().isBlank()) {
+                        JsonObject m = new JsonObject();
+                        m.addProperty("role", "assistant");
+                        m.addProperty("content", t.text());
+                        input.add(m);
+                    }
+                    for (Call c : t.calls()) {
+                        JsonObject call = new JsonObject();
+                        call.addProperty("type", "function_call");
+                        call.addProperty("call_id", c.id());
+                        call.addProperty("name", c.name());
+                        call.addProperty("arguments", c.args().toString());
+                        input.add(call);
+                    }
+                }
+                case "tool" -> {
+                    for (Outcome o : t.results()) {
+                        JsonObject res = new JsonObject();
+                        res.addProperty("type", "function_call_output");
+                        res.addProperty("call_id", o.id());
+                        res.addProperty("output", o.json());
+                        input.add(res);
+                    }
+                }
+                default -> {
+                    JsonObject m = new JsonObject();
+                    m.addProperty("role", "user");
+                    m.addProperty("content", t.text());
+                    input.add(m);
+                }
+            }
+        }
+        body.add("input", input);
+        return request("openai", cfg.aiModel,
+            endpoint("openai", "https://api.openai.com/v1/responses"),
+            Shape.OPENAI_RESPONSES, body,
+            Map.of("Authorization", "Bearer " + AiInsights.key()));
+    }
+
+    private static List<Call> openAiCalls(JsonObject reply) {
+        List<Call> out = new ArrayList<>();
+        JsonArray output = array(reply, "output");
+        if (output == null) return out;
+        for (JsonElement el : output) {
+            if (!el.isJsonObject()) continue;
+            JsonObject item = el.getAsJsonObject();
+            if (!"function_call".equals(string(item, "type"))) continue;
+            String id = string(item, "call_id");
+            if (id.isEmpty()) id = string(item, "id");
+            out.add(new Call(id, string(item, "name"),
+                parseArguments(string(item, "arguments"))));
+        }
+        return out;
+    }
+
+    // ---------- Google ----------
+
+    private static Request googleTools(AlminConfig cfg, String system,
+                                       List<Turn> turns, List<AiTools.Tool> tools) {
+        JsonObject body = new JsonObject();
+
+        JsonObject sys = new JsonObject();
+        JsonArray sysParts = new JsonArray();
+        JsonObject sysText = new JsonObject();
+        sysText.addProperty("text", system);
+        sysParts.add(sysText);
+        sys.add("parts", sysParts);
+        body.add("systemInstruction", sys);
+
+        if (!tools.isEmpty()) {
+            JsonArray declarations = new JsonArray();
+            for (AiTools.Tool t : tools) {
+                JsonObject o = new JsonObject();
+                o.addProperty("name", t.name());
+                o.addProperty("description", t.description());
+                o.add("parameters", t.schema());
+                declarations.add(o);
+            }
+            JsonObject holder = new JsonObject();
+            holder.add("functionDeclarations", declarations);
+            JsonArray declared = new JsonArray();
+            declared.add(holder);
+            body.add("tools", declared);
+        }
+
+        JsonArray contents = new JsonArray();
+        for (Turn t : turns) {
+            JsonObject m = new JsonObject();
+            JsonArray parts = new JsonArray();
+            switch (t.role()) {
+                case "assistant" -> {
+                    m.addProperty("role", "model");
+                    if (!t.text().isBlank()) {
+                        JsonObject part = new JsonObject();
+                        part.addProperty("text", t.text());
+                        parts.add(part);
+                    }
+                    for (Call c : t.calls()) {
+                        JsonObject fn = new JsonObject();
+                        fn.addProperty("name", c.name());
+                        fn.add("args", c.args());
+                        JsonObject part = new JsonObject();
+                        part.add("functionCall", fn);
+                        parts.add(part);
+                    }
+                }
+                case "tool" -> {
+                    m.addProperty("role", "user");
+                    for (Outcome o : t.results()) {
+                        JsonObject fn = new JsonObject();
+                        fn.addProperty("name", o.name());
+                        // Google wants an object here, not a string, so the
+                        // result is re-parsed. Anything unparseable is wrapped
+                        // rather than dropped: the model still needs to be told
+                        // what happened, even when what happened was a mess.
+                        fn.add("response", objectOrWrap(o.json()));
+                        JsonObject part = new JsonObject();
+                        part.add("functionResponse", fn);
+                        parts.add(part);
+                    }
+                }
+                default -> {
+                    m.addProperty("role", "user");
+                    JsonObject part = new JsonObject();
+                    part.addProperty("text", t.text());
+                    parts.add(part);
+                }
+            }
+            if (parts.isEmpty()) continue;
+            m.add("parts", parts);
+            contents.add(m);
+        }
+        body.add("contents", contents);
+
+        JsonObject generation = new JsonObject();
+        generation.addProperty("maxOutputTokens", 2000);
+        body.add("generationConfig", generation);
+
+        String base = cfg.aiBaseUrl == null || cfg.aiBaseUrl.isBlank()
+            ? "https://generativelanguage.googleapis.com/v1beta"
+            : cfg.aiBaseUrl.trim();
+        String url = trimSlashes(base) + "/models/" + cfg.aiModel.trim() + ":generateContent";
+        return request("google", cfg.aiModel, endpoint("google", url), Shape.GOOGLE,
+            body, Map.of("x-goog-api-key", AiInsights.key()));
+    }
+
+    private static List<Call> googleCalls(JsonObject reply) {
+        List<Call> out = new ArrayList<>();
+        JsonArray candidates = array(reply, "candidates");
+        if (candidates == null) return out;
+        for (JsonElement candidateEl : candidates) {
+            if (!candidateEl.isJsonObject()) continue;
+            JsonObject candidate = candidateEl.getAsJsonObject();
+            if (!candidate.has("content") || !candidate.get("content").isJsonObject()) continue;
+            JsonArray parts = array(candidate.getAsJsonObject("content"), "parts");
+            if (parts == null) continue;
+            for (JsonElement partEl : parts) {
+                if (!partEl.isJsonObject()) continue;
+                JsonObject part = partEl.getAsJsonObject();
+                if (!part.has("functionCall") || !part.get("functionCall").isJsonObject()) continue;
+                JsonObject fn = part.getAsJsonObject("functionCall");
+                // No id in this shape; results are matched by name instead.
+                out.add(new Call("", string(fn, "name"), objectOf(fn, "args")));
+            }
+        }
+        return out;
+    }
+
+    // ---------- shared ----------
+
+    /**
+     * Arguments as an object, whatever the model actually sent.
+     *
+     * <p>Two shapes hand these over as a JSON string, which means a model that
+     * gets the escaping slightly wrong can produce something unparseable. That
+     * is not worth failing a whole conversation over — an empty argument list
+     * makes the tool answer with its defaults, or complain about a missing
+     * argument, and either is a thing the model can read and correct.
+     */
+    private static JsonObject parseArguments(String raw) {
+        if (raw == null || raw.isBlank()) return new JsonObject();
+        try {
+            JsonElement parsed = JsonParser.parseString(raw);
+            return parsed.isJsonObject() ? parsed.getAsJsonObject() : new JsonObject();
+        } catch (com.google.gson.JsonParseException e) {
+            return new JsonObject();
+        }
+    }
+
+    private static JsonObject objectOf(JsonObject holder, String field) {
+        if (holder.has(field) && holder.get(field).isJsonObject()) {
+            return holder.getAsJsonObject(field);
+        }
+        return new JsonObject();
+    }
+
+    private static JsonObject objectOrWrap(String json) {
+        try {
+            JsonElement parsed = JsonParser.parseString(json);
+            if (parsed.isJsonObject()) return parsed.getAsJsonObject();
+        } catch (com.google.gson.JsonParseException ignored) {
+            // falls through to the wrapper
+        }
+        JsonObject wrapper = new JsonObject();
+        wrapper.addProperty("result", json);
+        return wrapper;
+    }
+
     private static String readOpenAi(JsonObject reply) {
         String direct = string(reply, "output_text");
         if (!direct.isBlank()) return direct;

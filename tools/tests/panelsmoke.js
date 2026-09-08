@@ -194,6 +194,8 @@ const responses = {
     { name: 'server.jar', directory: false, size: 50 * 1024 * 1024,
       modified: Date.now() - 9000000, items: -1, writable: false, deletable: false }] },
   '/api/file': { content: '{}' },
+  '/api/ai/chat': { messages: [], problem: '', enabled: true, maxQuestion: 2000,
+                    barred: false, tools: ['search_activity', 'count_activity'] },
   '/api/mods': { mods: [
       { id: 'sodium', name: 'Sodium', version: '1.0', url: '', file: 's.jar',
         sha256: 'abc', required: true, kind: 'jar', source: 'modrinth',
@@ -445,7 +447,7 @@ try {
 }
 
 // Every tab must render without throwing, and ask for its own data.
-const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'];
+const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'settings'];
 (async () => {
   sandbox.authed = true;
   sandbox.serverRunning = true;
@@ -465,7 +467,7 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
 
   // The panel must actually call the routes the server exposes.
   for (const p of ['/api/config', '/api/players', '/api/update', '/api/mods', '/api/activity',
-                   '/api/console']) {
+                   '/api/console', '/api/ai/chat']) {
     const ok = asked.has(p);
     console.log((ok ? '  PASS  ' : '  FAIL  ') + 'panel calls ' + p);
     if (!ok) failures.push('never called ' + p);
@@ -5231,6 +5233,117 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'settings'
     console.log('  FAIL  accounts  -> ' + e.message);
     failures.push('accounts: ' + e.message);
   }
+
+  // ---- the AI menu ----
+  // A conversation is drawn, the lookups behind an answer are shown, and the
+  // question does not vanish while it is being answered.
+  try {
+    const realFetch = sandbox.fetch;
+    const talk = {
+      messages: [
+        { at: Date.now() - 60000, mine: true, text: 'Who has been busiest?' },
+        { at: Date.now() - 55000, mine: false, text: 'Steve, by a distance.',
+          steps: [{ tool: 'count_activity', note: 'counted 4,102 rows by player' }] }
+      ],
+      problem: '', enabled: true, maxQuestion: 2000, barred: false,
+      tools: ['search_activity', 'count_activity']
+    };
+    sandbox.fetch = async () => ({ status: 200, json: async () => talk });
+
+    sandbox.tab = 'ai';
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const rows = deepAll(byId.get('ask-talk'), (e) => hasClass(e, 'askmsg'));
+    const drew = rows.length === 2;
+    console.log((drew ? '  PASS  ' : '  FAIL  ') +
+      'the AI menu draws one row per message');
+    if (!drew) failures.push('ai: drew ' + rows.length + ' rows');
+
+    const mine = rows.length && hasClass(rows[0], 'mine') && !hasClass(rows[1], 'mine');
+    console.log((mine ? '  PASS  ' : '  FAIL  ') +
+      'and puts the question and the answer on different sides');
+    if (!mine) failures.push('ai: message sides');
+
+    const chips = deepAll(byId.get('ask-talk'), (e) => hasClass(e, 'askstep'));
+    const shown = chips.length === 1 && /counted 4,102 rows by player/.test(deepText(chips[0]));
+    console.log((shown ? '  PASS  ' : '  FAIL  ') +
+      'an answer shows the lookup it was written from');
+    if (!shown) failures.push('ai: steps not shown');
+
+    const named = sandbox.toolLabel('count_activity') === 'counted the log'
+      && sandbox.toolLabel('search_activity') === 'read the log'
+      && sandbox.toolLabel('something_new') === 'something_new';
+    console.log((named ? '  PASS  ' : '  FAIL  ') +
+      'a lookup is named in words, and an unknown one falls back to its own name');
+    if (!named) failures.push('ai: toolLabel');
+
+    // The question is put up before the answer comes back. Several model round
+    // trips can pass in between, and a question that leaves the box without
+    // appearing above it reads as lost.
+    const gate = [];
+    sandbox.fetch = (url, init) =>
+      new Promise((go) => gate.push(() => go({ status: 200, json: async () => talk })));
+    byId.get('ask-box').value = 'and before that?';
+    const asking = sandbox.askAi();
+    const early = deepAll(byId.get('ask-talk'), (e) => hasClass(e, 'askmsg')).length === 3;
+    console.log((early ? '  PASS  ' : '  FAIL  ') +
+      'the question appears the moment it is asked, not when it is answered');
+    if (!early) failures.push('ai: question not shown while waiting');
+
+    const busy = byId.get('ask-send').disabled === true && sandbox.chatBusy === true;
+    console.log((busy ? '  PASS  ' : '  FAIL  ') +
+      'and nothing else can be asked while it is thinking');
+    if (!busy) failures.push('ai: not latched while asking');
+
+    const emptied = byId.get('ask-box').value === '';
+    console.log((emptied ? '  PASS  ' : '  FAIL  ') + 'the box is cleared to be typed in again');
+    if (!emptied) failures.push('ai: box not cleared');
+
+    gate[0]();
+    await asking;
+    const freed = sandbox.chatBusy === false && byId.get('ask-send').disabled === false;
+    console.log((freed ? '  PASS  ' : '  FAIL  ') + 'and it can be asked again afterwards');
+    if (!freed) failures.push('ai: still latched after answering');
+
+    // A question that never reached the server was never asked. Making
+    // somebody retype it is a small insult the panel can avoid.
+    sandbox.fetch = async () => { throw new Error('connection lost'); };
+    byId.get('ask-box').value = 'does this survive?';
+    await sandbox.askAi();
+    const kept = byId.get('ask-box').value === 'does this survive?';
+    console.log((kept ? '  PASS  ' : '  FAIL  ') +
+      'a question the panel could not send is put back in the box');
+    if (!kept) failures.push('ai: lost question on failure');
+    const unlatched = sandbox.chatBusy === false;
+    console.log((unlatched ? '  PASS  ' : '  FAIL  ') +
+      'and a dropped connection does not leave the menu stuck');
+    if (!unlatched) failures.push('ai: latched after a dropped connection');
+
+    // Off in the settings means gone from the navigation, not disabled in it.
+    sandbox.aiChatOn = false;
+    sandbox.tab = 'dash';
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    const navText = deepText(byId.get('nav'));
+    const hidden = !/\bAI\b/.test(navText);
+    console.log((hidden ? '  PASS  ' : '  FAIL  ') +
+      'switching the AI menu off takes it out of the navigation');
+    if (!hidden) failures.push('ai: tab still listed when off');
+
+    sandbox.aiChatOn = true;
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+    const back = /\bAI\b/.test(deepText(byId.get('nav')));
+    console.log((back ? '  PASS  ' : '  FAIL  ') + 'and switching it on puts it back');
+    if (!back) failures.push('ai: tab missing when on');
+
+    sandbox.fetch = realFetch;
+  } catch (e) {
+    console.log('  FAIL  ai menu  -> ' + e.message);
+    failures.push('ai menu: ' + e.message);
+  }
+
 
   const missing = failures.filter((f) => f.startsWith('getElementById'));
   for (const m of new Set(missing)) console.log('  NOTE  ' + m);

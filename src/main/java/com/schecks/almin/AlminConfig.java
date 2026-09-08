@@ -343,6 +343,28 @@ public final class AlminConfig {
      */
     public int aiTimeoutSeconds = 45;
     /**
+     * Show the AI menu, where the panel can be asked questions about the
+     * server in words.
+     *
+     * <p>Separate from {@link #aiEnabled}, which is about whether a model may
+     * be contacted at all. This is about whether the menu is in the navigation
+     * — a server that has a model set up for summaries but does not want a
+     * chat box on the panel turns this off and keeps the rest.
+     */
+    public boolean aiChat = true;
+    /**
+     * How many times the model may look something up while answering one
+     * question.
+     *
+     * <p>Each round is one request to the provider, so this is the ceiling on
+     * what a single question can cost and how long it can take. Six is enough
+     * for "count it, then read the interesting rows, then check a player",
+     * which covers nearly everything anybody asks. Running out is handled
+     * rather than hidden: the model is asked to answer with what it has and to
+     * say what it did not reach.
+     */
+    public int aiToolRounds = 6;
+    /**
      * Show player faces in the panel's player and activity lists.
      *
      * <p>On by default. A face for someone who is connected costs nothing —
@@ -525,7 +547,11 @@ public final class AlminConfig {
         intKey("ai-auto-minutes", "Minutes between unattended summaries (0 = only when asked)", 0, 1440,
             c -> c.aiAutoMinutes, (c, v) -> c.aiAutoMinutes = (Integer) v),
         intKey("ai-timeout-seconds", "How long to wait for a model response (slow custom servers may need several minutes)", 5, 3600,
-            c -> c.aiTimeoutSeconds, (c, v) -> c.aiTimeoutSeconds = (Integer) v)
+            c -> c.aiTimeoutSeconds, (c, v) -> c.aiTimeoutSeconds = (Integer) v),
+        boolKey("ai-chat", "Show the AI menu, where you can ask questions about the server in words",
+            c -> c.aiChat, (c, v) -> c.aiChat = (Boolean) v),
+        intKey("ai-tool-rounds", "How many times the AI menu may look something up while answering one question", 1, 20,
+            c -> c.aiToolRounds, (c, v) -> c.aiToolRounds = (Integer) v)
     );
 
     /**

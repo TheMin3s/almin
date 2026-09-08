@@ -493,6 +493,36 @@ final class WebPage {
           .arow:last-child{border-bottom:0}
           .amore{display:flex;gap:10px;align-items:center;justify-content:center;
                  padding:12px;font-size:12px;border-top:1px solid var(--line)}
+          /* ---- the AI menu ----
+             A transcript that scrolls and an input that does not. The asking
+             box is pinned to the bottom so a long conversation never pushes
+             the thing you type into off the screen. */
+          .askwrap{display:flex;flex-direction:column;gap:12px}
+          .asktalk{border:1px solid var(--line);border-radius:10px;background:var(--card);
+                   padding:6px 0;max-height:min(58vh,620px);overflow:auto}
+          .askmsg{padding:9px 14px;display:flex;flex-direction:column;gap:5px}
+          .askmsg .body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+          .askmsg.mine .body{background:var(--card2);border:1px solid var(--line);
+                             border-radius:10px;padding:8px 12px;align-self:flex-end;
+                             max-width:min(78%,620px)}
+          .askmsg.mine{align-items:flex-end}
+          .askmsg .body.fail{display:flex;gap:9px;align-items:baseline;color:var(--dim)}
+          .askmsg .body.fail .state{flex:none}
+          .askmsg .stamp{font-size:11px;color:var(--mute)}
+          .asksteps{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:2px}
+          .askstep{font-size:11px;color:var(--dim);background:var(--card2);
+                   border:1px solid var(--line);border-radius:999px;padding:2px 9px;
+                   white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+          .askstep b{color:var(--ink);font-weight:600}
+          .askbar{display:flex;gap:9px;align-items:flex-end}
+          .askbar textarea{flex:1;min-height:44px;max-height:190px;resize:vertical;
+                           background:var(--card2);color:var(--ink);border:1px solid var(--line);
+                           border-radius:9px;padding:11px 13px;font:inherit;line-height:1.5}
+          .askbar textarea:focus{outline:none;border-color:var(--brand)}
+          .asktip{display:flex;flex-wrap:wrap;gap:7px}
+          .asktip button{background:var(--card2);border:1px solid var(--line);color:var(--dim);
+                         border-radius:999px;padding:4px 11px;font-size:12px}
+          .asktip button:hover{color:var(--ink);border-color:var(--brand)}
           .arow .ago{color:var(--mute);font-variant-numeric:tabular-nums}
           .arow .who{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
           .arow .what{font-weight:600}
@@ -764,6 +794,10 @@ final class WebPage {
         let headsOn=true;
         // Whether opening the 3D map is something to be asked about first.
         let warn3d=false, agreed3d=false;
+        // Whether the panel has an AI menu at all. True until the session says
+        // otherwise, so the tab does not flash into existence a moment after
+        // the page settles on a server that has it on.
+        let aiChatOn=true;
 
         /**
          * Where something happened, in words — or nothing at all.
@@ -1168,7 +1202,12 @@ final class WebPage {
           const nav=$('nav'); nav.innerHTML='';
           const all = [['dash','Overview'],['term','Console'],
                        ['activity','Activity'],['files','Files'],['players','Players'],
-                       ['mods','Mods'],['settings','Settings']];
+                       ['mods','Mods'],['ai','AI'],['settings','Settings']];
+          // The AI menu can be switched off for the whole panel, which is a
+          // different question from whether one account may open it. Off means
+          // gone for everybody, so it is dropped before the access filter
+          // rather than folded into it.
+          if(!aiChatOn){ const i=all.findIndex(t=>t[0]==='ai'); if(i>=0) all.splice(i,1); }
           // A menu somebody may not open is not drawn at all. A disabled tab
           // would still tell them what exists and invite them to ask why.
           const tabs = authed ? all.filter(t=>mayRead(t[0])) : [['dash','Overview']];
@@ -1209,6 +1248,7 @@ final class WebPage {
           else if(tab==='mods') m.appendChild(modsPanel());
           else if(tab==='players') m.appendChild(playersPanel());
           else if(tab==='activity') m.appendChild(activityPanel());
+          else if(tab==='ai') m.appendChild(aiPanel());
           else if(tab==='settings') m.appendChild(settingsPanel());
           if(authed) lockWrites(m,tab);
         }
@@ -7958,6 +7998,301 @@ final class WebPage {
 
         """;
 
+    private static final String PARTASK = """
+        // ---- the AI menu ----
+        // A conversation about the server, in words. What makes it different
+        // from the summary in the Activity menu is that nothing is pasted into
+        // the question: the model is given a list of things it may look up and
+        // it goes and looks them up, so a question about one player in one
+        // hour costs one small lookup instead of a transcript of everything.
+        // The panel shows every lookup it made, because an answer about your
+        // own server should be checkable rather than taken on faith.
+        let chat={messages:[],problem:'',tools:[],working:false,ready:false};
+        let chatBusy=false, chatDrawn=0;
+
+        /** How long to keep asking for an answer before saying so. */
+        const CHAT_WAIT=12*60*1000;
+
+        const ASK_TIPS=[
+          'What happened while I was away?',
+          'Who has been on the most this week?',
+          'Has anyone been digging near spawn?',
+          'Is anything wrong with the server right now?'
+        ];
+
+        function aiPanel(){
+          const wrap=document.createElement('div');
+          wrap.innerHTML=
+            '<p class="muted">Ask about anything the panel records \u2014 who did what, '+
+            'when, and where. Questions reach the whole activity log, which is kept on '+
+            'disk, so this is not limited to the session running now.</p>'+
+            '<div class="askwrap">'+
+            '<div id="ask-state"></div>'+
+            '<div class="asktalk" id="ask-talk"></div>'+
+            '<div class="asktip" id="ask-tips"></div>'+
+            '<div class="askbar">'+
+              '<textarea id="ask-box" rows="1" placeholder="Ask about the server\u2026" '+
+                'maxlength="2000"></textarea>'+
+              '<button class="btn go" id="ask-send">Ask</button>'+
+            '</div>'+
+            '<div class="msg" id="ask-msg"></div>'+
+            '<div style="display:flex"><span class="spacer"></span>'+
+              '<button class="btn" id="ask-clear">Start again</button></div>'+
+            '</div>';
+          setTimeout(()=>{
+            const box=$('ask-box'); if(!box) return;
+            $('ask-send').onclick=()=>askAi();
+            $('ask-clear').onclick=()=>clearChat();
+            // Enter sends, shift-Enter makes a new line. The box is a textarea
+            // rather than an input so that pasting a log line keeps its shape.
+            box.onkeydown=e=>{
+              if(e.key==='Enter' && !e.shiftKey && !e.isComposing){
+                e.preventDefault(); askAi();
+              }
+            };
+            box.oninput=()=>{ box.style.height='auto';
+                              box.style.height=Math.min(190,box.scrollHeight)+'px'; };
+            paintTips();
+            // Drawn from what is already known before the request goes out, so
+            // switching to this menu and back does not blank the conversation.
+            chatDrawn=0; paintChat(); loadChat();
+          },0);
+          return wrap;
+        }
+
+        function paintTips(){
+          const box=$('ask-tips'); if(!box) return;
+          box.innerHTML='';
+          // Only worth offering on an empty conversation. Once somebody has
+          // asked something of their own, four canned questions under the box
+          // are clutter rather than help.
+          if(chat.messages.length) return;
+          for(const t of ASK_TIPS){
+            const b=document.createElement('button');
+            b.textContent=t;
+            b.onclick=()=>{ const box2=$('ask-box'); if(!box2) return;
+                            box2.value=t; askAi(); };
+            box.appendChild(b);
+          }
+        }
+
+        async function loadChat(){
+          const r=await jget('/api/ai/chat');
+          if(r.status!==200){
+            if(r.status===403||r.status===401) return;
+            askSay(why(r),true); return;
+          }
+          takeChat(r.body);
+          // A question asked before this page was reloaded, or in another tab,
+          // is still being worked on. Pick it up rather than showing a
+          // half-finished conversation that never moves.
+          if(r.body.working && !chatBusy){
+            chatBusy=true; setChatBusy(true);
+            askSay('Looking it up\u2026',false);
+            followChat();
+          }
+        }
+
+        function takeChat(body){
+          chat={messages:body.messages||[], problem:body.problem||'',
+                tools:body.tools||[], working:!!body.working, ready:true};
+          chatDrawn=0;
+          paintChat(); paintTips(); paintChatState();
+        }
+
+        async function askAi(){
+          if(chatBusy) return;
+          const box=$('ask-box'); if(!box) return;
+          const q=(box.value||'').trim();
+          if(!q){ box.focus(); return; }
+          if(chat.problem){ askSay(chat.problem,true); return; }
+
+          chatBusy=true;
+          box.value=''; box.style.height='auto';
+          setChatBusy(true);
+          // Shown immediately rather than waiting for the round trip. The
+          // answer can take several requests to the model, and a question that
+          // vanishes from the box without appearing above it reads as lost.
+          chat.messages=chat.messages.concat([{at:Date.now(),mine:true,text:q}]);
+          paintChat(); paintTips();
+          askSay('Looking it up\u2026',false);
+
+          const r=await jpost('/api/ai/chat',{question:q});
+          if(r.status!==200 && r.status!==202){
+            chatBusy=false; setChatBusy(false);
+            // The question is put back in the box. It was never asked, and
+            // retyping something the panel already had is a small insult.
+            box.value=q;
+            chat.messages=chat.messages.slice(0,-1);
+            paintChat(); paintTips();
+            askSay(why(r),true);
+            return;
+          }
+          takeChat(r.body);
+          // 202 means the server took the question and is working on it, and
+          // nothing waits on that request \u2014 so neither this page nor a
+          // proxy in front of it can time the answer out. A fast enough model
+          // can be finished before the 202 is even written, so the reply is
+          // read rather than assumed, and there is nothing to wait for.
+          if(chat.working){ await followChat(); return; }
+          chatBusy=false; setChatBusy(false);
+          askSay('',false);
+          const t=$('ask-talk'); if(t) t.scrollTop=t.scrollHeight;
+        }
+
+        /**
+         * Asks again until the answer is there.
+         *
+         * <p>A second and a bit between tries: fast enough that a quick answer
+         * feels immediate, slow enough that a model taking three minutes is not
+         * three minutes of requests. It gives up eventually rather than polling
+         * a panel that has gone away, and says so.
+         */
+        async function followChat(){
+          const until=Date.now()+CHAT_WAIT;
+          while(Date.now()<until){
+            await new Promise(go=>setTimeout(go,1200));
+            const r=await jget('/api/ai/chat');
+            if(r.status!==200){
+              chatBusy=false; setChatBusy(false);
+              askSay(why(r),true);
+              return;
+            }
+            takeChat(r.body);
+            if(!r.body.working){
+              chatBusy=false; setChatBusy(false);
+              askSay('',false);
+              const t=$('ask-talk'); if(t) t.scrollTop=t.scrollHeight;
+              return;
+            }
+          }
+          chatBusy=false; setChatBusy(false);
+          askSay('Still working after '+Math.round(CHAT_WAIT/60000)+' minutes. It may yet '+
+                 'finish \u2014 reopen this menu to see.',true);
+        }
+
+        async function clearChat(){
+          if(chatBusy) return;
+          const r=await jpost('/api/ai/chat',{clear:true});
+          if(r.status!==200){ askSay(why(r),true); return; }
+          takeChat(r.body);
+          askSay('',false);
+        }
+
+        function askSay(text,bad){
+          const m=$('ask-msg'); if(!m) return;
+          m.className='msg '+(text?(bad?'err':'ok'):'');
+          m.textContent=text||'';
+        }
+
+        function setChatBusy(busy){
+          const b=$('ask-send'), box=$('ask-box'), clear=$('ask-clear');
+          if(b){ b.disabled=busy; b.textContent=busy?'Thinking\u2026':'Ask'; }
+          if(box) box.disabled=busy;
+          if(clear) clear.disabled=busy;
+        }
+
+        function paintChatState(){
+          const box=$('ask-state'); if(!box) return;
+          box.innerHTML='';
+          if(!chat.problem) return;
+          const d=document.createElement('div');
+          d.className='note';
+          d.textContent=chat.problem;
+          box.appendChild(d);
+        }
+
+        function paintChat(){
+          const box=$('ask-talk'); if(!box) return;
+          if(!chat.messages.length){
+            chatDrawn=0;
+            box.innerHTML='<div class="note" style="padding:14px">'+
+              (chat.problem
+                ? esc(chat.problem)
+                : 'Nothing asked yet. Whatever you ask is looked up here on this '+
+                  'server \u2014 only the question and what the lookups return are '+
+                  'sent to the model.')+'</div>';
+            return;
+          }
+          // Appended rather than rebuilt, the same way the Activity list works:
+          // a redraw of the whole transcript on every answer would throw away
+          // the scroll position of the conversation being read.
+          const stick=box.scrollTop+box.clientHeight >= box.scrollHeight-40;
+          if(!chatDrawn) box.innerHTML='';
+          for(let i=chatDrawn;i<chat.messages.length;i++){
+            box.appendChild(chatRow(chat.messages[i]));
+          }
+          chatDrawn=chat.messages.length;
+          if(stick) box.scrollTop=box.scrollHeight;
+        }
+
+        function chatRow(m){
+          const d=document.createElement('div');
+          d.className='askmsg'+(m.mine?' mine':'');
+          if(!m.mine && m.steps && m.steps.length) d.appendChild(chatSteps(m.steps));
+          const body=document.createElement('div');
+          body.className='body';
+          if(m.error){
+            // A badge, then the reason in the case it was written in. The
+            // badge style upper-cases what it is given, which is right for
+            // the word "Off" and wrong for two sentences about a timeout.
+            body.className='body fail';
+            const tag=document.createElement('span');
+            tag.className='state warn'; tag.textContent='No answer';
+            const said=document.createElement('span');
+            said.textContent=m.error;
+            body.append(tag,said);
+          } else {
+            body.textContent=m.text||'';
+          }
+          d.appendChild(body);
+          const stamp=document.createElement('div');
+          stamp.className='stamp';
+          stamp.textContent=(m.mine?'You':'Almin')+' \u00b7 '+shortTime(m.at);
+          d.appendChild(stamp);
+          return d;
+        }
+
+        /**
+         * What the model looked up, above the answer it wrote from.
+         *
+         * <p>Not decoration. An answer about your own server is worth
+         * something only if you can see where it came from, and "counted 4,102
+         * rows by player" next to "Steve, by a distance" is the difference
+         * between a claim and a result.
+         */
+        function chatSteps(steps){
+          const d=document.createElement('div');
+          d.className='asksteps';
+          for(const s of steps){
+            const b=document.createElement('span');
+            b.className='askstep';
+            b.innerHTML='<b>'+esc(toolLabel(s.tool))+'</b> '+esc(s.note||'');
+            b.title=s.tool+' \u2014 '+(s.note||'');
+            d.appendChild(b);
+          }
+          return d;
+        }
+
+        function toolLabel(name){
+          return ({search_activity:'read the log',
+                   count_activity:'counted the log',
+                   activity_overview:'checked what is recorded',
+                   player_positions:'read a path',
+                   list_players:'listed players',
+                   player_summary:'looked up a player',
+                   server_status:'checked the server',
+                   list_mods:'listed mods',
+                   settings_summary:'read the settings'})[name] || name;
+        }
+
+        function shortTime(at){
+          const d=new Date(+at||Date.now());
+          return d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        }
+
+        """;
+
     private static final String PART3 = """
         // ---- settings ----
         // Two different things live under Settings: Almin's own, and the
@@ -8187,6 +8522,12 @@ final class WebPage {
               '<label><span>API key</span>'+
                 '<input id="s-aikey" type="password" autocomplete="off" '+
                 'placeholder="not needed for a local model"></label>'+
+              '<label><span>AI menu</span><select id="s-aichat">'+
+                '<option value="true">shown \u2014 ask questions about the server</option>'+
+                '<option value="false">hidden</option></select></label>'+
+              '<label><span>Lookups per question</span>'+
+                '<input id="s-airounds" type="number" min="1" max="20" step="1" '+
+                'value="6" inputmode="numeric"></label>'+
               '<label><span>Summarise on its own</span>'+
                 '<select id="s-aiauto">'+
                   '<option value="0">only when asked</option>'+
@@ -8919,6 +9260,8 @@ final class WebPage {
             $('s-aiimage').value=a.sendSceneImages===false?'false':'true';
             $('s-aiauto').value=String(a.autoMinutes||0);
             $('s-aitimeout').value=String(a.timeoutSeconds||45);
+            $('s-aichat').value=a.chat===false?'false':'true';
+            $('s-airounds').value=String(a.toolRounds||6);
           }
           const local=(prov?prov.value:a.provider)==='local';
           const leaves=local
@@ -9050,7 +9393,9 @@ final class WebPage {
           const sets=[['ai-provider',prov],
                       ['ai-model',($('s-aimodel').value||'').trim()],
                       ['ai-send-scene-images',$('s-aiimage').value],
-                      ['ai-auto-minutes',$('s-aiauto').value]];
+                      ['ai-auto-minutes',$('s-aiauto').value],
+                      ['ai-chat',$('s-aichat').value],
+                      ['ai-tool-rounds',$('s-airounds').value]];
           if(aiHasUrl(prov)) sets.push(['ai-base-url',($('s-aiurl').value||'').trim()]);
           if(prov==='local' || prov==='custom')
             sets.push(['ai-timeout-seconds',$('s-aitimeout').value]);
@@ -10503,6 +10848,13 @@ final class WebPage {
           // Absent for a logged-out session, which never asks for a face anyway.
           if(s.body.heads!=null) headsOn=!!s.body.heads;
           if(s.body.warn3d!=null) warn3d=!!s.body.warn3d;
+          if(s.body.aiChat!=null){
+            const was=aiChatOn; aiChatOn=!!s.body.aiChat;
+            // Turning the menu off while somebody is standing in it has to
+            // move them somewhere, and turning it on should put it in the
+            // navigation without waiting for the next thing they click.
+            if(was!==aiChatOn){ if(!aiChatOn && tab==='ai') tab='dash'; render(); }
+          }
           if(restarting && !awaitingReturn){ awaitingReturn=true; waitingSince=Date.now(); }
           // A different version answering on this address means the jar was
           // replaced under us and this page is the old panel. Reload onto the
@@ -10578,5 +10930,6 @@ final class WebPage {
      * piece is a readable unit and not an arbitrary cut.
      */
     static final String HTML = String.join("", PART1, PART1B, PARTFILES, PART2, PARTMAP, PARTSEQ,
-        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PART3, PARTUPDATE, PARTSETTINGS);
+        PARTMAPUI, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
+        PARTUPDATE, PARTSETTINGS);
 }

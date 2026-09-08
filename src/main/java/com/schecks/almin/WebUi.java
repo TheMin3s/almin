@@ -331,6 +331,7 @@ public final class WebUi {
         http.createContext("/api/head", ui.guard("/api/head", ui::handleHead));
         http.createContext("/api/insights", ui.guard("/api/insights", ui::handleInsights));
         http.createContext("/api/insights/find", ui.guard("/api/insights/find", ui::handleFind));
+        http.createContext("/api/ai/chat", ui.guard("/api/ai/chat", ui::handleAiChat));
         http.createContext("/api/ai/key", ui.guard("/api/ai/key", ui::handleAiKey));
         http.createContext("/api/ai/diagnostics",
             ui.guard("/api/ai/diagnostics", ui::handleAiDiagnostics));
@@ -523,6 +524,10 @@ public final class WebUi {
         java.util.Map.entry("/api/clearlog", "settings"),
         java.util.Map.entry("/api/ai/key", "settings"),
         java.util.Map.entry("/api/ai/diagnostics", "settings"),
+        // Reading the conversation is a read; asking costs the owner money and
+        // is therefore a write, which is also what makes the panel disable the
+        // Ask button for a read-only account rather than let it be refused.
+        java.util.Map.entry("/api/ai/chat", "ai"),
         java.util.Map.entry("/api/state", "dash"),
         java.util.Map.entry("/api/server", "dash"));
 
@@ -996,6 +1001,10 @@ public final class WebUi {
                 // has them turned off.
                 o.addProperty("heads", cfg.webPlayerHeads);
                 o.addProperty("warn3d", cfg.activity3dWarning);
+                // Whether the AI menu exists at all. Sent with the session
+                // rather than fetched by the menu itself, because the answer
+                // decides whether the menu is in the navigation to be opened.
+                o.addProperty("aiChat", cfg.aiChat);
                 // Who is signed in and what they may reach. The panel draws
                 // itself from this, so a menu somebody cannot open is a menu
                 // that is not there rather than one that errors when pressed.
@@ -2987,6 +2996,95 @@ public final class WebUi {
      * the server thread, because it waits on a network round trip that can
      * take a minute.
      */
+    /**
+     * The AI menu: read the conversation, ask a question, or forget it.
+     *
+     * <p>Asking answers 202 and leaves the work running. There is no job id to
+     * go with it and none is needed: one question runs at a time and a
+     * conversation belongs to one account, so "is mine still going" is a
+     * property of the account rather than of a ticket, and the same GET that
+     * draws the transcript answers it.
+     */
+    private void handleAiChat(HttpExchange ex) throws IOException {
+        try {
+            if (!requireRead(ex, "ai")) return;
+            Accounts.Account me = who(ex);
+            String method = ex.getRequestMethod();
+
+            if ("GET".equals(method)) {
+                json(ex, 200, chatJson(me));
+                return;
+            }
+            if ("DELETE".equals(method)) {
+                AiChat.clear(me);
+                json(ex, 200, chatJson(me));
+                return;
+            }
+            if (!"POST".equals(method)) { json(ex, 405, err("Use GET, POST or DELETE.")); return; }
+            if (noModel(ex)) return;
+
+            JsonObject body = readBody(ex);
+            if (body.has("clear") && body.get("clear").getAsBoolean()) {
+                AiChat.clear(me);
+                json(ex, 200, chatJson(me));
+                return;
+            }
+            String question = body.has("question") && !body.get("question").isJsonNull()
+                ? body.get("question").getAsString() : "";
+            if (question.isBlank()) { json(ex, 400, err("Ask a question first.")); return; }
+
+            String why = AiChat.start(me, question);
+            if (!why.isEmpty()) { json(ex, 409, err(why)); return; }
+            // Started, not finished. The menu polls until it stops working,
+            // which is what keeps a conversation of several model round trips
+            // out of reach of this request's own timeout and of any proxy's.
+            json(ex, 202, chatJson(me));
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** The whole conversation, plus whatever is standing in the way of asking. */
+    private String chatJson(Accounts.Account me) {
+        JsonObject root = new JsonObject();
+        JsonArray arr = new JsonArray();
+        for (AiChat.Message m : AiChat.history(me)) arr.add(chatMessageJson(m));
+        root.add("messages", arr);
+        root.addProperty("problem", AiChat.problem(me));
+        root.addProperty("working", AiChat.working(me));
+        root.addProperty("enabled", AlminConfig.get().aiChat);
+        root.addProperty("maxQuestion", AiChat.MAX_QUESTION);
+        root.addProperty("barred", me != null && me.modelBarred());
+        root.add("ai", aiStatusJson());
+        // What this account can actually have looked up, so the menu can say
+        // so before somebody asks a question it was never going to reach.
+        JsonArray tools = new JsonArray();
+        for (AiTools.Tool t : AiTools.forAccount(me)) tools.add(t.name());
+        root.add("tools", tools);
+        return root.toString();
+    }
+
+    private JsonObject chatMessageJson(AiChat.Message m) {
+        JsonObject o = new JsonObject();
+        o.addProperty("at", m.at());
+        o.addProperty("mine", m.mine());
+        o.addProperty("text", m.text());
+        if (!m.error().isEmpty()) o.addProperty("error", m.error());
+        if (!m.steps().isEmpty()) {
+            JsonArray steps = new JsonArray();
+            for (AiChat.Step s : m.steps()) {
+                JsonObject step = new JsonObject();
+                step.addProperty("tool", s.tool());
+                step.addProperty("note", s.note());
+                steps.add(step);
+            }
+            o.add("steps", steps);
+        }
+        return o;
+    }
+
     private void handleInsights(HttpExchange ex) throws IOException {
         try {
             if (!requireAuth(ex)) return;
@@ -3425,6 +3523,8 @@ public final class WebUi {
         o.addProperty("sendSceneImages", cfg.aiSendSceneImages);
         o.addProperty("autoMinutes", cfg.aiAutoMinutes);
         o.addProperty("timeoutSeconds", cfg.aiTimeoutSeconds);
+        o.addProperty("chat", cfg.aiChat);
+        o.addProperty("toolRounds", cfg.aiToolRounds);
         o.addProperty("hasKey", AiInsights.hasKey());
         o.addProperty("problem", AiInsights.problem());
         return o;
@@ -4827,6 +4927,27 @@ public final class WebUi {
     }
 
     // ---------- server-thread bridge ----------
+
+    /**
+     * The running server, for the parts of Almin that answer questions outside
+     * a request they were handed. {@link AiTools} is the caller that matters:
+     * it is reached from the model's turn rather than from a route, so it has
+     * no exchange to take a server from. Null while the server is stopped,
+     * which every caller has to answer for rather than assume away.
+     */
+    static MinecraftServer bound() { return boundServer; }
+
+    /** {@link #onServer} for those same callers, which hold no WebUi. */
+    static <T> T onServerThread(Supplier<T> job, T fallback) {
+        MinecraftServer s = boundServer;
+        if (s == null) return fallback;
+        try {
+            return s.submit(job).get(SERVER_OP_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            AlminLog.warn("[almin] server-op failed: {}", e.toString());
+            return fallback;
+        }
+    }
 
     private <T> T onServer(Supplier<T> job, T fallback) {
         try {

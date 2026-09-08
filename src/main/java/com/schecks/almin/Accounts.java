@@ -62,7 +62,7 @@ public final class Accounts {
      * "what you can see" cannot drift apart into two different vocabularies.
      */
     public static final List<String> MENUS =
-        List.of("dash", "term", "activity", "files", "players", "mods", "settings");
+        List.of("dash", "term", "activity", "files", "players", "mods", "ai", "settings");
 
     // ---------- the switches that are not menus ----------
 
@@ -128,6 +128,7 @@ public final class Accounts {
     /** What each menu is called where a person reads it. */
     public static String menuName(String menu) {
         return switch (menu) {
+            case "ai" -> "AI";
             case "dash" -> "Dashboard";
             case "term" -> "Console";
             case "activity" -> "Activity";
