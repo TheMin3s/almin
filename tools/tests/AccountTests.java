@@ -203,13 +203,25 @@ public class AccountTests {
         // — the one place the whole point of the setting is on screen —
         // was sending e.detail() straight out.
         String rowSrc = web0();
+        // The map's rows are built in one place now, and the timeline's window
+        // route is a third way to reach them. So the rule is checked twice: the
+        // builders go through detailFor, and nothing that emits a row anywhere
+        // reaches past it to the raw text.
         for (String fn : new String[]{"private String activityJson(",
-                                      "private JsonObject allTracksJson("}) {
+                                      "private JsonObject actionJson("}) {
             int i = rowSrc.indexOf(fn);
             check(fn.split("\\(")[0].replaceAll(".* ", "") + " exists", i > 0);
             String body = rowSrc.substring(i, rowSrc.indexOf("\n    }", i));
             check("  ...and it sends what the account may read",
                 body.contains("detailFor(me, e)") && !body.contains("\"detail\", e.detail()"));
+        }
+        for (String fn : new String[]{"private JsonObject allTracksJson(",
+                                      "private String windowJson("}) {
+            int i = rowSrc.indexOf(fn);
+            check(fn.split("\\(")[0].replaceAll(".* ", "") + " exists", i > 0);
+            String body = rowSrc.substring(i, rowSrc.indexOf("\n    }", i));
+            check("  ...and it builds its rows through the one builder that does",
+                body.contains("actionJson(me, e)") && !body.contains("e.detail()"));
         }
 
         // Searching is the same secret arriving one letter at a time, so the

@@ -59,6 +59,7 @@ public class PanelApiTests {
                 {"/api/file/mkdir", "handleFileMkdir"},
                 {"/api/files", "handleFiles"},
                 {"/api/activity", "handleActivity"},
+                {"/api/track", "handleTrack"},
                 {"/api/config", "handleConfig"}}) {
             Method m = WebUi.class.getDeclaredMethod(r[1], HttpExchange.class);
             m.setAccessible(true);
@@ -84,6 +85,7 @@ public class PanelApiTests {
         login();
         controls();
         rows();
+        timeline();
         heads();
         modIcons();
         mkdir();
@@ -232,6 +234,114 @@ public class PanelApiTests {
     }
 
     /** The bit of a JSON body between two markers, for reading one field out. */
+    /**
+     * The timeline reaches the whole record, not the end of it.
+     *
+     * <p>The map is handed a slice off the end of the log, and it used to work
+     * out where the quiet stretches were from that slice — so the strip drew
+     * the last few hours of a five-day record and gave no sign there was any
+     * more. Worse, the answer moved: a session was numbered from data that
+     * grew, so the buttons that navigate by session number pointed somewhere
+     * else a moment later.
+     */
+    static void timeline() throws Exception {
+        java.lang.reflect.Field ef = com.schecks.almin.ActivityLog.class
+            .getDeclaredField("entries");
+        ef.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Deque<com.schecks.almin.ActivityEntry> log =
+            (java.util.Deque<com.schecks.almin.ActivityEntry>) ef.get(null);
+        log.clear();
+        forgetQuiet();
+
+        // Four evenings, an hour of play in each, a day apart. Nothing but the
+        // gaps between them says where one ends and the next begins.
+        long day = 24L * 3600 * 1000;
+        long start = System.currentTimeMillis() - 4 * day;
+        for (int evening = 0; evening < 4; evening++) {
+            long base = start + evening * day;
+            for (int i = 0; i < 900; i++) {
+                log.addLast(new com.schecks.almin.ActivityEntry(base + i * 4000L,
+                    "Steve", "u1", "break", "stone " + evening + "-" + i,
+                    "overworld", i, 64, evening, 1));
+            }
+        }
+
+        var all = send("GET", "/api/track?all=1", null, cookie);
+        ck("the map is answered", all.statusCode() == 200, String.valueOf(all.statusCode()));
+
+        // 3,600 rows against a 2,500 cap: the newest evening and a bit, and
+        // nothing at all of the first two.
+        int sent = count(all.body(), "\"at\":");
+        ck("it is still sent a slice rather than the whole log", sent <= 2600 && sent > 0,
+            String.valueOf(sent));
+
+        long oldest = start;
+        String from = between(all.body(), "\"from\":", ",");
+        ck("but the period it reports starts at the oldest row there is",
+            Math.abs(Long.parseLong(from.trim()) - oldest) < 60_000,
+            from + " vs " + oldest);
+
+        int gaps = count(all.body(), "\"from\":") - 1;   // one per gap, plus the root's
+        ck("and it is told where all three quiet stretches are", gaps == 3,
+            String.valueOf(gaps));
+
+        // The same question twice must give the same answer, or a session
+        // renumbers itself under whoever is reading it.
+        var again = send("GET", "/api/track?all=1", null, cookie);
+        ck("asking twice describes the record the same way",
+            between(again.body(), "\"gaps\":", "]").equals(
+                between(all.body(), "\"gaps\":", "]")),
+            between(again.body(), "\"gaps\":", "]"));
+
+        // The window route: the older evenings, fetched when looked at.
+        long firstEvening = start + 30 * 60 * 1000;
+        var win = send("GET", "/api/track?window=1&from=" + (start - 60000)
+            + "&to=" + firstEvening, null, cookie);
+        ck("a window into the oldest evening is answered", win.statusCode() == 200,
+            String.valueOf(win.statusCode()));
+        int got = count(win.body(), "\"at\":");
+        ck("...with the rows from it", got > 400 && got <= 2500, String.valueOf(got));
+        ck("...which are rows the map was never sent",
+            win.body().contains("stone 0-") && !all.body().contains("stone 0-"), "");
+        ck("...and it says whether that is all of them",
+            win.body().contains("\"full\":true"), meta(win.body()));
+
+        // A window over everything is capped like everything else, and has to
+        // say so, or the map would take the newest 2,500 for the lot.
+        var wide = send("GET", "/api/track?window=1&from=0&to="
+            + (System.currentTimeMillis() + 1000), null, cookie);
+        ck("a window across the whole record is capped", wide.statusCode() == 200
+            && count(wide.body(), "\"at\":") <= 2500,
+            String.valueOf(count(wide.body(), "\"at\":")));
+        ck("...and admits it did not reach the far end",
+            wide.body().contains("\"full\":false"), meta(wide.body()));
+        ck("...naming how far back it did reach, so the rest can still be asked for",
+            !between(wide.body(), "\"covered\":", ",").trim().equals("0"),
+            meta(wide.body()));
+
+        var empty = send("GET", "/api/track?window=1&from=1000&to=2000", null, cookie);
+        ck("a window with nothing in it is an empty answer, not an error",
+            empty.statusCode() == 200 && count(empty.body(), "\"at\":") == 0,
+            String.valueOf(empty.statusCode()));
+
+        log.clear();
+        forgetQuiet();
+    }
+
+    static int count(String body, String needle) {
+        int n = 0, i = 0;
+        while ((i = body.indexOf(needle, i)) >= 0) { n++; i += needle.length(); }
+        return n;
+    }
+
+    static void forgetQuiet() throws Exception {
+        java.lang.reflect.Method m = com.schecks.almin.WebUi.class
+            .getDeclaredMethod("forgetQuiet");
+        m.setAccessible(true);
+        m.invoke(null);
+    }
+
     static String between(String body, String from, String to) {
         int i = body.indexOf(from);
         if (i < 0) return "";

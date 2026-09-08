@@ -2831,6 +2831,14 @@ public final class WebUi {
             root.addProperty("trackSeconds", cfg.activityTrackSeconds);
             root.addProperty("leftPlayerHours", cfg.blueMapLeftPlayerHours);
 
+            // One stretch of the record, for a map that has been moved
+            // somewhere it has not been. Answered before the everyone-at-once
+            // branch because it is the cheap half of it.
+            if ("1".equals(queryParam(ex, "window"))) {
+                json(ex, 200, windowJson(me, longParam(ex, "from"), longParam(ex, "to")));
+                return;
+            }
+
             // Everyone at once, for the timeline map at the top of the tab.
             if ("1".equals(queryParam(ex, "all"))) {
                 // The player list belongs to the server thread; everything else
@@ -2897,6 +2905,89 @@ public final class WebUi {
      * around" — which needs everyone on the same timeline or it answers
      * nothing.
      */
+    /**
+     * How long a stretch of nothing counts as nobody being on.
+     *
+     * <p>The same ninety seconds the panel used when it worked this out for
+     * itself, and it has to stay the same: the number decides where one
+     * session ends and the next begins, and the two sides disagreeing would
+     * mean the strip and the session buttons counted differently.
+     */
+    private static final long QUIET_MS = 90_000L;
+
+    /** The quiet stretches, and how long working them out took to be worth keeping. */
+    private record Quiet(long at, int rows, long newest, JsonArray gaps, long from, long to) {}
+
+    private static volatile Quiet quietCache;
+
+    /**
+     * Where nobody was playing, over the whole record.
+     *
+     * <p>The panel used to work this out from what it had been sent, which was
+     * the newest few thousand rows. That made the timeline a picture of the
+     * last day or so no matter how much log there was, and — worse — the
+     * answer changed as more rows arrived, so a session could be numbered 40
+     * one moment and 38 the next. Sessions are something to navigate by, so
+     * they are worked out here, once, over everything.
+     *
+     * <p>Cached, because it walks every row and every path and the live map
+     * asks again every few seconds. A new row or a new sample invalidates it;
+     * so does ten seconds passing, since a gap opens by nothing happening and
+     * nothing happening changes no counter.
+     */
+    private static synchronized JsonObject quietJson(String only) {
+        ActivityLog.Span span = ActivityLog.span();
+        long now = System.currentTimeMillis();
+        Quiet had = quietCache;
+        boolean cacheable = only == null;
+        if (cacheable && had != null && had.rows() == span.rows()
+            && had.newest() == span.to() && now - had.at() < 10_000L) {
+            return quietObject(had);
+        }
+
+        long[] logAt = ActivityLog.moments(e -> visible(only, e.player()));
+        List<long[]> paths = new ArrayList<>();
+        int points = 0;
+        for (String name : PlayerTracks.tracked().keySet()) {
+            if (!visible(only, name)) continue;
+            List<PlayerTrackPoint> path = PlayerTracks.of(name);
+            long[] at = new long[path.size()];
+            for (int i = 0; i < at.length; i++) at[i] = path.get(i).at();
+            paths.add(at);
+            points += at.length;
+        }
+
+        long[] all = new long[logAt.length + points];
+        System.arraycopy(logAt, 0, all, 0, logAt.length);
+        int n = logAt.length;
+        for (long[] at : paths) { System.arraycopy(at, 0, all, n, at.length); n += at.length; }
+        java.util.Arrays.sort(all);
+
+        JsonArray gaps = new JsonArray();
+        for (int i = 1; i < all.length; i++) {
+            if (all[i] - all[i - 1] <= QUIET_MS) continue;
+            JsonObject g = new JsonObject();
+            g.addProperty("from", all[i - 1]);
+            g.addProperty("to", all[i]);
+            gaps.add(g);
+        }
+        Quiet made = new Quiet(now, span.rows(), span.to(), gaps,
+            all.length == 0 ? 0 : all[0], all.length == 0 ? 0 : all[all.length - 1]);
+        if (cacheable) quietCache = made;
+        return quietObject(made);
+    }
+
+    private static JsonObject quietObject(Quiet q) {
+        JsonObject o = new JsonObject();
+        o.add("gaps", q.gaps());
+        o.addProperty("from", q.from());
+        o.addProperty("to", q.to());
+        return o;
+    }
+
+    /** Forgets the cached shape of the record. For the tests, and for a wipe. */
+    static void forgetQuiet() { quietCache = null; }
+
     private JsonObject allTracksJson(JsonObject root, List<Afk.Who> online,
                                      Accounts.Account me) {
         long from = Long.MAX_VALUE, to = 0;
@@ -2927,21 +3018,12 @@ public final class WebUi {
         }
 
         JsonArray actions = new JsonArray();
+        long oldestSent = 0;
         for (ActivityEntry e : ActivityLog.recent(mapRows())) {
             if (e.dim() == null || e.dim().isEmpty()) continue;
             if (!visible(only, e.player())) continue;
-            JsonObject o = new JsonObject();
-            o.addProperty("at", e.at());
-            o.addProperty("player", e.player());
-            o.addProperty("mask", maskOf(e.uuid()));
-            o.addProperty("action", e.action());
-            o.addProperty("detail", detailFor(me, e));
-            o.addProperty("dim", e.dim());
-            o.addProperty("x", e.x());
-            o.addProperty("y", e.y());
-            o.addProperty("z", e.z());
-            o.addProperty("count", e.count());
-            actions.add(o);
+            actions.add(actionJson(me, e));
+            oldestSent = oldestSent == 0 ? e.at() : Math.min(oldestSent, e.at());
             from = Math.min(from, e.at());
             to = Math.max(to, e.at());
         }
@@ -2967,19 +3049,95 @@ public final class WebUi {
 
         root.addProperty("all", true);
         root.addProperty("rowsShown", rowsShown());
+        root.addProperty("mapRows", mapRows());
+        // What was actually sent, as opposed to what exists. The map draws the
+        // second and fetches into the first, so it has to be told both or it
+        // would take the end of the log for the end of the record.
+        root.addProperty("actionsFrom", oldestSent);
         root.add("tracks", tracks);
         root.add("ids", ids);
         root.add("actions", actions);
         root.add("online", who);
         root.addProperty("afkSeconds", AlminConfig.get().activityAfkSeconds);
-        root.addProperty("from", from == Long.MAX_VALUE ? 0 : from);
-        root.addProperty("to", to);
+        // The edges of the record, not the edges of what was just sent. The
+        // paths and the newest rows used to decide this between them, so a
+        // timeline drew the last day of a five-day log and gave no sign there
+        // was any more of it.
+        JsonObject quiet = quietJson(only);
+        long realFrom = quiet.get("from").getAsLong();
+        long realTo = quiet.get("to").getAsLong();
+        if (realFrom == 0 && realTo == 0) {
+            realFrom = from == Long.MAX_VALUE ? 0 : from;
+            realTo = to;
+        }
+        root.addProperty("from", Math.min(realFrom, from == Long.MAX_VALUE ? realFrom : from));
+        root.addProperty("to", Math.max(realTo, to));
+        root.add("gaps", quiet.get("gaps"));
         // The clock, not the last thing that was recorded. Live mode follows
         // this: on a quiet server the newest row can be an hour old, and a
         // cursor pinned to it would say the map was showing an hour ago.
         root.addProperty("now", System.currentTimeMillis());
         root.add("admins", adminPolicyJson());
         return root;
+    }
+
+    /** One recorded action, as the map draws it. */
+    private JsonObject actionJson(Accounts.Account me, ActivityEntry e) {
+        JsonObject o = new JsonObject();
+        o.addProperty("at", e.at());
+        o.addProperty("player", e.player());
+        o.addProperty("mask", maskOf(e.uuid()));
+        o.addProperty("action", e.action());
+        o.addProperty("detail", detailFor(me, e));
+        o.addProperty("dim", e.dim());
+        o.addProperty("x", e.x());
+        o.addProperty("y", e.y());
+        o.addProperty("z", e.z());
+        o.addProperty("count", e.count());
+        return o;
+    }
+
+    /**
+     * The actions inside one stretch of time, and nothing else.
+     *
+     * <p>What the map asks for when it is moved somewhere it has not been. The
+     * whole payload would mean re-sending every path on every scrub, and the
+     * paths are the large half and the unchanging one.
+     *
+     * <p>Newest first, like everything else the map is sent, and capped: a
+     * window can be dragged across the whole record, and answering that with
+     * the whole record would be the thing this endpoint exists to stop. When
+     * the cap bites, {@code full} is false and {@code covered} says how far
+     * back the answer actually reaches, so the map knows what it still has
+     * not seen rather than assuming it has the lot.
+     */
+    private String windowJson(Accounts.Account me, long wantFrom, long wantTo) {
+        String only = onlyPlayer(me);
+        long lo = Math.min(wantFrom, wantTo);
+        long hi = Math.max(wantFrom, wantTo);
+        int cap = mapRows();
+        // Newest-first out of the log, because when a window holds more than
+        // the cap the newest end is the half worth having; reversed on the way
+        // out so the map still receives them in order.
+        ActivityLog.Page page = ActivityLog.page(0, cap, e ->
+            e.dim() != null && !e.dim().isEmpty()
+                && visible(only, e.player())
+                && e.at() >= lo && e.at() <= hi);
+        JsonArray actions = new JsonArray();
+        long oldest = 0;
+        for (ActivityEntry e : page.rows()) {
+            actions.add(actionJson(me, e));
+            oldest = oldest == 0 ? e.at() : Math.min(oldest, e.at());
+        }
+        JsonObject root = new JsonObject();
+        root.addProperty("window", true);
+        root.addProperty("from", lo);
+        root.addProperty("to", hi);
+        root.addProperty("matched", page.matched());
+        root.addProperty("full", !page.more());
+        root.addProperty("covered", page.more() && oldest > 0 ? oldest : lo);
+        root.add("actions", actions);
+        return root.toString();
     }
 
     // ---------- routes: what it all meant ----------
@@ -5054,6 +5212,16 @@ public final class WebUi {
             return JsonParser.parseString(new String(data, StandardCharsets.UTF_8)).getAsJsonObject();
         } catch (RuntimeException e) {
             return new JsonObject();
+        }
+    }
+
+    /** A query parameter that should be a moment in time; anything else is 0. */
+    private static long longParam(HttpExchange ex, String name) {
+        try {
+            String v = queryParam(ex, name).trim();
+            return v.isEmpty() ? 0L : Math.max(0L, Long.parseLong(v));
+        } catch (NumberFormatException e) {
+            return 0L;
         }
     }
 

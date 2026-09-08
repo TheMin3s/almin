@@ -2839,6 +2839,10 @@ final class WebPage {
         // the question you actually start with — "what happened here, and who
         // was around" — which needs everyone on the same timeline.
         let allData=null, allDim='', playTimer=null;
+        // Which stretches of the record the map is already holding actions
+        // for. It opens on the newest few thousand rows; everything older is
+        // fetched when somebody looks at it.
+        let haveRanges=[], windowLoading=false, windowTimer=null, windowWanted=null;
 
         // Where the map is looking, in world blocks rather than pixels: a
         // centre and how many blocks fit across it. Zooming and panning move
@@ -3310,6 +3314,10 @@ final class WebPage {
             }
             const dim=allDim;
             allData=r.body;
+            // A fresh payload is a fresh set of rows, so what was held before
+            // it is no longer a claim this page can make.
+            haveRanges=[];
+            if(+r.body.actionsFrom>0) noteRange(+r.body.actionsFrom,+r.body.to||Date.now());
             showAdmins(r.body.admins);
             const m=await jget('/api/map');
             shots=(m.status===200 && m.body.shots)?m.body.shots:[];
@@ -3405,6 +3413,14 @@ final class WebPage {
          */
         function quietGaps(){
           if(!allData) return [];
+          // The server works these out over the whole log, which is the only
+          // place they can be worked out correctly: the page is sent a slice
+          // off the end, and gaps read off a slice are the gaps in that slice.
+          // It also makes them stand still. Sessions are numbered, the buttons
+          // and the strip navigate by that number, and a boundary that moved
+          // as more rows arrived would renumber the record under whoever was
+          // reading it.
+          if(allData.gaps) return allData.gaps;
           const at=[];
           for(const n of Object.keys(allData.tracks||{}))
             for(const p of allData.tracks[n]) at.push(p.at);
@@ -3417,6 +3433,96 @@ final class WebPage {
           }
           return gaps;
         }
+        /**
+         * Actions for a stretch of the record the map has not been shown yet.
+         *
+         * <p>The map opens on the newest few thousand rows, which is the right
+         * thing to be given for the evening in progress and the wrong thing
+         * for a question about last Tuesday. Rather than send the whole log to
+         * everyone in case, the stretch being looked at is fetched when it is
+         * looked at — so moving to an older session fills it in on its own,
+         * instead of showing a session with paths in it and no events.
+         *
+         * <p>Ranges already held are remembered and merged, so scrubbing back
+         * and forth across the same evening asks once.
+         */
+        function haveWindow(from,to){
+          for(const r of haveRanges) if(r.from<=from+1 && r.to>=to-1) return true;
+          return false;
+        }
+
+        function noteRange(from,to){
+          const all=haveRanges.concat([{from:from,to:to}]).sort((a,b)=>a.from-b.from);
+          const out=[];
+          for(const r of all){
+            const last=out[out.length-1];
+            if(last && r.from<=last.to) last.to=Math.max(last.to,r.to);
+            else out.push({from:r.from,to:r.to});
+          }
+          haveRanges=out;
+        }
+
+        function ensureWindow(from,to){
+          if(!allData || !win.set) return;
+          if(!(from<to)) return;
+          if(haveWindow(from,to)) return;
+          // Coalesced, because this is reached from every repaint and dragging
+          // the overview repaints continuously. The last window asked for is
+          // the one that matters; the ones it swept past are not.
+          windowWanted={from:from,to:to};
+          if(windowTimer) return;
+          windowTimer=setTimeout(()=>{
+            windowTimer=null;
+            const want=windowWanted; windowWanted=null;
+            if(want) fetchWindow(want.from,want.to);
+          },220);
+        }
+
+        async function fetchWindow(from,to){
+          if(windowLoading){ windowWanted={from:from,to:to}; return; }
+          if(haveWindow(from,to)) return;
+          windowLoading=true;
+          try {
+            const r=await jget('/api/track?window=1&from='+Math.floor(from)+
+                               '&to='+Math.ceil(to));
+            if(r.status!==200) return;
+            const added=mergeActions(r.body.actions||[]);
+            // What came back, not what was asked for. A window wider than the
+            // cap is answered with its newest end, and remembering the whole
+            // span would leave the older half unfetchable.
+            noteRange(+r.body.covered||from, +r.body.to||to);
+            if(added) paintAll();
+          } finally {
+            windowLoading=false;
+            if(windowWanted){
+              const want=windowWanted; windowWanted=null;
+              fetchWindow(want.from,want.to);
+            }
+          }
+        }
+
+        /** Enough of a row to tell it from a different one at the same instant. */
+        function actionKey(a){
+          return a.at+'|'+a.player+'|'+a.action+'|'+a.x+','+a.y+','+a.z;
+        }
+
+        function mergeActions(rows){
+          if(!rows.length || !allData) return 0;
+          const acts=allData.actions||(allData.actions=[]);
+          if(!allData.almKeys) allData.almKeys=new Set(acts.map(actionKey));
+          const seen=allData.almKeys;
+          let added=0;
+          for(const a of rows){
+            const k=actionKey(a);
+            if(seen.has(k)) continue;
+            seen.add(k); acts.push(a); added++;
+          }
+          // Newest first, the way the server sends them and the way everything
+          // that reads this array already expects.
+          if(added) acts.sort((x,y)=>y.at-x.at);
+          return added;
+        }
+
         /** The gap the given moment falls inside, or null. */
         function gapAt(t,gaps){
           for(const g of gaps) if(t>g.from && t<g.to) return g;
@@ -4916,6 +5022,10 @@ final class WebPage {
          */
         function paintTimeline(){
           const host=$('t-line'); if(!host || !allData) return;
+          // Drawing the strip is also where the page finds out it is looking
+          // at a stretch it has no rows for. Cheap when it already has them,
+          // which is the usual case and every case during playback.
+          ensureWindow(win.from,win.to);
           const from=allData.from||0, to=allData.to||from+1;
           const gaps=quietGaps();
           // Opens on the evening in progress rather than on the whole record.
@@ -5075,6 +5185,39 @@ final class WebPage {
           if(next) next.disabled=!whole && i>=ss.length-1;
         }
 
+        /** When the cursor last carried past the end of a session. */
+        let carriedAt=0;
+
+        /**
+         * Steps to the session on the other side of the edge being dragged at.
+         *
+         * <p>Returns whether it handled the drag. Held at the edge it advances
+         * one session at a time rather than as fast as pointer events arrive,
+         * because the point of dragging there is to travel through the record
+         * and watch it go past. At the first or last session there is nothing
+         * on the other side, so it says so and the cursor pins to the edge as
+         * it always did.
+         */
+        function carryToSession(by){
+          const ss=sessions();
+          if(ss.length<2) return false;
+          const i=sessionIndexAt(cursorAt)+by;
+          if(i<0 || i>=ss.length) return false;
+          // Still on the cooldown: handled, so the cursor stays where it is
+          // instead of jittering against the edge until the next step is due.
+          if(Date.now()-carriedAt<340) return true;
+          carriedAt=Date.now();
+          const w=windowForSession(ss[i]);
+          win.from=w.from; win.to=w.to; win.set=true;
+          // Enter the new session from the side you arrived at, so a drag to
+          // the right keeps reading forwards.
+          cursorAt=by<0?ss[i].to:ss[i].from;
+          cursorSet=true; live=false; stopPlay();
+          ensureWindow(win.from,win.to);
+          schedulePaint();
+          return true;
+        }
+
         /** Moves the window one whole session earlier or later. */
         function stepSession(by){
           const ss=sessions();
@@ -5088,6 +5231,7 @@ final class WebPage {
           // Land inside what you asked to look at rather than wherever the
           // cursor happened to be, which is usually outside it.
           cursorAt=ss[i].to; cursorSet=true;
+          ensureWindow(win.from,win.to);
           paintAll();
         }
 
@@ -5161,6 +5305,11 @@ final class WebPage {
                     y:((e.clientY-r.top)/r.height)*(tl.OV+tl.GAP+tl.MAIN)};
           };
           const setCursor=x=>{
+            // Dragged off the end of the strip. The strip is one session, so
+            // the thing past its end is the next one — carry into it rather
+            // than pinning the cursor to the edge and stopping there, which
+            // made every session a dead end you had to leave by the buttons.
+            if(x<=0 || x>=tl.W){ if(carryToSession(x<=0?-1:1)) return; }
             // Through the same squeezed scale the strip was drawn with, or
             // the moment you click is not the moment you land on.
             cursorAt=tl.main?tl.main.at(x):win.from+(x/tl.W)*(win.to-win.from);

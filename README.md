@@ -1049,6 +1049,36 @@ Nothing is sent until somebody presses **Summarise**, or sets
 recorded since the last one — re-summarising an unchanged log is spending money
 to be told the same thing.
 
+### How far back the map reaches
+
+The map is handed a slice off the end of the log — the newest few thousand
+rows, which is the right thing to be given for the evening in progress and the
+wrong thing for a question about last Tuesday.
+
+Two things follow from that, and both used to be visible. The strip worked out
+where the quiet stretches were from the slice it had, so a five-day log drew as
+the last few hours with no sign there was any more of it; and an older session,
+reached through the session buttons, showed paths with no events in them.
+
+The shape of the record is now worked out on the server, over the whole log and
+every path, and sent as a list of quiet stretches. That makes the strip cover
+everything there is, and — more importantly — makes it hold still: sessions are
+numbered, the buttons and the strip navigate by that number, and a boundary
+that moved as more rows arrived would renumber the record under whoever was
+reading it. It is cached, because it walks everything and the live map asks
+again every few seconds.
+
+The events themselves are fetched for the stretch being looked at, when it is
+looked at. Move to an older session and its rows arrive on their own; go back
+and they are already there. A window wider than the cap is answered with its
+newest end and says so, so the page knows what it still has not seen rather
+than taking the answer for the whole of it.
+
+Dragging the playhead off the end of the strip carries into the next session
+rather than pinning to the edge, one session at a time while it is held there,
+which makes the strip a way to travel through the record instead of a view of
+one evening you have to leave by the buttons.
+
 ### The AI menu: asking it things
 
 The summary above is one paragraph about a period. The **AI** tab is a

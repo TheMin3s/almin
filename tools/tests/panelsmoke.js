@@ -5345,6 +5345,155 @@ const tabs = ['dash', 'term', 'activity', 'files', 'players', 'mods', 'ai', 'set
   }
 
 
+  // ---- the timeline reaches the whole record ----
+  // The map is sent a slice off the end of the log. Everything older used to
+  // be a session with paths in it and no events, reachable only by hunting
+  // through the session buttons; now the stretch being looked at is fetched
+  // when it is looked at.
+  try {
+    const realFetch = sandbox.fetch;
+    const hour = 3600 * 1000, day = 24 * hour;
+    const t0 = 1700000000000;
+    // Four evenings a day apart. The gaps between them are what makes them
+    // four sessions rather than one long one.
+    const gaps = [
+      { from: t0 + hour, to: t0 + day },
+      { from: t0 + day + hour, to: t0 + 2 * day },
+      { from: t0 + 2 * day + hour, to: t0 + 3 * day }
+    ];
+    sandbox.allData = {
+      from: t0, to: t0 + 3 * day + hour, now: t0 + 3 * day + hour,
+      gaps: gaps, tracks: {}, ids: {}, online: [], actions: [
+        { at: t0 + 3 * day + 60000, player: 'Steve', action: 'break',
+          detail: 'stone', dim: 'overworld', x: 1, y: 64, z: 1, count: 1 }
+      ],
+      rowsShown: 2000, mapRows: 2500, actionsFrom: t0 + 3 * day
+    };
+
+    const ss = sandbox.sessions();
+    const four = ss.length === 4;
+    console.log((four ? '  PASS  ' : '  FAIL  ') +
+      'the whole record is four sessions, not just the part with events in it');
+    if (!four) failures.push('timeline: ' + ss.length + ' sessions');
+
+    // The server works the gaps out over everything; taking its answer is what
+    // stops a session renumbering itself as more rows arrive.
+    const served = sandbox.quietGaps() === gaps;
+    console.log((served ? '  PASS  ' : '  FAIL  ') +
+      'the quiet stretches come from the server rather than from the slice');
+    if (!served) failures.push('timeline: gaps recomputed on the page');
+
+    // Ranges already held are remembered, so scrubbing over the same evening
+    // asks once.
+    sandbox.haveRanges = [];
+    sandbox.noteRange(t0, t0 + hour);
+    sandbox.noteRange(t0 + day, t0 + day + hour);
+    let held = sandbox.haveRanges.length === 2
+      && sandbox.haveWindow(t0 + 100, t0 + hour - 100)
+      && !sandbox.haveWindow(t0 + 2 * day, t0 + 2 * day + hour);
+    console.log((held ? '  PASS  ' : '  FAIL  ') +
+      'a stretch already fetched is not fetched again');
+    if (!held) failures.push('timeline: range bookkeeping');
+
+    sandbox.noteRange(t0 + hour, t0 + day);
+    const joined = sandbox.haveRanges.length === 1
+      && sandbox.haveWindow(t0, t0 + day + hour);
+    console.log((joined ? '  PASS  ' : '  FAIL  ') +
+      'and two touching stretches become one');
+    if (!joined) failures.push('timeline: ranges not merged');
+
+    // Older rows merge into what is already there, without duplicating the
+    // rows the two answers have in common.
+    const older = [
+      { at: t0 + 30000, player: 'Alex', action: 'break', detail: 'dirt',
+        dim: 'overworld', x: 2, y: 64, z: 2, count: 1 },
+      { at: t0 + 3 * day + 60000, player: 'Steve', action: 'break',
+        detail: 'stone', dim: 'overworld', x: 1, y: 64, z: 1, count: 1 }
+    ];
+    const added = sandbox.mergeActions(older);
+    const merged = added === 1 && sandbox.allData.actions.length === 2;
+    console.log((merged ? '  PASS  ' : '  FAIL  ') +
+      'older events merge in, and a row sent twice is kept once');
+    if (!merged) failures.push('timeline: merged ' + added + ', held ' +
+      sandbox.allData.actions.length);
+
+    const ordered = sandbox.allData.actions[0].at > sandbox.allData.actions[1].at;
+    console.log((ordered ? '  PASS  ' : '  FAIL  ') +
+      'and the list stays newest-first however it was filled');
+    if (!ordered) failures.push('timeline: merge left the list out of order');
+
+    // Asking for a window goes to the window route, not for the whole payload
+    // again — the paths are the large half and they have not changed.
+    const wanted = [];
+    sandbox.fetch = async (url) => {
+      wanted.push(String(url));
+      return { status: 200, json: async () => ({ window: true, from: t0,
+        to: t0 + hour, full: true, covered: t0, actions: [] }) };
+    };
+    sandbox.haveRanges = [];
+    sandbox.win = { from: t0, to: t0 + hour, set: true };
+    // The activity tab rendered earlier in this run and left a window it wanted
+    // behind it: the page defers that by 220ms and this harness only ever fires
+    // zero-delay timers, so it is still sitting there. Cleared, or the first
+    // real fetch drains it on the way out and looks like a second request.
+    sandbox.windowWanted = null;
+    await sandbox.fetchWindow(t0, t0 + hour);
+    const asked1 = wanted.length === 1 && /\/api\/track\?window=1/.test(wanted[0])
+      && wanted[0].indexOf('from=' + t0) > 0;
+    console.log((asked1 ? '  PASS  ' : '  FAIL  ') +
+      'moving to an older session asks for just that stretch');
+    if (!asked1) failures.push('timeline: asked ' + JSON.stringify(wanted));
+
+    await sandbox.fetchWindow(t0, t0 + hour);
+    const onlyOnce = wanted.length === 1;
+    console.log((onlyOnce ? '  PASS  ' : '  FAIL  ') +
+      'and going back to it does not ask twice');
+    if (!onlyOnce) failures.push('timeline: refetched a held range');
+
+    // Dragging the playhead off the end of a session carries into the next
+    // one, instead of pinning to the edge and stopping there.
+    sandbox.haveRanges = [];
+    sandbox.cursorAt = t0 + hour / 2;
+    sandbox.win = { from: t0, to: t0 + hour, set: true };
+    sandbox.carriedAt = 0;
+    const carried = sandbox.carryToSession(1);
+    const moved = carried && sandbox.win.from > t0 + hour
+      && sandbox.cursorAt > t0 + hour;
+    console.log((moved ? '  PASS  ' : '  FAIL  ') +
+      'dragging the playhead off the end carries into the next session');
+    if (!moved) failures.push('timeline: carry forward did not move the window');
+
+    const entered = Math.abs(sandbox.cursorAt - ss[1].from) < 1000;
+    console.log((entered ? '  PASS  ' : '  FAIL  ') +
+      'and lands at the start of it, so a drag rightwards keeps reading forwards');
+    if (!entered) failures.push('timeline: entered at the wrong end');
+
+    // Held at the edge it steps one session at a time, not as fast as pointer
+    // events arrive.
+    const immediate = sandbox.carryToSession(1);
+    const paced = immediate === true && sandbox.win.from < ss[2].from;
+    console.log((paced ? '  PASS  ' : '  FAIL  ') +
+      'holding it there travels one session at a time rather than all of them');
+    if (!paced) failures.push('timeline: no cooldown between sessions');
+
+    // At the last session there is nothing on the other side, so the cursor
+    // pins to the edge as it always did.
+    sandbox.carriedAt = 0;
+    sandbox.cursorAt = ss[3].from + 1000;
+    const past = sandbox.carryToSession(1);
+    console.log((past === false ? '  PASS  ' : '  FAIL  ') +
+      'and the last session has no next one to carry into');
+    if (past !== false) failures.push('timeline: carried past the end');
+
+    sandbox.fetch = realFetch;
+    sandbox.allData = null;
+    sandbox.haveRanges = [];
+  } catch (e) {
+    console.log('  FAIL  timeline  -> ' + e.message);
+    failures.push('timeline: ' + e.message);
+  }
+
+
   const missing = failures.filter((f) => f.startsWith('getElementById'));
   for (const m of new Set(missing)) console.log('  NOTE  ' + m);
 

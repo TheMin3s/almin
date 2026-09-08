@@ -429,6 +429,41 @@ public final class ActivityLog {
         return new Page(out, matched, matched > past + out.size());
     }
 
+    /** How far the log reaches, and how much of it there is. */
+    public record Span(long from, long to, int rows) {}
+
+    /**
+     * The oldest and newest moments still held.
+     *
+     * <p>Not the same question as "what was the panel last sent". The map is
+     * given a slice off the end; this is the whole thing, so a timeline can be
+     * drawn to the real edges of the record rather than to the edges of one
+     * page of it.
+     */
+    public static synchronized Span span() {
+        dropExpired();
+        if (entries.isEmpty()) return new Span(0, 0, 0);
+        return new Span(entries.peekFirst().at(), entries.peekLast().at(), entries.size());
+    }
+
+    /**
+     * Every moment in the log, oldest first.
+     *
+     * <p>Timestamps only. Working out which stretches of a week nobody was
+     * playing needs all of them and none of the rest, and the difference
+     * between eight bytes a row and a whole row is the difference between
+     * something the panel can ask for and something it cannot.
+     */
+    public static synchronized long[] moments(java.util.function.Predicate<ActivityEntry> keep) {
+        dropExpired();
+        long[] out = new long[entries.size()];
+        int n = 0;
+        for (ActivityEntry e : entries) {
+            if (keep == null || keep.test(e)) out[n++] = e.at();
+        }
+        return n == out.length ? out : java.util.Arrays.copyOf(out, n);
+    }
+
     public static synchronized int size() {
         dropExpired();
         return entries.size();
