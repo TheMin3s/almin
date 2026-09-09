@@ -1590,6 +1590,33 @@ line and *not written yet* under them, because a gap in a timeline is
 information. A day with a handful of rows in it is marked quiet and never
 written: there is nothing to say about it.
 
+**Every day the log holds, not the last few thousand rows.** The history used
+to be handed a slice off the end of the activity log — the newest twenty
+thousand rows. On a quiet server that is a week; on a busy one it is an
+afternoon, and the days before it simply were not there to write about. It is
+given the whole log now, so the Timeline reaches as far back as the log itself
+does.
+
+**A day the log has only part of gets no line at all.** The log forgets from
+the back, so its earliest day is one whose morning has already expired — and
+the hours that are gone look exactly like hours nobody played. A sentence
+written from that fragment would call a busy day a quiet one, confidently and
+permanently, because a written day is never rewritten. So a partial day is
+shown with a dashed mark, labelled *partly forgotten*, and left alone:
+
+> **Saturday, September 5** · 3 players · 1,500 events · partly forgotten
+> The log no longer holds all of this day, so no line is written for it — what
+> survived would read as a quieter day than it was.
+
+It is also not counted in "days still to write", because the button is an offer
+and this is a day nothing will ever take it up on.
+
+**Today is unfinished, not forgotten.** On a server whose retention window is
+shorter than a day the log does not hold all of today either — but that is "we
+have not got there yet" rather than "the record is gone", which everybody
+already understands about today. Today keeps its line and keeps being
+rewritten.
+
 The dates, the event counts and how many people were there are the log's, not
 the model's. They are shown whether or not there is a sentence, and they are
 still shown when the model is switched off entirely — with a line saying why

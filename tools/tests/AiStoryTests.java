@@ -54,7 +54,7 @@ public class AiStoryTests {
             day(rows, 1, 400);
             day(rows, 2, 300);
             day(rows, 3, 4);      // a handful of rows is not a day worth a line
-            AiStory.Story s = AiStory.of(rows);
+            AiStory.Story s = AiStory.of(rows, 0);
 
             ck("a day of activity is a day in the history", s.days().size() == 3,
                 s.days().size() + " days");
@@ -75,7 +75,65 @@ public class AiStoryTests {
         }
         {
             ck("no log at all is no history, rather than a failure",
-                AiStory.of(List.of()).days().isEmpty(), "it invented a day");
+                AiStory.of(List.of(), 0).days().isEmpty(), "it invented a day");
+        }
+
+        // ---- days the log has only part of ----
+        // The log forgets from the back. A day whose morning has already
+        // expired reads as a quiet day, because the hours that are gone look
+        // exactly like hours nobody played — so a sentence written from it
+        // would be confidently wrong, and none is.
+        {
+            List<ActivityEntry> rows = new ArrayList<>();
+            day(rows, 1, 400);
+            day(rows, 2, 300);
+            day(rows, 3, 200);
+            // The log's earliest surviving row is the evening of three days
+            // ago, so that day's own morning is already gone.
+            long oldest = AiStory.dayOf(System.currentTimeMillis() - 3 * DAY) + 19 * 3600_000L;
+            AiStory.Story s = AiStory.of(rows, oldest);
+
+            AiStory.Day cut = at(s, 3);
+            ck("the day the log starts inside is not whole",
+                cut != null && !cut.whole(), cut == null ? "missing" : "called whole");
+            ck("...but it is still shown, because a gap is worth knowing about",
+                cut != null && cut.events() == 200,
+                cut == null ? "missing" : String.valueOf(cut.events()));
+            ck("...and it is not offered as a day waiting to be written",
+                s.missing() == 2, s.missing() + " missing, expected 2");
+
+            ck("the days the log holds entirely are whole",
+                at(s, 1) != null && at(s, 1).whole() && at(s, 2) != null && at(s, 2).whole(),
+                "a complete day was called partial");
+            ck("...and those are the ones offered for writing",
+                s.missing() == 2, String.valueOf(s.missing()));
+
+            // The point of the whole change: previous days are reachable at
+            // all. Before this the history was handed a slice off the end of
+            // the log, and on a busy server that slice was one afternoon.
+            ck("a history covers the days before today, not only today",
+                s.days().size() == 3, s.days().size() + " days");
+        }
+        {
+            // A caller that cannot say where the log begins gets the old
+            // behaviour rather than a history that quietly refuses to write.
+            List<ActivityEntry> rows = new ArrayList<>();
+            day(rows, 4, 300);
+            AiStory.Story s = AiStory.of(rows, 0);
+            ck("a caller that does not know where the log starts is not blocked",
+                at(s, 4) != null && at(s, 4).whole() && s.missing() == 1,
+                "an unknown edge was treated as a partial day");
+        }
+        {
+            // Today is unfinished rather than incomplete, and everybody
+            // already knows that about today. It stays writable.
+            List<ActivityEntry> rows = new ArrayList<>();
+            day(rows, 0, 300);
+            long midnight = AiStory.dayOf(System.currentTimeMillis());
+            AiStory.Story s = AiStory.of(rows, midnight);
+            ck("today counts as whole once the log reaches back to midnight",
+                at(s, 0) != null && at(s, 0).whole() && s.missing() == 1,
+                "today was refused a line");
         }
 
         // ---- what the model says, and what is kept of it ----

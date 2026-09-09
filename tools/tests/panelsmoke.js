@@ -340,14 +340,20 @@ const responses = {
   '/api/story': { ai: { enabled: true, model: 'qwen2.5:3b', provider: 'local' },
     story: { generated: Date.now(), missing: 1, problem: '', error: '',
       days: [
-        { at: Date.now() - 0 * 86400e3, line: '', events: 640, players: 2, written: false },
+        { at: Date.now() - 0 * 86400e3, line: '', events: 640, players: 2,
+          written: false, whole: true },
         { at: Date.now() - 1 * 86400e3,
           line: 'Steve finished the spawn bridge while Alex cleared the ravine below it.',
-          events: 1820, players: 2, written: true },
+          events: 1820, players: 2, written: true, whole: true },
         { at: Date.now() - 2 * 86400e3,
           line: 'Alex dug a shaft to bedrock and came back with most of an iron block.',
-          events: 900, players: 1, written: true },
-        { at: Date.now() - 3 * 86400e3, line: '', events: 4, players: 1, written: false }] } },
+          events: 900, players: 1, written: true, whole: true },
+        { at: Date.now() - 3 * 86400e3, line: '', events: 4, players: 1,
+          written: false, whole: true },
+        // The far edge of the log: a busy day the log has already begun
+        // forgetting, so no line will ever be written for it.
+        { at: Date.now() - 4 * 86400e3, line: '', events: 1500, players: 3,
+          written: false, whole: false }] } },
   // Four backups: two by the clock, two by hand, the newest an hour old.
   '/api/backups': { list: [
       { name: 'world-2026-09-08_06-00-00-auto.zip', bytes: 1610612736,
@@ -1951,6 +1957,51 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     sandbox.paintStory();
     return byId.get('t-story')._html || '';
   };
+
+  check('the history covers the days before today, not only today', () => {
+    const t = storyText();
+    // Four days back, which is only reachable at all now the history is given
+    // the whole log rather than a slice off the end of it.
+    const days = (byId.get('t-story').children || []);
+    if (!/Yesterday/.test(t)) return 'yesterday is not in the history';
+    return /spawn bridge/.test(t) && /shaft to bedrock/.test(t) ? true
+      : 'the days before yesterday have no lines: ' + t.slice(0, 160);
+  });
+
+  check('a day the log has only part of says so, rather than "not written yet"', () => {
+    const t = storyText();
+    if (!/no longer holds all of this day/.test(t))
+      return 'a partly-forgotten day is not called out: ' + t.slice(0, 200);
+    // The distinction that matters: it is not an offer, because nothing is
+    // ever going to take it up.
+    const html = storyHtml();
+    return /storyday[^"]*\bpart\b/.test(html) ? true
+      : 'it is drawn the same as a day waiting to be written';
+  });
+
+  check('...and it is not counted among the days still to write', () => {
+    // 1500 events on that day, so it would be counted if completeness were
+    // not what decided it.
+    const t = storyText();
+    return /1 day still to write/.test(t) ? true
+      : 'the count includes a day that can never be written: ' + t.slice(0, 200);
+  });
+
+  check('...while today is unfinished rather than forgotten', () => {
+    // A server whose retention is shorter than a day genuinely does not hold
+    // all of today, and the story says so. But today is the day in progress —
+    // "we have not got there yet" — not a day the log has lost, and telling
+    // somebody their history of today is unwritable would be wrong.
+    const today = sandbox.storyRow(
+      { at: Date.now(), line: '', events: 640, players: 2, written: false, whole: false });
+    const past = sandbox.storyRow(
+      { at: Date.now() - 4 * 86400e3, line: '', events: 1500, players: 3,
+        written: false, whole: false });
+    if (/no longer holds all/.test(today)) return 'today was called partly forgotten';
+    if (/(^|")storyday[^"]*\bpart\b/.test(today)) return 'today was marked as forgotten';
+    return /no longer holds all/.test(past) ? true
+      : 'a past day with the same flag was not called out either';
+  });
 
   check('the history reads what is written without asking a model', () => {
     // A GET is the whole of opening the tab. If opening it ever POSTs, the

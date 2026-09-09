@@ -164,6 +164,11 @@ final class WebPage {
                             border-radius:50%;background:var(--brand);
                             border:2px solid var(--bg)}
           .storyday.bare::before{background:var(--bg);border-color:var(--line)}
+          /* A day the log has begun forgetting. Not a gap waiting to be filled
+             and not a written day either, so it gets a mark of its own rather
+             than borrowing one of theirs. */
+          .storyday.part::before{background:var(--bg);border-color:var(--mute);
+                                 border-style:dashed}
           .storywhen{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
                      font-weight:600;font-size:13px}
           .storymeta{color:var(--mute);font-size:11.5px;font-weight:400}
@@ -11341,16 +11346,25 @@ final class WebPage {
         function storyRow(d){
           const when=storyDay(d.at);
           const who=d.players===1?'1 player':d.players+' players';
+          // A day the log has begun forgetting is not a day waiting to be
+          // written; it is one that never can be. Saying "not written yet"
+          // about it would be an offer nothing is going to take up.
+          const part=d.whole===false && when!=='Today';
           const body=d.line
             ? '<div class="storyline">'+esc(d.line)+'</div>'
-            : (d.events<12
+            : (part
+                ? '<div class="storyline quiet">The log no longer holds all of this '+
+                  'day, so no line is written for it \\u2014 what survived would read '+
+                  'as a quieter day than it was.</div>'
+                : d.events<12
                 ? '<div class="storyline quiet">A quiet day \\u2014 too little happened to '+
                   'be worth a line.</div>'
                 : '<div class="storyline quiet">Not written yet.</div>');
-          return '<div class="storyday'+(d.line?'':' bare')+'">'+
+          return '<div class="storyday'+(d.line?'':' bare')+(part?' part':'')+'">'+
             '<div class="storywhen">'+esc(when)+
               '<span class="storymeta">'+esc(who)+' \\u00b7 '+
-              (d.events||0).toLocaleString()+' events</span></div>'+
+              (d.events||0).toLocaleString()+' events'+
+              (part?' \\u00b7 partly forgotten':'')+'</span></div>'+
             body+'</div>';
         }
 

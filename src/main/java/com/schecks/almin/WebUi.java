@@ -4423,12 +4423,18 @@ public final class WebUi {
                 return;
             }
 
-            List<ActivityEntry> rows = ActivityLog.recent(storyRows());
+            // Every day the log still holds, not a slice off the end of it. A
+            // busy server puts twenty thousand rows into an afternoon, and the
+            // history was being asked to cover a week from them — so yesterday
+            // and the day before simply were not there to be written about.
+            ActivityLog.Span span = ActivityLog.span();
+            List<ActivityEntry> rows = ActivityLog.recent(Integer.MAX_VALUE);
             if (write && !AlminConfig.get().aiEnabled) {
                 json(ex, 409, err("Summaries are off. Turn on ai-enabled first."));
                 return;
             }
-            AiStory.Story story = write ? AiStory.write(rows) : AiStory.of(rows);
+            AiStory.Story story = write ? AiStory.write(rows, span.from())
+                                        : AiStory.of(rows, span.from());
             root.add("story", storyJson(story, hidden(ex)));
             ex.getResponseHeaders().set("Cache-Control", "no-store");
             json(ex, 200, root.toString());
@@ -4440,10 +4446,6 @@ public final class WebUi {
     }
 
     /** Rows behind the history — the whole log the panel keeps, not a window. */
-    private static int storyRows() {
-        return Math.max(20_000, mapRows());
-    }
-
     private static JsonObject storyJson(AiStory.Story s, boolean hide) {
         JsonObject o = new JsonObject();
         o.addProperty("generated", s.generated());
@@ -4454,6 +4456,7 @@ public final class WebUi {
         for (AiStory.Day d : s.days()) {
             JsonObject j = new JsonObject();
             j.addProperty("at", d.at());
+            j.addProperty("whole", d.whole());
             // Prose the model wrote, so the coordinates in it come out the
             // same way they do in every other sentence it writes.
             j.addProperty("line", hide ? Coords.scrub(d.line()) : d.line());

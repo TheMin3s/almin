@@ -78,8 +78,17 @@ public final class AiStory {
 
     private AiStory() {}
 
-    /** One day, in a line. */
-    public record Day(long at, String line, int events, int players, boolean written) {}
+    /**
+     * One day, in a line.
+     *
+     * @param whole whether the log still holds the whole of this day. A day
+     *              the log has begun forgetting reads as a quiet one \u2014 the
+     *              hours that expired look exactly like hours nobody played
+     *              \u2014 so a sentence written from it would be confidently
+     *              wrong, and none is written.
+     */
+    public record Day(long at, String line, int events, int players, boolean written,
+                      boolean whole) {}
 
     /**
      * The history as it stands, and how much of it is not written yet.
@@ -161,9 +170,19 @@ public final class AiStory {
 
     // ---------- reading ----------
 
-    /** What days there are, and what has been said about each. No model. */
-    public static Story of(List<ActivityEntry> rows) {
-        return of(rows, false, 0);
+    /**
+     * What days there are, and what has been said about each. No model.
+     *
+     * @param oldest when the log's earliest surviving row is, from
+     *               {@link ActivityLog#span()}. It is what decides whether a
+     *               day is whole: a day that began before the log's own
+     *               memory does is a day the log has already lost part of.
+     *               Zero means "not known", and then nothing is treated as
+     *               partial \u2014 the old behaviour, for callers that cannot
+     *               say.
+     */
+    public static Story of(List<ActivityEntry> rows, long oldest) {
+        return of(rows, oldest, false, 0);
     }
 
     /**
@@ -172,11 +191,30 @@ public final class AiStory {
      * <p>Blocking when {@code write} is set, and called from a web thread —
      * never from the server thread.
      */
-    public static Story write(List<ActivityEntry> rows) {
-        return of(rows, true, STEP);
+    public static Story write(List<ActivityEntry> rows, long oldest) {
+        return of(rows, oldest, true, STEP);
     }
 
-    private static Story of(List<ActivityEntry> rows, boolean write, int budget) {
+    /**
+     * Whether the log still holds every hour of one day.
+     *
+     * <p>The log forgets from the back, so the only day this can be false for
+     * is the earliest one it still has anything from \u2014 and that is
+     * exactly the day whose history would otherwise be written from whatever
+     * fragment survived. Today counts as whole when the log reaches back past
+     * midnight: it is unfinished rather than incomplete, which is a different
+     * thing and one everybody already understands about today.
+     *
+     * <p>Zero \u2014 "not known" \u2014 needs no special case and does not get
+     * one: it is before every real day, so a caller that cannot say where the
+     * log begins gets every day treated as whole, which is the behaviour there
+     * was before any of this.
+     */
+    static boolean whole(long day, long oldest) {
+        return oldest <= day;
+    }
+
+    private static Story of(List<ActivityEntry> rows, long oldest, boolean write, int budget) {
         Map<Long, List<ActivityEntry>> byDay = new TreeMap<>(Collections.reverseOrder());
         for (ActivityEntry e : rows) {
             byDay.computeIfAbsent(dayOf(e.at()), k -> new ArrayList<>()).add(e);
@@ -193,10 +231,11 @@ public final class AiStory {
             long day = e.getKey();
             List<ActivityEntry> mine = e.getValue();
             int people = people(mine);
+            boolean whole = whole(day, oldest);
             if (mine.size() < MIN_EVENTS) {
                 // A day with a handful of rows in it has no history in it. It
                 // is still shown, because a gap in a timeline is information.
-                out.add(new Day(day, "", mine.size(), people, false));
+                out.add(new Day(day, "", mine.size(), people, false, whole));
                 continue;
             }
 
@@ -206,34 +245,44 @@ public final class AiStory {
             // the log, which is not new history and not worth re-writing.
             boolean stale = had != null && isToday(day) && had.events() != mine.size();
             if (had != null && !stale) {
-                out.add(new Day(day, had.line(), mine.size(), people, true));
+                out.add(new Day(day, had.line(), mine.size(), people, true, whole));
+                continue;
+            }
+
+            // A past day the log has begun forgetting can never be written
+            // truthfully, so it is shown and not counted as missing. Counting
+            // it would leave the button offering to write a day it will refuse
+            // to write, for as long as the day survives at all.
+            if (!whole) {
+                out.add(new Day(day, had == null ? "" : had.line(), mine.size(), people,
+                    had != null, false));
                 continue;
             }
 
             missing++;
             if (!write || !problem.isEmpty() || wrote >= budget) {
                 out.add(new Day(day, had == null ? "" : had.line(), mine.size(), people,
-                    had != null));
+                    had != null, whole));
                 continue;
             }
             if (!running.compareAndSet(false, true)) {
                 error = "Already writing — try again in a moment.";
-                out.add(new Day(day, "", mine.size(), people, false));
+                out.add(new Day(day, "", mine.size(), people, false, whole));
                 continue;
             }
             try {
                 String line = writeDay(day, mine);
                 wrote++;
                 if (line.isEmpty()) {
-                    out.add(new Day(day, "", mine.size(), people, false));
+                    out.add(new Day(day, "", mine.size(), people, false, whole));
                 } else {
                     lines.put(day, new Written(line, mine.size()));
                     missing--;
-                    out.add(new Day(day, line, mine.size(), people, true));
+                    out.add(new Day(day, line, mine.size(), people, true, whole));
                 }
             } catch (IOException ex) {
                 error = ex.getMessage() == null ? ex.toString() : ex.getMessage();
-                out.add(new Day(day, "", mine.size(), people, false));
+                out.add(new Day(day, "", mine.size(), people, false, whole));
             } finally {
                 running.set(false);
             }
