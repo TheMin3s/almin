@@ -643,6 +643,74 @@ whole set of admin surfaces needs no permission logic of its own — there is
 nothing to get wrong, because the buttons are only ever commands you could have
 typed yourself.
 
+## Backups
+
+A **Backups** menu that copies the world into a zip, on a clock or when you press
+the button, and deletes the old ones so the folder does not grow forever.
+
+**It is off until you turn it on.** Every other default in Almin costs a few
+kilobytes; this one writes a copy of your entire world to a disk Almin knows
+nothing about the size of. That is not a decision a mod should make on your
+behalf the first time it boots, so `backup-enabled` starts `false`. Manual
+backups work regardless — the button is always there.
+
+**A backup is the world, plus the files that decide who may join it.** The world
+folder, `server.properties`, `ops.json`, `whitelist.json` and the two ban lists.
+Not the mods, not the configs, not Almin's own folder: those are the things you
+can put back by reinstalling, and the world is the thing you cannot. A backup
+that took an hour and filled the disk because it also copied every jar is a
+backup you keep too few of.
+
+**It is taken the way you would take one by hand.** Autosave is turned off and
+every level is flushed to disk first, so what gets copied is a world that has
+finished being written; the copying then happens off the server thread, so the
+game keeps running while it does; autosave goes back on afterwards whether the
+copy worked or not, because it is in a `finally`. The zip is written under a
+`.part` name and moved into place only when it is complete — a half-written file
+that looks like a backup is worse than no backup at all, and a failed run
+deletes its own wreckage.
+
+**Three rules decide what gets deleted**, applied after every new backup:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `backup-enabled` | `false` | Take one on a clock at all |
+| `backup-interval-hours` | `6` | How often |
+| `backup-keep` | `8` | How many to keep |
+| `backup-keep-days` | `14` | Delete anything older (0 = no age limit) |
+| `backup-max-gb` | `20` | Ceiling on the whole folder (0 = no size limit) |
+| `backup-skip-unchanged` | `true` | Skip the automatic one when nothing has happened |
+| `backup-folder` | `backups` | Where they go; absolute paths are honoured |
+
+**The newest is never deleted by any of them.** Set `backup-keep` to 1 and you
+get one backup, not none; a folder where everything is older than
+`backup-keep-days` still keeps the newest; a single backup larger than
+`backup-max-gb` is still kept. A retention rule that can empty the folder is not
+a policy, it is the bug you discover on the day you need the file that is gone.
+Deleting the last one is something only a person can do, from the menu, after a
+confirmation that says which one it is.
+
+`backup-folder` takes an absolute path, and putting it on a different disk is
+the arrangement that actually survives the failure backups exist for. If you
+point it inside the world folder, backups are not copied into backups.
+
+**A quiet server does not fill the folder with identical copies.** With
+`backup-skip-unchanged` on, an automatic backup is skipped when nothing has
+happened since the last one — otherwise a server nobody plays on spends a week
+pushing its real backups off the end of the retention rules with copies of the
+same untouched world. Pressing the button is never skipped.
+
+**There is no restore button, and the menu says so rather than hiding it.**
+Putting a world back means stopping the server, moving the live world out of the
+way and unpacking over it. A browser button that does that is one misclick from
+deleting exactly what these files exist to protect. The zips are ordinary zips:
+download one, stop the server, unpack it yourself.
+
+Backups are their own menu in the account system, so an account can be given
+them read-only — able to see what exists and download it, but not to make or
+delete one. Every download is written to the Almin log with the account that
+asked for it.
+
 ## What the server is spending its time on
 
 The Overview tab says *how* the server is doing: ticks are taking 71ms, memory

@@ -997,6 +997,24 @@ final class WebPage {
           .plooks{font-size:12.5px;color:var(--mute)}
           .plooks div{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.05)}
           .plooks div:last-child{border-bottom:0}
+          /* ---- backups ---- */
+          .bkrow{display:flex;gap:10px;align-items:center;padding:9px 2px;
+                 border-bottom:1px solid rgba(255,255,255,.05)}
+          .bkrow:last-child{border-bottom:0}
+          .bkrow .nm{font:12px/1.4 ui-monospace,Menlo,monospace;word-break:break-all}
+          .bkrow .when{color:var(--dim);font-size:12px;white-space:nowrap}
+          .bkrow .sz{margin-left:auto;color:var(--dim);font-size:12px;
+                     font-variant-numeric:tabular-nums;white-space:nowrap}
+          .bkrow .btn{padding:4px 9px;font-size:12px}
+          .bkrow .acts{display:flex;gap:8px;flex:0 0 auto}
+          @media(max-width:620px){
+            .bkrow{flex-wrap:wrap}
+            .bkrow .nm{flex:1 1 100%}
+            .bkrow .acts{margin-left:auto}
+          }
+          .bkbusy{display:flex;gap:10px;align-items:center;font-size:12.5px;color:var(--dim);
+                  padding:9px 0}
+          .bkrules{color:var(--mute);font-size:12px;margin-top:10px;line-height:1.6}
         </style>
         <header>
           <span class="brand">ALMIN</span>
@@ -1449,7 +1467,8 @@ final class WebPage {
           const nav=$('nav'); nav.innerHTML='';
           const all = [['dash','Overview'],['term','Console'],['load','Load'],
                        ['activity','Activity'],['files','Files'],['players','Players'],
-                       ['mods','Mods'],['ai','AI'],['settings','Settings']];
+                       ['mods','Mods'],['ai','AI'],['backups','Backups'],
+                       ['settings','Settings']];
           // The AI menu can be switched off for the whole panel, which is a
           // different question from whether one account may open it. Off means
           // gone for everybody, so it is dropped before the access filter
@@ -1497,6 +1516,7 @@ final class WebPage {
           else if(tab==='players') m.appendChild(playersPanel());
           else if(tab==='activity') m.appendChild(activityPanel());
           else if(tab==='ai') m.appendChild(aiPanel());
+          else if(tab==='backups') m.appendChild(backupsPanel());
           else if(tab==='settings') m.appendChild(settingsPanel());
           if(authed) lockWrites(m,tab);
         }
@@ -1505,7 +1525,7 @@ final class WebPage {
         function menuLabel(menu){
           return ({dash:'Overview',term:'Console',load:'Load',activity:'Activity',
                    files:'Files',players:'Players',mods:'Mods',ai:'AI',
-                   settings:'Settings'})[menu]||menu;
+                   backups:'Backups',settings:'Settings'})[menu]||menu;
         }
 
         /**
@@ -12994,6 +13014,269 @@ final class WebPage {
         """;
 
     /**
+     * The Backups menu.
+     *
+     * <p>A list of zips, a button that makes another one, and the rules that
+     * decide when they are deleted again. The rules are shown rather than
+     * edited here: they are ordinary config keys, so Settings already edits
+     * them, and a second editor for the same seven values is two places to
+     * look for one answer.
+     *
+     * <p>There is no restore button, and the menu says so. Putting a world
+     * back means stopping the server first, and a browser button that does
+     * that is one misclick from deleting the thing these files exist to
+     * protect.
+     */
+    private static final String PARTBACKUP = """
+        let backupData=null, backupErr='', backupTimer=null;
+        // What the last button press came back with. Held here rather than
+        // shown in an alert, because the answer to "back up now" is a sentence
+        // about this menu and belongs in it.
+        let backupSaid='', backupSaidBad=false;
+
+        function backupsPanel(){
+          const wrap=document.createElement('div');
+          const body=document.createElement('div'); body.id='t-backups';
+          wrap.appendChild(body);
+          paintBackups();
+          loadBackups();
+          return wrap;
+        }
+
+        async function loadBackups(){
+          const r=await jget('/api/backups');
+          if(r.status===200){ backupData=r.body; backupErr=''; }
+          else backupErr=why(r,'The panel could not read the backups.');
+          paintBackups();
+          watchBackup();
+        }
+
+        /**
+         * While one is running, ask again every two seconds; otherwise stop.
+         *
+         * <p>The ordinary three-second poll does not refresh this menu, because
+         * a list of files that changes twenty times a minute is a list nobody
+         * can click a button in. A backup in progress is the exception, and it
+         * ends by itself.
+         */
+        function watchBackup(){
+          const busy=backupData&&backupData.state&&backupData.state.running;
+          if(busy && !backupTimer){
+            backupTimer=setInterval(()=>{
+              if(tab!=='backups'){ stopBackupWatch(); return; }
+              loadBackups();
+            },2000);
+          } else if(!busy && backupTimer) stopBackupWatch();
+        }
+        function stopBackupWatch(){
+          if(backupTimer){ clearInterval(backupTimer); backupTimer=null; }
+        }
+
+        function paintBackups(){
+          const box=$('t-backups');
+          if(!box) return;
+          box.innerHTML='';
+          if(backupErr){
+            const b=document.createElement('div'); b.className='banner';
+            b.innerHTML='<span class="state crit">Error</span><span class="muted">'+
+              esc(backupErr)+'</span>';
+            box.appendChild(b);
+            return;
+          }
+          if(!backupData){
+            const n=document.createElement('div'); n.className='note';
+            n.textContent='Reading the backup folder\u2026';
+            box.appendChild(n);
+            return;
+          }
+          const d=backupData;
+          box.appendChild(backupTiles(d));
+          box.appendChild(backupActions(d));
+          box.appendChild(backupList(d));
+          box.appendChild(backupRules(d));
+          // Again, here. render() locks what it drew, and this menu draws its
+          // rows a moment later when the folder has been read \u2014 so without
+          // this a read-only account gets live Delete buttons that the server
+          // then refuses, which is the exact thing the locking exists to spare
+          // people.
+          lockWrites(box,'backups');
+        }
+
+        function backupTiles(d){
+          const g=document.createElement('div'); g.className='tiles';
+          const n=(d.list||[]).length;
+          g.appendChild(tile('', 'Backups', String(n),
+            n?('newest '+fmtWhen(d.list[0].at)):'none yet'));
+          g.appendChild(tile('', 'Disk used', d.total||'0 B',
+            d.maxGb>0?('ceiling '+d.maxGb+' GB'):'no size limit'));
+          // Two different questions, so two different tiles: whether the clock
+          // is on at all, and when it last actually produced something.
+          g.appendChild(tile(d.enabled?'good':'', 'Automatic',
+            d.enabled?('every '+d.everyHours+'h'):'off',
+            nextBackupWords(d),
+            d.enabled?'on':'off'));
+          return g;
+        }
+
+        /** When the clock is next due, in words \u2014 or why there is no next. */
+        function nextBackupWords(d){
+          if(!d.enabled) return 'backups are made by hand';
+          const last=d.lastRun||((d.list&&d.list.length)?d.list[0].at:0);
+          if(!last) return 'due now';
+          const due=last+d.everyHours*3600000;
+          const left=due-Date.now();
+          return left<=0?'due now':('next in '+fmtDur(left));
+        }
+
+        function backupActions(d){
+          const sec=document.createElement('section');
+          sec.style.marginTop='16px';
+          const h=document.createElement('h2'); h.textContent='Take one now';
+          sec.appendChild(h);
+          const st=d.state||{};
+          if(st.running){
+            const busy=document.createElement('div'); busy.className='bkbusy';
+            const pct=st.total>0?Math.round(st.done*100/st.total):null;
+            busy.innerHTML='<span class="state warn">Running</span><span>'+
+              esc(st.step||'working')+(st.total>0?(' \u2014 '+st.done+' of '+st.total+' files'):'')+
+              '</span>';
+            sec.appendChild(busy);
+            const m=document.createElement('div'); m.className='meter';
+            m.innerHTML='<i class="warn" style="width:'+(pct==null?8:pct)+'%"></i>';
+            sec.appendChild(m);
+            const note=document.createElement('div'); note.className='muted';
+            note.style.marginTop='9px';
+            note.textContent='Saving is paused while this runs, so nothing is written to the '+
+              'world folder halfway through the copy. The game keeps running.';
+            sec.appendChild(note);
+          } else {
+            const b=document.createElement('button');
+            b.className='btn go'; b.textContent='Back up the world now';
+            b.onclick=()=>startBackup(b);
+            sec.appendChild(b);
+            // What the button said last, if anything, and otherwise how the
+            // last backup ended. A refusal to start is about the press; the
+            // server's own message is about the run.
+            const said=backupSaid||st.message;
+            if(said){
+              const m=document.createElement('div');
+              m.className='msg '+((backupSaid?backupSaidBad:st.failed)?'err':'ok');
+              m.style.marginTop='10px';
+              m.textContent=said;
+              sec.appendChild(m);
+            }
+          }
+          return sec;
+        }
+
+        async function startBackup(btn){
+          btn.disabled=true; btn.textContent='Starting\u2026';
+          const r=await jpost('/api/backups/start',{});
+          if(r.status!==200){
+            backupSaid=why(r,'The backup did not start.'); backupSaidBad=true;
+            paintBackups();
+            return;
+          }
+          // Cleared, not replaced: the next paint reads the server's own state,
+          // which is a truer thing to show than "started" would be.
+          backupSaid=''; backupSaidBad=false;
+          await loadBackups();
+        }
+
+        function backupList(d){
+          const sec=document.createElement('section');
+          sec.style.marginTop='16px';
+          const h=document.createElement('h2'); h.textContent='On disk';
+          sec.appendChild(h);
+          const list=d.list||[];
+          if(!list.length){
+            const n=document.createElement('div'); n.className='note';
+            n.textContent='No backups yet.';
+            sec.appendChild(n);
+            return sec;
+          }
+          for(let i=0;i<list.length;i++) sec.appendChild(backupRow(list[i], i===0));
+          return sec;
+        }
+
+        function backupRow(e,newest){
+          const row=document.createElement('div'); row.className='bkrow';
+          const nm=document.createElement('span'); nm.className='nm';
+          nm.textContent=e.name;
+          row.appendChild(nm);
+          const chip=document.createElement('span'); chip.className='chip';
+          chip.textContent=e.auto?'automatic':'by hand';
+          row.appendChild(chip);
+          const when=document.createElement('span'); when.className='when';
+          when.textContent=fmtWhen(e.at);
+          row.appendChild(when);
+          const sz=document.createElement('span'); sz.className='sz';
+          sz.textContent=e.size||fmtBytes(e.bytes);
+          row.appendChild(sz);
+          // Both buttons in one box, so a narrow screen moves them to the next
+          // line together rather than leaving Delete stranded under Download.
+          const acts=document.createElement('span'); acts.className='acts';
+          const dl=document.createElement('a');
+          dl.className='btn'; dl.textContent='Download';
+          dl.href='/api/backups/file?name='+encodeURIComponent(e.name);
+          dl.setAttribute('download','');
+          acts.appendChild(dl);
+          const del=document.createElement('button');
+          del.className='btn danger'; del.textContent='Delete';
+          // The newest is the one the retention rules refuse to touch, so
+          // deleting it has to be asked for in different words than the rest.
+          del.onclick=()=>askDeleteBackup(e,newest);
+          acts.appendChild(del);
+          row.appendChild(acts);
+          return row;
+        }
+
+        async function askDeleteBackup(e,newest){
+          const extra=newest?'\\n\\nThis is the newest one. The retention rules never delete '+
+            'it; this does.':'';
+          if(!confirm('Delete '+e.name+'?'+extra)) return;
+          const r=await jpost('/api/backups/delete',{name:e.name});
+          if(r.status!==200){
+            backupSaid=why(r,'It was not deleted.'); backupSaidBad=true;
+            paintBackups();
+            return;
+          }
+          backupSaid=(r.body&&r.body.message)||('Deleted '+e.name+'.'); backupSaidBad=false;
+          await loadBackups();
+        }
+
+        function backupRules(d){
+          const sec=document.createElement('section');
+          sec.style.marginTop='16px';
+          const h=document.createElement('h2'); h.textContent='The rules';
+          sec.appendChild(h);
+          const bits=[];
+          bits.push(d.enabled
+            ? ('A backup is taken every '+d.everyHours+' hour'+(d.everyHours===1?'':'s')+'.')
+            : ('Automatic backups are off. Turn on <code>backup-enabled</code> in Settings '+
+               'to have them taken on a clock.'));
+          // One rule per sentence. Strung together with commas they read as a
+          // single complicated condition, which is not what they are.
+          bits.push('The newest '+d.keep+' are kept.');
+          if(d.keepDays>0) bits.push('Nothing older than '+d.keepDays+' day'+
+            (d.keepDays===1?'':'s')+' is kept.');
+          if(d.maxGb>0) bits.push('The folder is held under '+d.maxGb+' GB.');
+          bits.push('The newest is never deleted by these rules, whatever they say.');
+          bits.push('They go in <code>'+esc(String(d.folder||''))+'</code>.');
+          const p=document.createElement('div'); p.className='bkrules';
+          // Every piece of this is built here from numbers, never from anything
+          // a player typed, so the markup in it is the panel's own.
+          p.innerHTML=bits.join('<br>');
+          sec.appendChild(p);
+          const note=document.createElement('div'); note.className='note';
+          note.style.marginTop='12px';
+          note.textContent=d.note||'';
+          sec.appendChild(note);
+          return sec;
+        }
+        """;
+
+    /**
      * The page, in four pieces.
      *
      * <p>Not a style choice: a single string constant cannot exceed 64KB in a
@@ -13005,5 +13288,5 @@ final class WebPage {
      */
     static final String HTML = String.join("", PART1, PART1A, PART1B, PARTFILES, PART2, PARTPLAYER, PARTMAP, PARTSEQ,
         PARTMAPUI, PARTMAPUI2, PARTINSIGHT, PARTSCENE, PARTLOG, PARTBLUE, PARTASK, PART3,
-        PARTLOAD, PARTSTORY, PARTUPDATE, PARTSETTINGS);
+        PARTLOAD, PARTSTORY, PARTBACKUP, PARTUPDATE, PARTSETTINGS);
 }

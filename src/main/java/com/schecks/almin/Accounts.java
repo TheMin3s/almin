@@ -63,7 +63,7 @@ public final class Accounts {
      */
     public static final List<String> MENUS =
         List.of("dash", "term", "load", "activity", "files", "players", "mods", "ai",
-                "settings");
+                "backups", "settings");
 
     // ---------- the switches that are not menus ----------
 

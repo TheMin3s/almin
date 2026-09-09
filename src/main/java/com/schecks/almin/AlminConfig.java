@@ -372,6 +372,41 @@ public final class AlminConfig {
      */
     public int aiToolRounds = 6;
     /**
+     * Take a copy of the world on a clock.
+     *
+     * <p>Off, and that is deliberate. Every other default here costs a few
+     * kilobytes; this one writes a copy of the entire world to a disk nobody
+     * asked about, on a machine whose free space this mod cannot know. It is
+     * the one setting that has to be a decision rather than an inheritance.
+     * Manual backups work whatever this says.
+     */
+    public boolean backupEnabled = false;
+    /** Hours between automatic backups. Six by default, when they are on at all. */
+    public int backupIntervalHours = 6;
+    /**
+     * How many to keep. The newest is never deleted whatever this says, so
+     * setting it to 1 means "one backup", not "no backups".
+     */
+    public int backupKeep = 8;
+    /** Delete backups older than this many days (0 = only the count and size limits). */
+    public int backupKeepDays = 14;
+    /** Ceiling on the whole backup folder, in GB (0 = no size limit). */
+    public int backupMaxGb = 20;
+    /**
+     * Skip an automatic backup when nothing has happened since the last one.
+     *
+     * <p>An idle server otherwise fills the folder with identical copies of
+     * the same world and pushes the real ones off the end of the retention
+     * rules. A backup asked for by hand is never skipped.
+     */
+    public boolean backupSkipUnchanged = true;
+    /**
+     * Where the copies go. Relative to the server folder, or an absolute path
+     * to put them on a different disk — which is the arrangement that survives
+     * the failure backups are actually for.
+     */
+    public String backupFolder = "backups";
+    /**
      * Show player faces in the panel's player and activity lists.
      *
      * <p>On by default. A face for someone who is connected costs nothing —
@@ -560,7 +595,21 @@ public final class AlminConfig {
         boolKey("ai-chat", "Show the AI menu, where you can ask questions about the server in words",
             c -> c.aiChat, (c, v) -> c.aiChat = (Boolean) v),
         intKey("ai-tool-rounds", "How many times the AI menu may look something up while answering one question", 1, 20,
-            c -> c.aiToolRounds, (c, v) -> c.aiToolRounds = (Integer) v)
+            c -> c.aiToolRounds, (c, v) -> c.aiToolRounds = (Integer) v),
+        boolKey("backup-enabled", "Take a copy of the world on a clock (off by default; manual backups work either way)",
+            c -> c.backupEnabled, (c, v) -> c.backupEnabled = (Boolean) v),
+        intKey("backup-interval-hours", "Hours between automatic backups", 1, 720,
+            c -> c.backupIntervalHours, (c, v) -> c.backupIntervalHours = (Integer) v),
+        intKey("backup-keep", "How many backups to keep (the newest is never deleted)", 1, 500,
+            c -> c.backupKeep, (c, v) -> c.backupKeep = (Integer) v),
+        intKey("backup-keep-days", "Delete backups older than this many days (0 = no age limit)", 0, 3650,
+            c -> c.backupKeepDays, (c, v) -> c.backupKeepDays = (Integer) v),
+        intKey("backup-max-gb", "Ceiling on the whole backup folder, in GB (0 = no size limit)", 0, 10000,
+            c -> c.backupMaxGb, (c, v) -> c.backupMaxGb = (Integer) v),
+        boolKey("backup-skip-unchanged", "Skip an automatic backup when nothing has happened since the last one",
+            c -> c.backupSkipUnchanged, (c, v) -> c.backupSkipUnchanged = (Boolean) v),
+        textKey("backup-folder", "Where backups go; relative to the server folder, or an absolute path for another disk",
+            c -> c.backupFolder, (c, v) -> c.backupFolder = (String) v)
     );
 
     /**

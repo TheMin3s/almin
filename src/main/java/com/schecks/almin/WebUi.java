@@ -336,6 +336,13 @@ public final class WebUi {
         http.createContext("/bluemap", ui.guard("/bluemap", ui::handleBlueMapProxy));
         http.createContext("/api/load", ui.guard("/api/load", ui::handleLoad));
         http.createContext("/api/story", ui.guard("/api/story", ui::handleStory));
+        http.createContext("/api/backups", ui.guard("/api/backups", ui::handleBackups));
+        http.createContext("/api/backups/start",
+            ui.guard("/api/backups/start", ui::handleBackupStart));
+        http.createContext("/api/backups/delete",
+            ui.guard("/api/backups/delete", ui::handleBackupDelete));
+        http.createContext("/api/backups/file",
+            ui.guard("/api/backups/file", ui::handleBackupFile));
         http.createContext("/api/scene/context",
             ui.guard("/api/scene/context", ui::handleSceneContext));
         http.createContext("/api/head", ui.guard("/api/head", ui::handleHead));
@@ -549,6 +556,10 @@ public final class WebUi {
         java.util.Map.entry("/api/ai/chat", "ai"),
         java.util.Map.entry("/api/load", "load"),
         java.util.Map.entry("/api/story", "ai"),
+        java.util.Map.entry("/api/backups", "backups"),
+        java.util.Map.entry("/api/backups/start", "backups"),
+        java.util.Map.entry("/api/backups/delete", "backups"),
+        java.util.Map.entry("/api/backups/file", "backups"),
         java.util.Map.entry("/api/state", "dash"),
         java.util.Map.entry("/api/server", "dash"));
 
@@ -5126,6 +5137,156 @@ public final class WebUi {
             if (tmp != null) {
                 try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             }
+            ex.close();
+        }
+    }
+
+    // ---------- backups ----------
+
+    /** What is on disk, what is happening, and what the rules are. */
+    private void handleBackups(HttpExchange ex) throws IOException {
+        try {
+            if (!requireRead(ex, "backups")) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            AlminConfig cfg = AlminConfig.get();
+            JsonObject root = new JsonObject();
+            JsonArray arr = new JsonArray();
+            for (Backups.Entry e : Backups.list(server)) {
+                JsonObject o = new JsonObject();
+                o.addProperty("name", e.name());
+                o.addProperty("bytes", e.bytes());
+                o.addProperty("size", Backups.human(e.bytes()));
+                o.addProperty("at", e.at());
+                o.addProperty("auto", e.auto());
+                arr.add(o);
+            }
+            root.add("list", arr);
+
+            Backups.State st = Backups.state();
+            JsonObject s = new JsonObject();
+            s.addProperty("running", st.running());
+            s.addProperty("step", st.step());
+            s.addProperty("done", st.done());
+            s.addProperty("total", st.total());
+            s.addProperty("startedAt", st.startedAt());
+            s.addProperty("message", st.message());
+            s.addProperty("failed", st.failed());
+            root.add("state", s);
+
+            long total = Backups.totalBytes(server);
+            root.addProperty("totalBytes", total);
+            root.addProperty("total", Backups.human(total));
+            root.addProperty("lastRun", Backups.lastRun());
+            root.addProperty("enabled", cfg.backupEnabled);
+            root.addProperty("everyHours", cfg.backupIntervalHours);
+            root.addProperty("keep", cfg.backupKeep);
+            root.addProperty("keepDays", cfg.backupKeepDays);
+            root.addProperty("maxGb", cfg.backupMaxGb);
+            root.addProperty("folder", String.valueOf(Backups.folder(server)));
+            root.addProperty("may", who(ex) != null && who(ex).canWrite("backups"));
+            // The panel says this rather than offering a button that is not
+            // there: a restore has to be done with the server stopped.
+            root.addProperty("note", "Backups are ordinary zip files. To put one back, "
+                + "stop the server, move the world folder aside and unpack the zip in its place.");
+            json(ex, 200, root.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Starts one by hand. Returns straight away; the panel watches the state. */
+    private void handleBackupStart(HttpExchange ex) throws IOException {
+        try {
+            if (!requireWrite(ex, "backups")) return;
+            if (!requireServer(ex)) return;
+            if (!"POST".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            Accounts.Account me = who(ex);
+            String name = me == null ? "the panel" : me.username();
+            Backups.Result r = Backups.start(false, name);
+            AlminLog.info("[almin] {} asked for a backup: {}", name, r.message());
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", r.ok());
+            o.addProperty("message", r.message());
+            json(ex, r.ok() ? 200 : 409, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /** Deletes one by name. */
+    private void handleBackupDelete(HttpExchange ex) throws IOException {
+        try {
+            if (!requireWrite(ex, "backups")) return;
+            if (!"POST".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            JsonObject body = readBody(ex);
+            String name = body.has("name") ? body.get("name").getAsString() : "";
+            Backups.Result r = Backups.delete(server, name);
+            if (r.ok()) {
+                Accounts.Account me = who(ex);
+                AlminLog.info("[almin] {} deleted backup {}",
+                    me == null ? "the panel" : me.username(), name);
+            }
+            JsonObject o = new JsonObject();
+            o.addProperty("ok", r.ok());
+            o.addProperty("message", r.message());
+            json(ex, r.ok() ? 200 : 404, o.toString());
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
+            ex.close();
+        }
+    }
+
+    /**
+     * Sends one back to the browser.
+     *
+     * <p>The name is matched against the listing rather than resolved as a
+     * path, so a request cannot name a file outside the backup folder however
+     * it is spelled.
+     */
+    private void handleBackupFile(HttpExchange ex) throws IOException {
+        try {
+            if (!requireRead(ex, "backups")) return;
+            if (!"GET".equals(ex.getRequestMethod())) {
+                json(ex, 405, "{\"error\":\"method\"}");
+                return;
+            }
+            String name = queryParam(ex, "name");
+            Path file = Backups.fileOf(server, name);
+            if (file == null || !Files.isRegularFile(file)) {
+                json(ex, 404, err("There is no backup by that name."));
+                return;
+            }
+            long size = Files.size(file);
+            var h = ex.getResponseHeaders();
+            h.set("Content-Type", "application/zip");
+            h.set("Cache-Control", "no-store");
+            h.set("X-Content-Type-Options", "nosniff");
+            h.set("Content-Disposition", "attachment; filename=\""
+                + file.getFileName().toString().replaceAll("[\"\\\\\\r\\n]", "_") + "\"");
+            ex.sendResponseHeaders(200, size);
+            try (var out = ex.getResponseBody()) {
+                Files.copy(file, out);
+            }
+            Accounts.Account me = who(ex);
+            AlminLog.info("[almin] {} downloaded backup {} ({} bytes)",
+                me == null ? "the panel" : me.username(), file.getFileName(), size);
+        } catch (Throwable t) {
+            fault(ex, t);
+        } finally {
             ex.close();
         }
     }

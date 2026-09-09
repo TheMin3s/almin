@@ -64,6 +64,10 @@ public class Almin implements ModInitializer {
         // overworld's seed, and while the server is still starting there is
         // no overworld to ask.
         ServerLifecycleEvents.SERVER_STARTED.register(WorldReset::check);
+        // The backup clock, once there is a world to copy. Started here rather
+        // than at SERVER_STARTING because a backup asks the server to flush
+        // its levels, and during startup there are none to flush.
+        ServerLifecycleEvents.SERVER_STARTED.register(Backups::init);
         // Boot-time update check — runs after config is loaded. With auto-update
         // enabled (the default) it downloads, installs and restarts into a newer
         // version on its own; otherwise it just logs a single "update available"
@@ -115,6 +119,9 @@ public class Almin implements ModInitializer {
             PlayerTracks.save();
             WorldSnapshots.close();
             AiInsights.close();
+            // Before the process ends, so a backup running when somebody typed
+            // /stop is not left half-written for the next boot to find.
+            Backups.close();
             // The panel outlives the server in supervisor mode, so this has to
             // be done rather than assumed: what somebody asked the model about
             // their players should not sit in memory across a restart.

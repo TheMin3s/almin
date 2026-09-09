@@ -348,6 +348,25 @@ const responses = {
           line: 'Alex dug a shaft to bedrock and came back with most of an iron block.',
           events: 900, players: 1, written: true },
         { at: Date.now() - 3 * 86400e3, line: '', events: 4, players: 1, written: false }] } },
+  // Four backups: two by the clock, two by hand, the newest an hour old.
+  '/api/backups': { list: [
+      { name: 'world-2026-09-08_06-00-00-auto.zip', bytes: 1610612736,
+        size: '1.50 GB', at: Date.now() - 3600e3, auto: true },
+      { name: 'world-2026-09-07_18-00-00.zip', bytes: 1610612736,
+        size: '1.50 GB', at: Date.now() - 14 * 3600e3, auto: false },
+      { name: 'world-2026-09-07_06-00-00-auto.zip', bytes: 1500000000,
+        size: '1.40 GB', at: Date.now() - 26 * 3600e3, auto: true },
+      { name: 'world-2026-09-01_06-00-00.zip', bytes: 1400000000,
+        size: '1.30 GB', at: Date.now() - 8 * 86400e3, auto: false }],
+    state: { running: false, step: '', done: 0, total: 0, startedAt: 0,
+             message: 'Backed up 1.50 GB to world-2026-09-08_06-00-00-auto.zip', failed: false },
+    totalBytes: 6121612736, total: '5.70 GB', lastRun: Date.now() - 3600e3,
+    enabled: true, everyHours: 6, keep: 8, keepDays: 14, maxGb: 20,
+    folder: '/srv/mc/backups', may: true,
+    note: 'Backups are ordinary zip files. To put one back, stop the server, '
+        + 'move the world folder aside and unpack the zip in its place.' },
+  '/api/backups/start': { ok: true, message: 'Backup started.' },
+  '/api/backups/delete': { ok: true, message: 'Deleted it.' },
   // A server working hard, with an obvious culprit: an item pile in the
   // overworld, a forced chunk in the Nether, and one player standing in it.
   '/api/load': { at: Date.now() - 2000, took: 41,
@@ -6566,6 +6585,197 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
   } catch (e) {
     console.log('  FAIL  the wait  -> ' + e.message);
     failures.push('the wait: ' + e.message);
+  }
+
+  // ---- the Backups menu ----
+  // What is checked here is mostly what the menu refuses to do. A backup list
+  // is four buttons next to files somebody cannot get back, so the important
+  // behaviours are that Delete asks first, that the newest is asked about in
+  // different words, and that the menu says out loud there is no restore.
+  const backupText = () => {
+    sandbox.paintBackups();
+    return deepText(byId.get('t-backups'));
+  };
+
+  try {
+    sandbox.tab = 'backups';
+    sandbox.render();
+    await new Promise((r) => setTimeout(r, 20));
+
+    check('the backups menu lists what is on disk', () => {
+      const t = backupText();
+      if (!t.includes('world-2026-09-08_06-00-00-auto.zip')) return 'no backup named';
+      return /5\.70 GB/.test(t) ? true : 'the folder total went missing';
+    });
+
+    check('...saying which were taken by the clock and which by a person', () => {
+      const t = backupText();
+      return /automatic/.test(t) && /by hand/.test(t) ? true
+        : 'the two kinds are drawn the same';
+    });
+
+    check('...and when the next automatic one is due', () => {
+      const t = backupText();
+      return /next in|due now/.test(t) ? true : 'the clock says nothing: ' + t.slice(0, 140);
+    });
+
+    check('a server with the clock off says so rather than showing a stale time', () => {
+      const saved = sandbox.backupData;
+      sandbox.backupData = Object.assign({}, saved, { enabled: false });
+      const t = backupText();
+      sandbox.backupData = saved;
+      sandbox.paintBackups();
+      if (/next in/.test(t)) return 'it counted down to a backup that will not happen';
+      return /backup-enabled/.test(t) ? true : 'it did not say how to turn them on';
+    });
+
+    check('the rules are spelled out, including the one that overrides them', () => {
+      const t = backupText();
+      if (!/newest 8 are kept/.test(t)) return 'the count rule is not stated';
+      if (!/14 days/.test(t)) return 'the age rule is not stated';
+      if (!/20 GB/.test(t)) return 'the size rule is not stated';
+      return /newest is never deleted/.test(t) ? true
+        : 'the rule that outranks the others is not stated';
+    });
+
+    // Deliberately absent, so deliberately said.
+    check('...and the menu says how to put a backup back, rather than offering to', () => {
+      const t = backupText();
+      if (/\brestore\b/i.test(t) && !/stop the server/.test(t)) return 'it offers a restore';
+      return /stop the server/.test(t) && /unpack/.test(t) ? true
+        : 'nothing says how to use a backup';
+    });
+
+    check('deleting a backup asks first', () => {
+      let asked = '';
+      const realConfirm = sandbox.confirm;
+      sandbox.confirm = (q) => { asked = q; return false; };
+      sandbox.askDeleteBackup({ name: 'world-old.zip', at: 1, bytes: 1 }, false);
+      sandbox.confirm = realConfirm;
+      return /world-old\.zip/.test(asked) ? true : 'asked nothing, or asked vaguely: ' + asked;
+    });
+
+    check('...and asks differently about the only one the rules protect', () => {
+      let plain = '', newest = '';
+      const realConfirm = sandbox.confirm;
+      sandbox.confirm = (q) => { plain = q; return false; };
+      sandbox.askDeleteBackup({ name: 'world-a.zip', at: 1, bytes: 1 }, false);
+      sandbox.confirm = (q) => { newest = q; return false; };
+      sandbox.askDeleteBackup({ name: 'world-a.zip', at: 1, bytes: 1 }, true);
+      sandbox.confirm = realConfirm;
+      if (plain === newest) return 'the newest is asked about like any other';
+      return /newest/.test(newest) ? true : 'it did not say why this one is different';
+    });
+
+    check('a backup in progress says what it is doing rather than sitting blank', () => {
+      const saved = sandbox.backupData;
+      sandbox.backupData = Object.assign({}, saved, {
+        state: { running: true, step: 'copying', done: 900, total: 3000,
+                 startedAt: Date.now() - 20000, message: '', failed: false } });
+      const t = backupText();
+      sandbox.backupData = saved;
+      sandbox.paintBackups();
+      if (!/copying/.test(t)) return 'it does not say which part it is in';
+      if (!/900 of 3000/.test(t)) return 'no progress through the files';
+      // The reassurance that stops somebody killing the server mid-backup.
+      return /game keeps running/.test(t) ? true : 'it does not say the server is still up';
+    });
+
+    check('...and a backup that failed says so where the button is', () => {
+      const fail = { running: false, step: '', done: 0, total: 0, startedAt: 0,
+                     message: 'Not enough room: the world is 40 GB and there is 2 GB free.',
+                     failed: true };
+      const sec = sandbox.backupActions(Object.assign({}, sandbox.backupData, { state: fail }));
+      const t = deepText(sec);
+      if (!/Not enough room/.test(t)) return 'a failure was swallowed';
+      // Saying it is not enough. A red line and a green line are read
+      // differently at a glance, and this one has to read as gone wrong.
+      const msg = (sec.children || []).find((c) => /(^|\s)msg(\s|$)/.test(c.className || ''));
+      if (!msg) return 'the message is not in the message slot';
+      return hasClass(msg, 'err') ? true : 'a failure was drawn as a success: ' + msg.className;
+    });
+
+    check('...and one that worked reads as having worked', () => {
+      const ok = { running: false, step: '', done: 0, total: 0, startedAt: 0,
+                   message: 'Backed up 1.50 GB.', failed: false };
+      const sec = sandbox.backupActions(Object.assign({}, sandbox.backupData, { state: ok }));
+      const msg = (sec.children || []).find((c) => /(^|\s)msg(\s|$)/.test(c.className || ''));
+      if (!msg) return 'nothing said how it went';
+      return hasClass(msg, 'ok') && !hasClass(msg, 'err') ? true
+        : 'a success was drawn as a failure: ' + msg.className;
+    });
+
+    const linkIn = (el) => {
+      if (!el || typeof el !== 'object') return null;
+      if ((el.tagName || '').toLowerCase() === 'a') return el;
+      for (const kid of el.children || []) {
+        const found = linkIn(kid);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    check('a read-only account gets no live buttons, even though the rows arrive late', () => {
+      const saved = { owner: sandbox.me.owner, access: sandbox.me.access };
+      sandbox.me = Object.assign({}, sandbox.me,
+        { owner: false, access: { backups: 'read' } });
+      sandbox.paintBackups();
+      const box = byId.get('t-backups');
+      const dead = [];
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        const tag = (el.tagName || '').toLowerCase();
+        if (tag === 'button' && /Back up|Delete/.test(el.textContent || '')) {
+          dead.push({ t: el.textContent, off: !!el.disabled });
+        }
+        for (const kid of el.children || []) walk(kid);
+      })(box);
+      sandbox.me = Object.assign({}, sandbox.me, saved);
+      sandbox.paintBackups();
+      if (!dead.length) return 'found no buttons to check';
+      const live = dead.filter((b) => !b.off);
+      return live.length === 0 ? true
+        : live.length + ' live button(s) on a read-only account: ' + live[0].t;
+    });
+
+    check('...but downloading is still a read, so it stays', () => {
+      const saved = { owner: sandbox.me.owner, access: sandbox.me.access };
+      sandbox.me = Object.assign({}, sandbox.me,
+        { owner: false, access: { backups: 'read' } });
+      sandbox.paintBackups();
+      const box = byId.get('t-backups');
+      let links = 0;
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        if ((el.tagName || '').toLowerCase() === 'a'
+            && /Download/.test(el.textContent || '')) links++;
+        for (const kid of el.children || []) walk(kid);
+      })(box);
+      sandbox.me = Object.assign({}, sandbox.me, saved);
+      sandbox.paintBackups();
+      return links === 4 ? true : 'found ' + links + ' download links, expected 4';
+    });
+
+    check('a download link names one backup and nothing else', () => {
+      sandbox.paintBackups();
+      const row = sandbox.backupRow(
+        { name: 'world-2026-09-08_06-00-00-auto.zip', at: Date.now(), bytes: 10, auto: true },
+        false);
+      const link = linkIn(row);
+      if (!link) return 'no download link';
+      return link.href === '/api/backups/file?name=world-2026-09-08_06-00-00-auto.zip'
+        ? true : 'wrong target: ' + link.href;
+    });
+
+    check('...with a name the server can only read as a name', () => {
+      const row = sandbox.backupRow({ name: '../../etc/passwd', at: 1, bytes: 1 }, false);
+      const link = linkIn(row);
+      return link && !link.href.includes('../') ? true
+        : 'an unescaped path went into the URL: ' + (link && link.href);
+    });
+  } catch (e) {
+    console.log('  FAIL  the backups menu  -> ' + e.message);
+    failures.push('the backups menu: ' + e.message);
   }
 
   const missing = failures.filter((f) => f.startsWith('getElementById'));

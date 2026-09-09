@@ -2,6 +2,7 @@ package com.schecks.almin.events;
 
 import com.schecks.almin.ActivityLog;
 import com.schecks.almin.AlminConfig;
+import com.schecks.almin.Backups;
 import com.schecks.almin.AlminLog;
 import com.schecks.almin.AlminUtil;
 import com.schecks.almin.AdminVersionPayload;
@@ -30,6 +31,10 @@ public final class JoinHandler {
     public static void register() {
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             ServerPlayer player = handler.getPlayer();
+            // Somebody is on the server, so the world is about to change. The
+            // activity log says this too, but it can be switched off and the
+            // backup clock still needs to know a quiet day from a busy one.
+            Backups.noteActivity();
             boolean hasClientMod = ServerPlayNetworking.canSend(player, ServerVersionPayload.TYPE);
 
             // The client-mod requirement is decided before anything else, so a

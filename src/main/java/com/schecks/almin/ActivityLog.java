@@ -347,6 +347,9 @@ public final class ActivityLog {
     }
 
     private static void add(ActivityEntry e) {
+        // Somebody did something, so a backup taken after this is a backup of
+        // a different world than the last one. Cheap enough to do on every row.
+        Backups.noteActivity();
         synchronized (ActivityLog.class) {
             entries.addLast(e);
             int max = AlminConfig.get().activityMaxEntries;
