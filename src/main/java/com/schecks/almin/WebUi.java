@@ -3912,6 +3912,18 @@ public final class WebUi {
             found.add(j);
         }
         o.add("patterns", found);
+        JsonArray flags = new JsonArray();
+        for (AiInsights.Flag f : r.flags()) {
+            JsonObject j = new JsonObject();
+            j.addProperty("from", f.from());
+            j.addProperty("to", f.to());
+            j.addProperty("player", f.player());
+            j.addProperty("level", f.level());
+            j.addProperty("label", say.apply(f.label()));
+            j.addProperty("why", say.apply(f.why()));
+            flags.add(j);
+        }
+        o.add("flags", flags);
         o.addProperty("scope", r.scope());
         return o;
     }

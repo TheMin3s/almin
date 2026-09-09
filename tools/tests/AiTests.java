@@ -196,6 +196,117 @@ public class AiTests {
         check("  and one outside it is dropped, not clamped into view",
             patterns.size() == 1 && get(patterns.get(0), "label").equals("Back every evening"));
 
+        // ---- what it flagged for an admin to look at ----
+        // The output of this one is a person's name under a heading telling an
+        // admin to look at them, so almost everything here is about what it
+        // refuses to pass on.
+        Object flagged = parse.invoke(null,
+            "{\"summary\":\"s\",\"flags\":[" +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"player\":\"Steve\"," +
+            "\"level\":\"watch\",\"label\":\"Nine chests in four minutes\"," +
+            "\"why\":\"Opened nine containers in a base they have not built in.\"}]}",
+            from, to, cfg, episodes, all);
+        List<?> flags = (List<?>) get(flagged, "flags");
+        check("a flag is read", flags.size() == 1);
+        check("  with its level", flags.size() == 1 && get(flags.get(0), "level").equals("watch"));
+        check("  and the window it covers",
+            flags.size() == 1 && ((Long) get(flags.get(0), "from")) == from
+                && ((Long) get(flags.get(0), "to")) == to);
+        check("  and watch() says which of the two it is",
+            flags.size() == 1
+                && (Boolean) flags.get(0).getClass().getMethod("watch").invoke(flags.get(0)));
+
+        // A model that invents a level must not be able to invent a louder one.
+        Object levels = parse.invoke(null,
+            "{\"summary\":\"s\",\"flags\":[" +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"level\":\"critical\"," +
+            "\"label\":\"A\",\"why\":\"w\"}," +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"level\":\"\"," +
+            "\"label\":\"B\",\"why\":\"w\"}," +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"level\":\"WATCH\"," +
+            "\"label\":\"C\",\"why\":\"w\"}]}",
+            from, to, cfg, episodes, all);
+        List<?> lv = (List<?>) get(levels, "flags");
+        check("an invented level is read as the milder one, not a louder one",
+            lv.size() == 3 && get(lv.get(0), "level").equals("note")
+                && get(lv.get(1), "level").equals("note"));
+        check("  and the two the prompt offers are taken however they are cased",
+            lv.size() == 3 && get(lv.get(2), "level").equals("watch"));
+
+        // A name nobody in the window has is a model filling in a plausible
+        // one, and this is the last place that should be shown with a caveat.
+        Object names = parse.invoke(null,
+            "{\"summary\":\"s\",\"flags\":[" +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"player\":\"Herobrine\"," +
+            "\"level\":\"watch\",\"label\":\"Invented\",\"why\":\"w\"}," +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"player\":\"steve\"," +
+            "\"level\":\"watch\",\"label\":\"Real\",\"why\":\"w\"}," +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"player\":\"\"," +
+            "\"level\":\"note\",\"label\":\"Several\",\"why\":\"w\"}]}",
+            from, to, cfg, episodes, all);
+        List<?> nm = (List<?>) get(names, "flags");
+        List<String> nmLabels = new ArrayList<>();
+        for (Object f : nm) nmLabels.add((String) get(f, "label"));
+        check("a flag naming somebody who was not there is dropped",
+            !nmLabels.contains("Invented"));
+        check("  but the same name as the log, cased differently, is kept",
+            nmLabels.contains("Real"));
+        check("  and a flag about nobody in particular is still allowed",
+            nmLabels.contains("Several"));
+
+        Object windows = parse.invoke(null,
+            "{\"summary\":\"s\",\"flags\":[" +
+            "{\"from\":1,\"to\":2,\"level\":\"watch\",\"label\":\"Last year\"," +
+            "\"why\":\"w\"}," +
+            "{\"from\":" + (from - 500_000) + ",\"to\":" + to +
+            ",\"level\":\"note\",\"label\":\"Runs early\",\"why\":\"w\"}]}",
+            from, to, cfg, episodes, all);
+        List<?> wd = (List<?>) get(windows, "flags");
+        check("a flag entirely outside the window sent is dropped",
+            wd.size() == 1 && get(wd.get(0), "label").equals("Runs early"));
+        check("  and one that overhangs it is clamped rather than believed",
+            wd.size() == 1 && ((Long) get(wd.get(0), "from")) == from);
+
+        Object thin = parse.invoke(null,
+            "{\"summary\":\"s\",\"flags\":[" +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"level\":\"watch\"," +
+            "\"label\":\"No reason given\"}," +
+            "{\"from\":" + from + ",\"to\":" + to + ",\"level\":\"watch\"," +
+            "\"why\":\"No title given\"}]}",
+            from, to, cfg, episodes, all);
+        check("a flag with no reason, or no title, is not shown at all",
+            ((List<?>) get(thin, "flags")).isEmpty());
+
+        StringBuilder lots = new StringBuilder("{\"summary\":\"s\",\"flags\":[");
+        for (int i = 0; i < 20; i++) {
+            lots.append(i == 0 ? "" : ",").append("{\"from\":").append(from)
+                .append(",\"to\":").append(to)
+                .append(",\"level\":\"watch\",\"label\":\"F").append(i)
+                .append("\",\"why\":\"w\"}");
+        }
+        lots.append("]}");
+        check("a model that flags everything is cut off rather than believed",
+            ((List<?>) get(parse.invoke(null, lots.toString(), from, to, cfg, episodes, all),
+                "flags")).size() == 5);
+
+        check("a report with only flags in it is still a report",
+            !((List<?>) get(parse.invoke(null,
+                "{\"flags\":[{\"from\":" + from + ",\"to\":" + to +
+                ",\"level\":\"note\",\"label\":\"Only this\",\"why\":\"w\"}]}",
+                from, to, cfg, episodes, all), "flags")).isEmpty());
+
+        // The prompt is the other half of this: it is the only place the model
+        // is let off the no-accusations rule, and it has to stay narrow.
+        Field systemField = AI.getDeclaredField("SYSTEM");
+        systemField.setAccessible(true);
+        String system = (String) systemField.get(null);
+        check("the prompt asks for flags at two named levels",
+            system.contains("\"watch\"") && system.contains("\"note\""));
+        check("  and tells it to describe behaviour rather than accuse anyone",
+            system.contains("about behaviour rather than about people"));
+        check("  and that an empty list is the usual right answer",
+            system.contains("empty list is the right answer"));
+
         // ---- what is wrong, said plainly ----
         Method problem = AI.getMethod("problem");
         check("a configured local model has no problem",

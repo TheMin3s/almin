@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -156,16 +157,45 @@ public final class AiInsights {
      */
     public record Meaning(long at, String player, String means) {}
 
+    /**
+     * Something in the log the model thinks an admin should actually look at.
+     *
+     * <p>A {@link Moment} points at the most interesting thing that happened;
+     * this points at the thing that might be a problem, which is a different
+     * question and deserves a different word on the screen. It covers a
+     * stretch rather than an instant, because what makes something worth a
+     * second look is almost always the shape of several actions in a row: not
+     * one chest opened, but nine chests opened in four minutes across a base
+     * nobody lives in.
+     *
+     * <h3>What a level means</h3>
+     * {@code watch} is "this might be worth checking" and {@code note} is
+     * "this matters but nothing is wrong". Nothing here says anybody did
+     * anything against the rules, and the prompt is written to keep it that
+     * way: the model describes behaviour and an admin draws conclusions. An
+     * unrecognised level becomes {@code note}, so a model that invents one
+     * cannot promote its own guess into an accusation.
+     *
+     * @param player the one it is about, or empty where it is about several
+     */
+    public record Flag(long from, long to, String player, String level,
+                       String label, String why) {
+
+        /** The more serious of the two, for anywhere that sorts or counts. */
+        public boolean watch() { return "watch".equals(level); }
+    }
+
     /** The last thing the model said, and when. */
     public record Report(long generated, long from, long to, String summary,
                          List<Moment> moments, List<Meaning> meanings, List<Found> found,
+                         List<Flag> flags,
                          String scope, String model, String provider, String error) {
 
         public boolean ok() { return error == null || error.isEmpty(); }
 
         public static Report failed(String why) {
             return new Report(System.currentTimeMillis(), 0, 0, "", List.of(), List.of(),
-                List.of(), "all", "", "", why);
+                List.of(), List.of(), "all", "", "", why);
         }
     }
 
@@ -569,13 +599,32 @@ public final class AiInsights {
         not invent numbers, coordinates or events that are not listed. \
         "Probably" and "looks like" are honest; certainty is not.
 
+        Last of all, flag anything an admin should actually look at. This is \
+        the one place you are asked to say something might be a problem, and \
+        it is still about behaviour rather than about people: describe what \
+        the log shows and let the admin decide what it means. Two levels. \
+        Use "watch" for a shape that would be worth checking \u2014 a run of \
+        containers opened in somebody else's base, a stretch of blocks broken \
+        and replaced, someone arriving where another player is each time they \
+        log in, a burst of movement far faster or further than the rest of \
+        the session. Use "note" for something an admin would want to know \
+        that is nobody's fault: a large amount of work lost, a first visit to \
+        somewhere dangerous, a build finished. At most five between them, \
+        each with the times it covers. Do not flag ordinary play. A quiet \
+        server has none, and an empty list is the right answer far more often \
+        than not \u2014 a flag on innocent play costs a real person real \
+        suspicion, so send nothing rather than something you are unsure of.
+
         Answer as JSON and nothing else:
         {"summary": "...", \
         "moments": [{"at": <timestamp from an episode>, "label": "short title", \
         "why": "one sentence", "player": "name", "weight": 0-100}], \
         "sequences": [{"at": <timestamp from an episode>, "means": "one sentence"}], \
         "patterns": [{"from": <timestamp>, "to": <timestamp>, "player": "name or empty \
-        for several", "label": "short title", "why": "one sentence"}]}""";
+        for several", "label": "short title", "why": "one sentence"}], \
+        "flags": [{"from": <timestamp>, "to": <timestamp>, "player": "name or empty \
+        for several", "level": "watch" or "note", "label": "short title", \
+        "why": "one sentence saying what the log shows"}]}""";
 
     /** Everything the model is told, and nothing else. */
     static String prompt(Scope scope, List<Episodes.Episode> episodes,
@@ -719,7 +768,7 @@ public final class AiInsights {
         String json = firstObject(text);
         if (json.isEmpty()) {
             return new Report(System.currentTimeMillis(), from, to, displaySummary(text),
-                List.of(), List.of(), List.of(), where, model, provider, "");
+                List.of(), List.of(), List.of(), List.of(), where, model, provider, "");
         }
         try {
             JsonObject o = JsonParser.parseString(json).getAsJsonObject();
@@ -751,15 +800,35 @@ public final class AiInsights {
                     if (found.size() >= 6) break;
                 }
             }
-            if (summary.isEmpty() && moments.isEmpty() && meanings.isEmpty() && found.isEmpty()) {
+            // Who the model was actually told about. A flag naming somebody
+            // else is a model filling in a plausible name, and a flag is the
+            // one thing here that puts a person's name next to the word
+            // "watch" — so it is dropped rather than shown with a caveat.
+            Set<String> known = new java.util.HashSet<>();
+            if (episodes != null) {
+                for (Episodes.Episode e : episodes) {
+                    if (e.player() != null) known.add(e.player().toLowerCase(Locale.ROOT));
+                }
+            }
+            List<Flag> flags = new ArrayList<>();
+            if (o.has("flags") && o.get("flags").isJsonArray()) {
+                for (JsonElement el : o.getAsJsonArray("flags")) {
+                    if (!el.isJsonObject()) continue;
+                    Flag f = flag(el.getAsJsonObject(), from, to, known);
+                    if (f != null) flags.add(f);
+                    if (flags.size() >= 5) break;
+                }
+            }
+            if (summary.isEmpty() && moments.isEmpty() && meanings.isEmpty()
+                    && found.isEmpty() && flags.isEmpty()) {
                 return new Report(System.currentTimeMillis(), from, to, displaySummary(text),
-                    List.of(), List.of(), List.of(), where, model, provider, "");
+                    List.of(), List.of(), List.of(), List.of(), where, model, provider, "");
             }
             return new Report(System.currentTimeMillis(), from, to, summary, moments,
-                meanings, found, where, model, provider, "");
+                meanings, found, flags, where, model, provider, "");
         } catch (Exception e) {
             return new Report(System.currentTimeMillis(), from, to, displaySummary(text),
-                List.of(), List.of(), List.of(), where, model, provider, "");
+                List.of(), List.of(), List.of(), List.of(), where, model, provider, "");
         }
     }
 
@@ -784,6 +853,43 @@ public final class AiInsights {
         a = Math.max(windowFrom, Math.min(windowTo, a));
         b = Math.max(windowFrom, Math.min(windowTo, b));
         return new Found(a, b, cut(str(o, "player"), 32), label, cut(str(o, "why"), 200));
+    }
+
+    /**
+     * One flag, held to a real window, a real person and a known level.
+     *
+     * <p>Every one of those three is a way a confident model goes wrong, and
+     * all three matter more here than anywhere else in this file, because the
+     * output of this one is a person's name under a heading that says an
+     * admin should look at them. A window outside the period that was sent, a
+     * name nobody in the period has, or a level the prompt never offered are
+     * each enough on their own to drop it.
+     */
+    private static Flag flag(JsonObject o, long windowFrom, long windowTo, Set<String> known) {
+        String label = cut(str(o, "label"), 90);
+        String why = cut(str(o, "why"), 200);
+        if (label.isEmpty() || why.isEmpty()) return null;
+
+        long a = num(o, "from"), b = num(o, "to");
+        if (a <= 0 && b <= 0) return null;
+        if (a <= 0) a = b;
+        if (b <= 0) b = a;
+        if (b < a) { long swap = a; a = b; b = swap; }
+        if (b < windowFrom || a > windowTo) return null;
+        a = Math.max(windowFrom, Math.min(windowTo, a));
+        b = Math.max(windowFrom, Math.min(windowTo, b));
+
+        String player = cut(str(o, "player"), 32).trim();
+        // Empty is allowed and means "several people"; a name is not, unless
+        // it belongs to somebody the model was actually shown.
+        if (!player.isEmpty() && !known.isEmpty()
+                && !known.contains(player.toLowerCase(Locale.ROOT))) {
+            return null;
+        }
+        // Anything but the word the prompt asked for reads as the milder one.
+        // A model that invents a level must not be able to invent a louder one.
+        String level = "watch".equalsIgnoreCase(str(o, "level").trim()) ? "watch" : "note";
+        return new Flag(a, b, player, level, label, why);
     }
 
     private static long num(JsonObject o, String k) {

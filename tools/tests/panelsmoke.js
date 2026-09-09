@@ -6587,6 +6587,181 @@ const tabs = ['dash', 'term', 'load', 'activity', 'files', 'players', 'mods', 'a
     failures.push('the wait: ' + e.message);
   }
 
+  // ---- what the model flagged ----
+  // A flag puts a real person's name under a heading telling an admin to look
+  // at them, so what is checked here is mostly restraint: that the model's
+  // words are drawn as words, that the two levels stay apart, and that a flag
+  // reaches every view rather than only the one it was written in.
+  try {
+    const t0 = 1700000000000;
+    const flagged = [
+      { from: t0 + 1000, to: t0 + 5000, player: 'Griefer', level: 'watch',
+        label: 'Nine containers in four minutes',
+        why: 'Opened nine chests in a base they have not built in.' },
+      { from: t0 + 20000, to: t0 + 24000, player: '', level: 'note',
+        label: 'A long build finished', why: 'Three people, one roof.' }
+    ];
+    const savedReport = sandbox.aiReport;
+    sandbox.aiReport = { summary: '', moments: [], sequences: [], patterns: [],
+                         flags: flagged, error: '' };
+    sandbox.allData = { ids: { Griefer: 'g' }, rowsShown: 100 };
+    sandbox.flagStamp = '';
+    sandbox.paintFlags();
+    const strip = deepText(byId.get('a-flags'));
+
+    check('the model can flag a stretch of the log', () =>
+      /Nine containers in four minutes/.test(strip) ? true : 'no flag drawn: ' + strip.slice(0, 120));
+
+    check('...and the two levels do not read as the same thing', () => {
+      if (!/Worth checking/.test(strip)) return 'nothing says which one is worth checking';
+      if (!/Notable/.test(strip)) return 'the milder level is drawn as the louder one';
+      // The words are half of it. The colour is what tells them apart at a
+      // glance, and it comes from the class rather than from the text.
+      const rows = (byId.get('a-flags').children || [])
+        .filter((c) => /(^|\s)flag(\s|$)/.test(c.className || ''));
+      if (rows.length !== 2) return 'drew ' + rows.length + ' flags, expected 2';
+      const watch = rows.filter((r) => hasClass(r, 'lv-watch')).length;
+      const note = rows.filter((r) => hasClass(r, 'lv-note')).length;
+      return watch === 1 && note === 1 ? true
+        : 'the two levels are drawn alike: ' + watch + ' watch, ' + note + ' note';
+    });
+
+    // The line that keeps this from being an accusation machine.
+    check('...and it says out loud that it can be wrong', () =>
+      /can be wrong/.test(strip) && /broke a rule/.test(strip) ? true
+        : 'the strip states the flags as findings');
+
+    check('...and a flag about several people says so rather than naming one', () =>
+      /several people/.test(strip) ? true : 'an empty player was drawn as a name');
+
+    // The model reads what players type in chat, so its output is partly their
+    // words coming back. This is drawn into the page, so it has to be escaped.
+    check('what the model wrote is drawn as words, not as markup', () => {
+      sandbox.aiReport = { flags: [{ from: t0, to: t0 + 1, player: '', level: 'note',
+        label: '<img src=x onerror=alert(1)>', why: 'x' }], moments: [], sequences: [],
+        patterns: [] };
+      sandbox.flagStamp = '';
+      sandbox.paintFlags();
+      // Each flag is its own element with its own innerHTML, so the markup
+      // to inspect is on the children rather than on the box they sit in.
+      let raw = '';
+      (function walk(el) {
+        if (!el || typeof el !== 'object') return;
+        raw += el._html || '';
+        for (const kid of el.children || []) walk(kid);
+      })(byId.get('a-flags'));
+      sandbox.aiReport = { summary: '', moments: [], sequences: [], patterns: [],
+                           flags: flagged, error: '' };
+      sandbox.flagStamp = '';
+      sandbox.paintFlags();
+      return /&lt;img/.test(raw) && !/<img src=x/.test(raw) ? true
+        : 'model output went into the page as markup';
+    });
+
+    check('a row inside a flag is marked on the row itself', () => {
+      const inside = sandbox.flagFor({ at: t0 + 2000, player: 'Griefer' });
+      const outside = sandbox.flagFor({ at: t0 + 9000, player: 'Griefer' });
+      if (!inside) return 'a row inside the window was not flagged';
+      if (outside) return 'a row outside the window was flagged anyway';
+      return inside.level === 'watch' ? true : 'the wrong flag matched';
+    });
+
+    check('...and a flag about one player does not mark another', () =>
+      sandbox.flagFor({ at: t0 + 2000, player: 'Someone else' }) === null ? true
+        : 'a named flag marked somebody it is not about');
+
+    check('...while a flag about several people covers all of them', () => {
+      const a1 = sandbox.flagFor({ at: t0 + 21000, player: 'Steve' });
+      const b1 = sandbox.flagFor({ at: t0 + 21000, player: 'Alex' });
+      return a1 && b1 && a1.level === 'note' ? true : 'it only covered one of them';
+    });
+
+    check('the row a flag covers carries the mark', () => {
+      const row = sandbox.activityRow({ at: t0 + 2000, player: 'Griefer', uuid: 'g',
+        action: 'opened', detail: 'chest', where: 'overworld 1,2,3', count: 1 });
+      const plain = sandbox.activityRow({ at: t0 + 9000, player: 'Griefer', uuid: 'g',
+        action: 'opened', detail: 'chest', where: 'overworld 1,2,3', count: 1 });
+      if (!/(^|\s)fl(\s|$)/.test(row.className || '')) return 'the flagged row is not marked';
+      if (/(^|\s)fl(\s|$)/.test(plain.className || '')) return 'an unflagged row is marked';
+      return /(^|\s)lv-watch(\s|$)/.test(row.className || '') ? true
+        : 'the row does not say which level it is: ' + row.className;
+    });
+
+    // ---- and the same flag, on all three maps ----
+    // Two maps and a picture of a build. A flag that only reaches one of them
+    // is a flag the person looking at the other two never sees.
+    const fActs = [];
+    for (let i = 0; i < 6; i++)
+      fActs.push({ at: t0 + 1000 + i * 500, player: 'Griefer', action: 'opened',
+                   detail: 'chest', dim: 'overworld', x: 10 + i, y: 64, z: 20, count: 1 });
+    // Somebody else, in the same window and a long way off. A ring that
+    // stretches to cover them is a ring drawn around the wrong person.
+    for (let i = 0; i < 4; i++)
+      fActs.push({ at: t0 + 1200 + i * 500, player: 'Bystander', action: 'place',
+                   detail: 'Stone', dim: 'overworld', x: 900 + i, y: 64, z: 900, count: 1 });
+
+    check('the flagged ground is worked out once for every view to draw', () => {
+      const spots = sandbox.flagSpots(fActs);
+      if (spots.length !== 1) return 'got ' + spots.length + ' spots, expected 1';
+      const sp = spots[0];
+      if (sp.count !== 6) return 'it covered ' + sp.count + ' of the 6 actions';
+      // The bystander is 890 blocks away, so a ring that included them would
+      // be hundreds of blocks across rather than a dozen.
+      if (sp.radius > 40) return 'the ring stretched to cover somebody it is not about';
+      if (Math.abs(sp.x - 12.5) > 3) return 'the ring is centred on the wrong place: ' + sp.x;
+      return sp.radius >= 6 && sp.colour === '#e0a33c' ? true
+        : 'wrong size or colour: r=' + sp.radius + ' ' + sp.colour;
+    });
+
+    check('...and an unflagged log draws no rings at all', () => {
+      const saved = sandbox.aiReport;
+      sandbox.aiReport = { flags: [], moments: [], sequences: [], patterns: [] };
+      const none = sandbox.flagSpots(fActs).length;
+      sandbox.aiReport = saved;
+      return none === 0 ? true : 'it invented ' + none + ' ring(s) with nothing flagged';
+    });
+
+    check('the flat map draws the flagged ground', () => {
+      const saved = sandbox.allData;
+      sandbox.allData = { ids: {}, tracks: {}, actions: fActs, rowsShown: 2000,
+                          from: t0, to: t0 + 30000, now: t0 + 30000, afkSeconds: 20 };
+      sandbox.cursorAt = t0 + 30000; sandbox.cursorSet = true;
+      sandbox.win.set = false;
+      sandbox.paintAll();
+      const html = byId.get('t-map')._html || '';
+      sandbox.allData = saved;
+      return /class="tflag"/.test(html) ? true : 'no flag ring on the flat map';
+    });
+
+    check('...and so does the 3D world', () => {
+      const payload = sandbox.blueMapPayload(
+        { shownNames: ['Griefer'], shownActs: fActs, tracks: {}, ids: {}, online: [],
+          away: {}, afkSecs: 20, cursor: t0 + 30000, now: t0 + 30000,
+          windowMs: 4 * 3600000 }, [], [], []);
+      const rings = (payload.places || []).filter((p) => /^flag/.test(p.id || ''));
+      if (!rings.length) return 'no flag ring in the 3D world';
+      return /Worth checking/.test(rings[0].label || '') ? true
+        : 'the ring does not say what it is: ' + rings[0].label;
+    });
+
+    check('...and so does the picture of what was built', () => {
+      const svg = sandbox.scenePlayer(0, 0, 0, 12,
+        { player: 'Griefer', at: t0 + 2000, wx: 10, y: 64, wz: 20 });
+      const plain = sandbox.scenePlayer(0, 0, 0, 12,
+        { player: 'Griefer', at: t0 + 9000, wx: 10, y: 64, wz: 20 });
+      if (!/<ellipse/.test(svg)) return 'no flag ring in the isometric scene';
+      if (/<ellipse/.test(plain)) return 'an unflagged player got a ring anyway';
+      return /Worth checking/.test(svg) ? true : 'the ring does not say what it is';
+    });
+
+    sandbox.aiReport = savedReport;
+    sandbox.allData = null;
+    sandbox.flagStamp = '';
+  } catch (e) {
+    console.log('  FAIL  what the model flagged  -> ' + e.message);
+    failures.push('what the model flagged: ' + e.message);
+  }
+
   // ---- the Backups menu ----
   // What is checked here is mostly what the menu refuses to do. A backup list
   // is four buttons next to files somebody cannot get back, so the important

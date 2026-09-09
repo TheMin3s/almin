@@ -997,6 +997,33 @@ final class WebPage {
           .plooks{font-size:12.5px;color:var(--mute)}
           .plooks div{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.05)}
           .plooks div:last-child{border-bottom:0}
+          /* ---- what the model flagged ----
+             Two levels and two colours, because "might be worth checking" and
+             "you would want to know" are different sentences and reading them
+             as the same one is how a flag turns into an accusation. */
+          .flags{margin:0 0 10px}
+          .flag{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;
+                padding:8px 11px;margin-bottom:6px;border-radius:9px;cursor:pointer;
+                background:var(--card);border:1px solid var(--line);
+                border-left:3px solid var(--mute);font-size:12.5px}
+          .flag:hover{border-color:var(--brand)}
+          /* Namespaced, because `.note` is already a utility class in here and a
+             level sharing its name inherited muted italics from it. */
+          .flag.lv-watch{border-left-color:#e0a33c}
+          .flag.lv-note{border-left-color:#5b8fd4}
+          .flag .lv{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+          .flag.lv-watch .lv{color:#e0a33c}
+          .flag.lv-note .lv{color:#5b8fd4}
+          .flag .lb{font-weight:600}
+          .flag .wy{color:var(--dim);flex:1 1 240px;min-width:0}
+          .flag .tm{margin-left:auto;color:var(--mute);white-space:nowrap;
+                    font-variant-numeric:tabular-nums}
+          .flagnote{color:var(--mute);font-size:11.5px;margin:0 0 7px;line-height:1.5}
+          /* On the row itself, so a flagged stretch is findable by scrolling
+             rather than only by having read the strip at the top. */
+          .arow.fl{box-shadow:inset 3px 0 0 var(--mute)}
+          .arow.fl.lv-watch{box-shadow:inset 3px 0 0 #e0a33c}
+          .arow.fl.lv-note{box-shadow:inset 3px 0 0 #5b8fd4}
           /* ---- backups ---- */
           .bkrow{display:flex;gap:10px;align-items:center;padding:9px 2px;
                  border-bottom:1px solid rgba(255,255,255,.05)}
@@ -3061,7 +3088,8 @@ final class WebPage {
             '<select id="a-who" style="min-width:170px;width:auto"></select>'+
             '<span class="muted" id="a-dims"></span></div>'+
             '<div id="a-map"></div>'+
-            '<div class="act" id="a-rows" style="margin-top:12px"><div class="note">loading…</div></div>'+
+            '<div class="flags" id="a-flags" style="margin-top:12px"></div>'+
+            '<div class="act" id="a-rows"><div class="note">loading…</div></div>'+
             '<div class="msg" id="a-msg"></div>';
           setTimeout(()=>{
             loadActivity(); loadTrackList(); loadBlueMapStatus(); loadAll(); loadInsights();
@@ -5165,7 +5193,21 @@ final class WebPage {
               groups.push({x:cx,y:cy,items:live});
             }
           }
-          const dots=dotSvg.join('')+clusterSvg.join('');
+          // Rings under the marks rather than over them, so a flag never hides
+          // the thing it is pointing at.
+          let flagSvg='';
+          for(const sp of flagSpots(markActs)){
+            const cx=+sx(sp.x).toFixed(1), cy=+sz(sp.z).toFixed(1);
+            const rr=Math.abs(sx(sp.x+sp.radius)-sx(sp.x));
+            if(rr<1.5) continue;
+            flagSvg+='<circle class="tflag" cx="'+cx+'" cy="'+cy+'" r="'+rr.toFixed(1)+
+              '" fill="'+sp.colour+'" fill-opacity=".07" stroke="'+sp.colour+
+              '" stroke-width="1.4" stroke-dasharray="5 4" stroke-opacity=".75"><title>'+
+              esc((sp.flag.level==='watch'?'Worth checking: ':'Notable: ')+
+                (sp.flag.label||'')+' \u00b7 '+sp.count+' action(s) here')+
+              '</title></circle>';
+          }
+          const dots=flagSvg+dotSvg.join('')+clusterSvg.join('');
 
           // One badge per stretch of work, over the marks that make it up. The
           // notable ones get their sentence beside them; labelling all of them
@@ -6070,6 +6112,22 @@ final class WebPage {
           // Whatever the model thought was worth a look, on the strip that
           // covers the whole period — so "there was a fight at some point" is
           // answerable without reading anything.
+          // A flagged stretch is a band rather than a diamond, and it goes on
+          // first so the moment markers stay readable on top of it. A moment
+          // is an instant; a flag is the shape of several minutes, and drawing
+          // it as a point would lose the only thing that makes it a chain.
+          if(aiReport && aiReport.flags){
+            for(const f of aiReport.flags){
+              if(!f.from || !f.to || f.to<from || f.from>to) continue;
+              const a0=ovx(Math.max(from,f.from)), a1=ovx(Math.min(to,f.to));
+              const col=f.level==='watch'?'#e0a33c':'#5b8fd4';
+              sv+='<rect class="ovflag" x="'+a0.toFixed(1)+'" y="0" width="'+
+                Math.max(2,a1-a0).toFixed(1)+'" height="'+OV+'" fill="'+col+
+                '" fill-opacity=".3" stroke="'+col+'" stroke-width="1"><title>'+
+                esc((f.level==='watch'?'Worth checking: ':'Notable: ')+(f.label||''))+
+                '</title></rect>';
+            }
+          }
           if(aiReport && aiReport.moments){
             for(const m of aiReport.moments){
               if(!m.at || m.at<from || m.at>to) continue;
@@ -6932,6 +6990,7 @@ final class WebPage {
         function paintInsights(){
           paintAiBox();
           paintFound();
+          paintFlags();
           const box=$('i-eps'); if(!box) return;
           box.innerHTML='';
           if(!episodes.length){
@@ -7986,7 +8045,21 @@ final class WebPage {
           const fx=isoX(x,z,S), fy=isoY(x,y,z,S)+S/2;
           const hy=fy-S*0.92, colour=playerColor(p.player);
           const label=p.player+tightTail(p.wx,p.y,p.wz);
-          return '<g '+sceneAttrs(p,'recorded player','sc-player')+'>'+
+          // The same ring the flat map draws, at this player's feet. Flattened
+          // to the ground plane, because a circle drawn face-on to the screen
+          // in a view at an angle reads as a ball rather than as a place.
+          const fl=flagFor(p);
+          const ring=fl
+            ? '<ellipse cx="'+fx.toFixed(1)+'" cy="'+fy.toFixed(1)+'" rx="'+
+              Math.max(4,S*0.62).toFixed(1)+'" ry="'+Math.max(2,S*0.31).toFixed(1)+
+              '" fill="none" stroke="'+(fl.level==='watch'?'#e0a33c':'#5b8fd4')+
+              '" stroke-width="2" stroke-dasharray="4 3"><title>'+
+              esc((fl.level==='watch'?'Worth checking: ':'Notable: ')+(fl.label||''))+
+              '</title></ellipse>'
+            : '';
+          return '<g '+sceneAttrs(p,fl?(fl.level==='watch'?'flagged \u2014 worth checking'
+                                                          :'flagged \u2014 notable')
+                                     :'recorded player','sc-player')+'>'+ring+
             '<line x1="'+fx.toFixed(1)+'" y1="'+fy.toFixed(1)+'" x2="'+fx.toFixed(1)+
               '" y2="'+hy.toFixed(1)+'" stroke="#0b0d11" stroke-width="5"/>'+
             '<line x1="'+fx.toFixed(1)+'" y1="'+fy.toFixed(1)+'" x2="'+fx.toFixed(1)+
@@ -8380,8 +8453,144 @@ final class WebPage {
         }
 
         /** One line of the log. */
+        /**
+         * The model's flag covering this row, if there is one.
+         *
+         * <p>Matched on the window and the player rather than on any id: a
+         * flag is about a stretch of behaviour, which is a shape several rows
+         * make together and no single row carries. A flag with no player is
+         * about several of them, so it covers everyone in its window.
+         */
+        function flagFor(e){
+          const flags=(aiReport&&aiReport.flags)||[];
+          for(const f of flags){
+            if(!f.from||!f.to) continue;
+            if(e.at<f.from||e.at>f.to) continue;
+            if(f.player && f.player!==e.player) continue;
+            return f;
+          }
+          return null;
+        }
+
+        /**
+         * The ground a flagged stretch covers, worked out once.
+         *
+         * <p>The maps draw a ring rather than recolouring the marks inside it.
+         * Recolouring would be easier and would also destroy the thing the map
+         * is for: the colours already mean an action or a person, and a third
+         * meaning laid over them makes all three unreadable. A ring is
+         * additive \u2014 it says "this happened here" without taking anything
+         * away.
+         *
+         * <p>One ring per flag, not one per mark. A flag is a chain, and
+         * twenty rings around twenty marks is not a chain, it is confetti.
+         */
+        function flagSpots(acts){
+          const flags=(aiReport&&aiReport.flags)||[];
+          if(!flags.length||!acts||!acts.length) return [];
+          const out=[];
+          for(const f of flags){
+            if(!f.from||!f.to) continue;
+            let n=0, sx=0, sy=0, sz=0, x0=1e9, x1=-1e9, z0=1e9, z1=-1e9;
+            for(const a of acts){
+              if(a.at<f.from||a.at>f.to) continue;
+              if(f.player && a.player!==f.player) continue;
+              n++; sx+=a.x; sy+=a.y; sz+=a.z;
+              if(a.x<x0) x0=a.x; if(a.x>x1) x1=a.x;
+              if(a.z<z0) z0=a.z; if(a.z>z1) z1=a.z;
+            }
+            if(!n) continue;
+            // Wide enough to hold what it covers, and never so tight that a
+            // stretch that happened in one spot draws a ring nobody can see.
+            const r=Math.max(6,Math.max(x1-x0,z1-z0)/2+4);
+            out.push({flag:f, x:sx/n, y:sy/n, z:sz/n, radius:r, count:n,
+                      colour:f.level==='watch'?'#e0a33c':'#5b8fd4'});
+          }
+          return out;
+        }
+
+        /**
+         * What the model flagged, above the log it is about.
+         *
+         * <p>Everything the model wrote goes through esc(). It reads the chat
+         * players type, so its output is partly their words coming back \u2014
+         * and a flag is drawn into the page rather than into a text node, so
+         * this is the one place that has to be right.
+         */
+        let flagStamp='';
+        function paintFlags(){
+          const box=$('a-flags'); if(!box) return;
+          box.innerHTML='';
+          const flags=(aiReport&&aiReport.flags)||[];
+          const stamp=JSON.stringify(flags.map(f=>[f.from,f.to,f.player,f.level]));
+          if(stamp!==flagStamp){
+            flagStamp=stamp;
+            // Only on a real change, and only the rows: a repaint on every
+            // poll would throw away the scroll position of somebody reading.
+            const rows=$('a-rows');
+            if(rows && rows.almDrawn){ rows.almDrawn=0; rows.almFoot=null; moreBtn=null;
+                                       paintActivity(); }
+          }
+          if(!flags.length) return;
+          const head=document.createElement('div');
+          head.innerHTML='<h3 style="font-size:11px;text-transform:uppercase;'+
+            'letter-spacing:.9px;color:var(--brand);margin:0 0 4px">'+
+            'Flagged by the model</h3>'+
+            '<p class="flagnote">Things it thought were worth a second look. It is a '+
+            'reading of the log, not a finding: it can be wrong, and nothing here says '+
+            'anybody broke a rule. Open one to see the rows it covers.</p>';
+          box.appendChild(head);
+          for(const f of flags){
+            const row=document.createElement('div');
+            row.className='flag '+(f.level==='watch'?'lv-watch':'lv-note');
+            row.innerHTML='<span class="lv">'+(f.level==='watch'?'Worth checking':'Notable')+
+              '</span>'+
+              '<span class="lb">'+esc(f.label||'')+'</span>'+
+              (f.player?'<span class="muted">'+pname(f.player,knownId(f.player))+'</span>'
+                       :'<span class="muted">several people</span>')+
+              (f.why?'<span class="wy">'+esc(f.why)+'</span>':'')+
+              '<span class="tm">'+esc(fmtAgo(f.to))+'</span>';
+            row.title=(f.player?f.player+', from ':'From ')+
+              (fmtWhen(f.from)||fmtAgo(f.from))+' to '+(fmtWhen(f.to)||fmtAgo(f.to));
+            row.onclick=ev=>{
+              // A click on the player name inside it opens that player, which
+              // is a different thing to ask for and gets to keep the click.
+              if(ev.target&&ev.target.closest&&ev.target.closest('[data-pn]')) return;
+              openFlag(f);
+            };
+            box.appendChild(row);
+          }
+        }
+
+        /**
+         * Shows the rows one flag is about.
+         *
+         * <p>Two moves, because the menu has two halves: the timeline goes to
+         * the stretch, and the log below is filtered to the person. Filtering
+         * is the server's job here, so this sets the search box and lets the
+         * ordinary search run \u2014 which also means the person can see what
+         * was done on their behalf, and undo it by clearing the box.
+         */
+        function openFlag(f){
+          if(!f) return;
+          jumpTo(f.to,'',undefined,undefined);
+          const box=$('a-filter');
+          if(box && f.player){
+            box.value=f.player;
+            activityFind=f.player;
+            findActivitySoon(); noteSearchSoon();
+          }
+        }
+
         function activityRow(e){
           const d=document.createElement('div'); d.className='arow';
+          // A flagged row says so on the row, so somebody scrolling the log
+          // finds the stretch without having read the strip above it.
+          const fl=flagFor(e);
+          if(fl){
+            d.className='arow fl '+(fl.level==='watch'?'lv-watch':'lv-note');
+            d.title=(fl.level==='watch'?'Worth checking: ':'Notable: ')+(fl.label||'');
+          }
           const col=ACTION_COLOR[e.action]||'#9aa3ae';
           d.appendChild(avatar(e.player,e.uuid,'sm'));
           d.insertAdjacentHTML('beforeend','<span class="ago">'+esc(fmtAgo(e.at).replace(' ago',''))+'</span>'+
@@ -9138,6 +9347,23 @@ final class WebPage {
                   title:p.player+' nearby'+atTail(p.wx,p.y,p.wz)+' · '+fmtAgo(p.at)});
               }
             }
+          }
+
+          // And in the 3D world, as a ring on the ground: the same thing the
+          // flat map and the scene draw, in the view most of the looking
+          // actually happens in.
+          let flagNo=0;
+          for(const sp of flagSpots(actions)){
+            const pts=[];
+            for(let t=0;t<=28;t++){
+              const th=t/28*Math.PI*2;
+              pts.push({x:sp.x+.5+Math.cos(th)*sp.radius, y:sp.y+1.2,
+                        z:sp.z+.5+Math.sin(th)*sp.radius});
+            }
+            places.push({id:'flag'+(flagNo++)+'r', type:'ring', points:pts,
+              label:(sp.flag.level==='watch'?'Worth checking: ':'Notable: ')+
+                (sp.flag.label||''),
+              color:sp.colour, width:2.2, opacity:.6});
           }
 
           if(mapOpts.grid){

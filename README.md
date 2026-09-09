@@ -1410,6 +1410,59 @@ Nothing is sent until somebody presses **Summarise**, or sets
 recorded since the last one — re-summarising an unchanged log is spending money
 to be told the same thing.
 
+### Flags: what the model thinks you should look at
+
+The same pass that writes the summary also **flags stretches of the log** — and
+the flags land in the Activity menu itself rather than in a report you have to
+go and read. There is no extra model call and no extra cost: it is one more
+section of the same answer.
+
+A flag covers a **stretch**, not a moment. What makes something worth a second
+look is almost always the shape of several actions in a row: not one chest
+opened, but nine chests opened in four minutes in a base nobody lives in. So a
+flag has a window, a player (or nobody in particular, when it is about
+several), and one sentence saying what the log shows.
+
+**Two levels, deliberately kept apart.** *Worth checking* is "this might be a
+problem"; *Notable* is "you would want to know, and nobody is at fault" — a
+large amount of work lost, a first trip somewhere dangerous, a build finished.
+They get different colours, because reading the second as the first is how a
+flag turns into an accusation.
+
+**It says what it is, every time.** The strip above the log says these are a
+reading of the log rather than a finding, that they can be wrong, and that
+nothing there says anybody broke a rule. That line is not decoration: this is
+the one place Almin's prompt lets the model say something might be wrong, and
+the prompt still tells it to describe behaviour rather than judge people. An
+admin draws the conclusions.
+
+**What the parser refuses to pass on.** Three things, because all three are
+ways a confident model goes wrong and the output of this one is a real person's
+name under a heading telling an admin to look at them:
+
+- A flag whose window falls outside the period the model was actually sent is
+  dropped, not clamped into view. One that overhangs the edge is clamped.
+- A flag naming somebody who does not appear in that period is dropped — an
+  invented name is the single worst thing this feature could print.
+- A level the prompt never offered becomes *Notable*, the milder of the two. A
+  model that invents a level must not be able to invent a louder one.
+
+At most five flags, and the prompt says plainly that an empty list is the right
+answer far more often than not.
+
+**Where they show up.** Four places, so a flag is not something you only see if
+you happened to be looking at the right half of the menu:
+
+- The strip above the log, listing them. Clicking one moves the timeline to the
+  stretch and filters the log to the person — and the filter box shows what was
+  done on your behalf, so you can widen it or clear it.
+- The log rows themselves, marked down the left edge in the flag's colour.
+- The timeline strip, as a band across the minutes it covers.
+- All three map views — the flat map, the 3D world and the isometric picture of
+  what was built — as a ring around the ground the flagged actions cover. A
+  ring rather than a recolour: the mark colours already mean an action or a
+  person, and a third meaning laid over them makes all three unreadable.
+
 ### How far back the map reaches
 
 The map is handed a slice off the end of the log — the newest few thousand
